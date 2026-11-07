@@ -1,0 +1,75 @@
+/* Запись звонка остаётся рядом с расшифровкой и показывает реальную длину аудио. */
+.da-player {
+  display: block;
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  padding: 14px 16px 10px;
+  margin: 0 0 16px;
+  border-radius: var(--da-r-card);
+  background: var(--da-surface);
+  box-shadow: var(--da-shadow-rest);
+  min-width: 0;
+}
+.da-player-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.da-player-play {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--da-brand);
+  color: var(--da-on-brand);
+  box-shadow: var(--da-shadow-rest), var(--da-highlight);
+  cursor: pointer;
+  transition: background-color 150ms, box-shadow 150ms, transform 100ms var(--da-ease);
+}
+.da-player-play:hover { background: var(--da-brand-press); box-shadow: var(--da-shadow-raised); }
+.da-player-play:active { transform: scale(.94); }
+.da-player-play:disabled { opacity: .5; cursor: default; }
+.da-player-play-icon, .da-player-pause-icon { position: absolute; display: flex; transition: opacity 150ms, transform 150ms var(--da-ease); }
+.da-player-play-icon { transform: translateX(1px); }
+.da-player-pause-icon { opacity: 0; transform: scale(.75); }
+.da-player.is-playing .da-player-play-icon { opacity: 0; transform: translateX(1px) scale(.75); }
+.da-player.is-playing .da-player-pause-icon { opacity: 1; transform: scale(1); }
+.da-player.is-buffering.is-playing .da-player-play { opacity: .75; }
+.da-player-times { display: flex; align-items: center; gap: 5px; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.da-player-times > :nth-child(2), .da-player-times > :nth-child(3) { color: var(--da-text-2); font-weight: 400; }
+.da-player-speed { display: flex; align-items: center; gap: 2px; margin-left: auto; padding: 3px; border-radius: var(--da-r-control); background: var(--da-surface-2); }
+.da-player-speed button {
+  border: 0; border-radius: 9px; background: transparent; color: var(--da-text-2);
+  min-height: 32px; min-width: 36px; padding: 5px 7px;
+  font: inherit; font-size: 13px; font-variant-numeric: tabular-nums;
+  cursor: pointer; transition: background-color 150ms, color 150ms, box-shadow 150ms, transform 100ms var(--da-ease);
+}
+.da-player-speed button:hover { color: var(--da-text); background: var(--da-surface-3); }
+.da-player-speed button:active { transform: scale(.96); }
+.da-player-speed button[aria-pressed="true"] { color: var(--da-text); background: var(--da-surface); box-shadow: var(--da-shadow-rest); }
+.da-player-wave { position: relative; height: 64px; margin-top: 7px; border-radius: 5px; cursor: pointer; touch-action: pan-y; transition: background-color 150ms; }
+.da-player-wave:hover { background: var(--da-surface-2); }
+.da-player-wave[aria-disabled="true"] { cursor: default; }
+.da-player-wave canvas { display: block; width: 100%; height: 64px; pointer-events: none; }
+.da-player-wave:focus-visible, .da-player-play:focus-visible, .da-player-speed button:focus-visible { outline: 2px solid var(--da-brand); outline-offset: 3px; }
+.da-player-missing { margin: 2px 0 4px; color: var(--da-text-2); font-size: 13px; line-height: 1.5; }
+.da-player-error { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; color: var(--da-no-ink); font-size: 13px; line-height: 1.5; padding-top: 4px; }
+.da-player-error[hidden], .da-player-missing[hidden] { display: none; }
+.da-player-error .da-btn { flex: 0 0 auto; }
+@media (max-width: 600px) {
+  .da-player { padding: 12px 12px 8px; }
+  .da-player-controls { gap: 8px; }
+  .da-player-speed { margin-left: auto; }
+  .da-player-speed button { min-width: 31px; padding-inline: 5px; }
+  .da-player-times { gap: 4px; font-size: 13px; }
+}
+@media (max-width: 360px) {
+  .da-player-speed { flex-basis: 100%; justify-content: space-between; }
+  .da-player-speed button { flex: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .da-player-play, .da-player-play-icon, .da-player-pause-icon, .da-player-speed button, .da-player-wave { transition: none; }
+  .da-player-play:active, .da-player-speed button:active { transform: none; }
+}
