@@ -163,6 +163,16 @@ def test_truncated_stream_retains_usage_received_after_finish(monkeypatch, sourc
     assert error.value.usage.cost_usd == pytest.approx(.0042)
 
 
+def test_sse_comments_multiline_data_and_repeated_terminal_usage(monkeypatch, source):
+    payload = {'choices': [{'delta': {'content': json.dumps(summary(), ensure_ascii=False)}, 'finish_reason': 'stop'}]}
+    multiline = ''.join('data: ' + line + '\n' for line in json.dumps(payload, ensure_ascii=False, indent=2).splitlines()) + '\n'
+    usage = {'choices': [{'delta': {'content': '', 'role': 'assistant'}, 'finish_reason': 'stop'}],
+             'usage': {'prompt_tokens': 123, 'completion_tokens': 45, 'cost': .0042}}
+    install(monkeypatch, chunks=[b': OPENROUTER PROCESSING\n\n', multiline.encode(), frame(usage), b'data: [DONE]\n\n'])
+    final = asyncio.run(ai.summarize(source))
+    assert final.topic == summary()['topic'] and final.usage.cost_usd == pytest.approx(.0042)
+
+
 def test_coaching_only_weak_binary_and_partial_scale_with_actual_ids(monkeypatch, source):
     items = [(criterion(), result()), (criterion('passed'), result('yes')),
              (criterion('na'), result('na')), (criterion('gross', 'flag'), result('yes')),

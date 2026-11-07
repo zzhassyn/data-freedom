@@ -10,7 +10,8 @@ from app.settings import Settings
 
 @pytest.fixture(autouse=True)
 def no_live_stt(monkeypatch):
-    """Imports in ordinary tests must never submit paid transcription requests."""
+    """Ordinary tests never inherit paid providers from the developer's .env."""
+    monkeypatch.setenv('JUDGE', 'fake')
     monkeypatch.setenv('STT_ENABLED', 'false')
     monkeypatch.setenv('OPENROUTER_API_KEY', '')
     monkeypatch.setenv('AUTO_EVALUATE_IMPORTS', 'false')

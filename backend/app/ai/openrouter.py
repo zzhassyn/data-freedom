@@ -195,6 +195,27 @@ async def _request(kind, data, schema):
         raise _error('Сервис ИИ вернул некорректный ответ', usage) from exc
 
 
+async def _sse_data(lines):
+    """SSE framing is independent of HTTP chunks and JSON content boundaries."""
+    data, size = [], 0
+    async for line in lines:
+        if line == '':
+            if data:
+                yield '\n'.join(data)
+                data, size = [], 0
+        elif line.startswith('data:'):
+            value = line[5:]
+            if value.startswith(' '):
+                value = value[1:]
+            data.append(value)
+            size += len(value)
+            if size > 200000:
+                raise ValueError('event_too_large')
+        # SSE comments, IDs and event names contain no completion text.
+    if data:
+        yield '\n'.join(data)
+
+
 async def _stream(kind, data, schema, validate, allowed=()):
     body = _body(kind, data, schema, True)
     usage, received_usage, finished, raw, last = Usage(), False, False, '', None
@@ -205,11 +226,8 @@ async def _stream(kind, data, schema, validate, allowed=()):
             async with client.stream('POST', 'https://openrouter.ai/api/v1/chat/completions', json=body,
                                      headers={'Authorization': 'Bearer ' + _settings.openrouter_api_key}) as response:
                 response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith('data:'):
-                        continue
-                    content = line[5:].strip()
-                    if content == '[DONE]':
+                async for content in _sse_data(response.aiter_lines()):
+                    if content.strip() == '[DONE]':
                         break
                     payload = json.loads(content)
                     if not isinstance(payload, dict):
