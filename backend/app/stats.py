@@ -13,6 +13,7 @@ from fastapi import APIRouter, Request
 
 from .db import json_dumps, latest_evaluations
 from .errors import ApiError
+from .evaluations import is_evaluation_visible
 from .scoring import score_evaluation, validate_answer
 
 
@@ -63,7 +64,7 @@ def stats(request: Request, checklistId: str | None = None, groupId: str | None 
         })
     evaluation_ids = {
         evaluation["id"] for evaluation in db.all_evaluations()
-        if evaluation["checklistId"] == checklist["id"]
+        if is_evaluation_visible(evaluation) and evaluation["checklistId"] == checklist["id"]
         and (not groupId or conversations.get(evaluation["conversationId"], {}).get("datasetGroupId") == groupId)
     }
     appeals = {"open": 0, "confirmed": 0, "changed": 0}

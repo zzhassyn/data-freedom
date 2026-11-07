@@ -303,13 +303,15 @@ async def upload(request: Request):
 
 @router.get('/conversations')
 async def list_conversations(request: Request, groupId: str = '', language: str = '', channel: str = '', status: str = '', q: str = ''):
+    from .evaluations import is_evaluation_visible
     if status not in {'', 'new', 'running', 'done', 'failed', 'appeal', 'review', 'stale'}:
         raise ApiError('invalid_filter', 'Неизвестный фильтр состояния')
     if language not in {'', 'RU', 'KZ', 'EN'} or channel not in {'', 'agent chat', 'voice call'}:
         raise ApiError('invalid_filter', 'Неизвестный язык или канал')
     db, latest = request.app.state.db, {}
     for ev in db.all_evaluations():
-        latest.setdefault(ev['conversationId'], ev)
+        if is_evaluation_visible(ev):
+            latest.setdefault(ev['conversationId'], ev)
     appeal_counts = {}
     for ap in db.all_appeals():
         counts = appeal_counts.setdefault(ap['evaluationId'], {'open': 0, 'decided': 0})
@@ -353,15 +355,19 @@ async def list_conversations(request: Request, groupId: str = '', language: str 
 
 @router.get('/conversations/{id}')
 async def get_conversation(id: str, request: Request):
-    return Conversation.model_validate(request.app.state.db.get_conversation(id)).model_dump(by_alias=True)
+    from .judge.hints import contextual_na_metadata
+    result = Conversation.model_validate(request.app.state.db.get_conversation(id)).model_dump(by_alias=True)
+    result.update(contextual_na_metadata(result))
+    return result
 
 
 @router.get('/conversations/{id}/evaluations')
 async def history(id: str, request: Request):
-    from .evaluations import public_evaluation
+    from .evaluations import is_evaluation_visible, public_evaluation
     db = request.app.state.db
     db.get_conversation(id)
-    return dict(items=[public_evaluation(ev) for ev in db.all_evaluations() if ev['conversationId'] == id])
+    return dict(items=[public_evaluation(ev) for ev in db.all_evaluations()
+                       if ev['conversationId'] == id and is_evaluation_visible(ev)])
 
 
 class AudioSource(HTMLParser):

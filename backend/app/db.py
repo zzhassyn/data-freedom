@@ -249,13 +249,14 @@ class Database:
 
 
 def latest_evaluations(db, checklist_id=None, group_id=None):
+    from .evaluations import is_evaluation_visible
     checklist_id = checklist_id or db.get_checklist('active')['id']
     db.get_checklist(checklist_id)
     conversations = {c['id']: c for c in db.all_conversations() if not group_id or c['datasetGroupId'] == group_id}
     latest = {}
     for ev in db.all_evaluations():
         conversation = conversations.get(ev['conversationId'])
-        if (conversation and ev['status'] == 'done' and ev['checklistId'] == checklist_id
+        if (conversation and is_evaluation_visible(ev) and ev['status'] == 'done' and ev['checklistId'] == checklist_id
                 and ev.get('transcriptHash') == conversation.get('transcriptHash')):
             latest.setdefault(ev['conversationId'], ev)
     return list(latest.values())

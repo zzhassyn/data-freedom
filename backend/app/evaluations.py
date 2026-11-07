@@ -8,6 +8,7 @@ import asyncio
 import copy
 import itertools
 import logging
+import re
 from datetime import datetime
 from typing import Any, Callable
 
@@ -41,12 +42,46 @@ def public_evaluation(evaluation: dict) -> dict:
     return {key: value for key, value in evaluation.items() if not key.startswith("_")}
 
 
+def is_real_model(value) -> bool:
+    """Known provider names, excluding fixture and missing-provenance labels."""
+    if not isinstance(value, str):
+        return False
+    parts = [part.strip() for part in value.split(',')]
+    return all(part and part.lower() not in {"unknown", "none", "не настроена"}
+               and not re.match(r"(?:fake|mock|fixture)(?:$|\b|[-:/])", part, re.I) for part in parts)
+
+
+def is_evaluation_visible(evaluation: dict) -> bool:
+    """Hide fixture/unknown answers in real mode without deleting historical work.
+
+    Genuine results from older models remain visible. Pending and failed real
+    requests also remain visible, so configuration/provider errors can be retried.
+    """
+    if llm_switch.current_mode() == "fake":
+        return True
+    completed = [item for item in evaluation.get("items", []) if item.get("status") == "done"]
+    if completed:
+        return all(is_real_model(item.get("model")) for item in completed)
+    identity = evaluation.get("_judgeIdentity")
+    return bool((isinstance(identity, str) and identity.startswith("openrouter:"))
+                or is_real_model(evaluation.get("model")))
+
+
+def require_evaluation_visible(evaluation: dict) -> None:
+    if not is_evaluation_visible(evaluation):
+        raise ApiError("provider_changed",
+                       "Эта оценка создана в тестовом режиме или без сведений о модели. Запустите новую оценку", 409)
+
+
 def source_conversation(db, evaluation: dict, conn=None) -> dict:
     """Return the transcript used by this evaluation with its durable registry identity."""
     current = db.get_conversation(evaluation["conversationId"], conn)
     source = {**(evaluation.get("_conversation") or current),
               "number": current["number"], "startedAt": current["startedAt"]}
-    return Conversation.model_validate(source).model_dump(by_alias=True)
+    from .judge.hints import contextual_na_metadata
+    result = Conversation.model_validate(source).model_dump(by_alias=True)
+    result.update(contextual_na_metadata(result))
+    return result
 
 
 def empty_item(criterion: dict) -> dict:
@@ -59,6 +94,7 @@ def empty_item(criterion: dict) -> dict:
         "effectiveWeight": 0.0, "points": 0.0, "original": None,
         "appealId": None,
         "model": None,
+        "latencyMs": None,
     }
 
 
@@ -74,6 +110,7 @@ def result_to_item(result: JudgeResult, criterion: dict) -> dict:
         naReason=result.na_reason, flagTypes=result.flag_types,
         needsReview=result.needs_review, usage=result.usage.model_dump(by_alias=True),
         model=result.model,
+        latencyMs=result.latency_ms,
     )
     return item
 
@@ -135,6 +172,8 @@ class EvaluationQueue:
                 self._jobs_by_evaluation.setdefault(item["evaluationId"], set()).add(job["id"])
         for evaluation in reversed(self.db.all_evaluations()):
             if evaluation["status"] not in {"queued", "running"}:
+                continue
+            if not is_evaluation_visible(evaluation):
                 continue
             with self.db.transaction() as conn:
                 evaluation = self.db.get_evaluation(evaluation["id"], conn)
@@ -266,6 +305,7 @@ class EvaluationQueue:
     async def retry(self, evaluation_id: str, criterion_id: str) -> dict:
         with self.db.transaction() as conn:
             evaluation = self.db.get_evaluation(evaluation_id, conn)
+            require_evaluation_visible(evaluation)
             if evaluation["status"] in {"queued", "running"}:
                 raise ApiError("evaluation_running", "Оценка ещё выполняется", 409)
             item = next((i for i in evaluation["items"] if i["criterionId"] == criterion_id), None)
@@ -354,6 +394,8 @@ class EvaluationQueue:
                 continue
             if previous.get("transcriptHash") != evaluation["transcriptHash"]:
                 continue
+            if real and not is_evaluation_visible(previous):
+                continue
             if real and previous.get("_judgeIdentity") != evaluation.get("_judgeIdentity"):
                 continue
             old_criterion = next((
@@ -364,8 +406,8 @@ class EvaluationQueue:
                 continue
             source = next((i for i in previous["items"] if i["criterionId"] == criterion["id"] and i["status"] == "done"), None)
             if source is not None:
-                model = source.get("model") or previous["model"]
-                if real and (not model or "fake" in [part.strip().lower() for part in model.split(',')]):
+                model = source.get("model") if real else (source.get("model") or previous["model"])
+                if real and not is_real_model(model):
                     continue
                 item = copy.deepcopy(source)
                 item.update(
@@ -374,6 +416,7 @@ class EvaluationQueue:
                     original=None, appealId=None, fraction=None, effectiveWeight=0.0, points=0.0,
                     reused=True, usage=zero_usage(),
                     model=model,
+                    latencyMs=0,
                 )
                 return item, model
         return None
@@ -412,6 +455,7 @@ class EvaluationQueue:
                     failure_usage = Usage.model_validate(failure_usage).model_dump(by_alias=True)
                     self.db.record_usage(failure_usage, latency_ms=getattr(exc, "latency_ms", 0), kind="evaluation")
                     model = getattr(exc, "model", None) or model
+                    item["latencyMs"] = getattr(exc, "latency_ms", None)
                 if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
                     message = "Модель не ответила за 90 секунд. Повторите критерий."
                 elif isinstance(exc, JudgeError):
@@ -480,7 +524,9 @@ async def create_evaluations(body: EvaluationRequest, request: Request):
 
 @router.get("/evaluations/{evaluation_id}")
 async def get_evaluation(evaluation_id: str, request: Request):
-    return public_evaluation(request.app.state.db.get_evaluation(evaluation_id))
+    evaluation = request.app.state.db.get_evaluation(evaluation_id)
+    require_evaluation_visible(evaluation)
+    return public_evaluation(evaluation)
 
 
 @router.get("/evaluations/{evaluation_id}/conversation")
@@ -488,11 +534,16 @@ async def get_evaluation_conversation(evaluation_id: str, request: Request):
     db = request.app.state.db
     with db.transaction() as conn:
         evaluation = db.get_evaluation(evaluation_id, conn)
+        require_evaluation_visible(evaluation)
         return source_conversation(db, evaluation, conn)
 
 
 @router.get("/jobs/{job_id}")
 async def get_job(job_id: str, request: Request):
+    db = request.app.state.db
+    job = db.get_job(job_id)
+    for item in job["items"]:
+        require_evaluation_visible(db.get_evaluation(item["evaluationId"]))
     return request.app.state.queue._refresh_job(job_id)
 
 

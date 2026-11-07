@@ -148,7 +148,7 @@ def _stream_cached(app, kind, key, source_hash, factory, serialize, is_current, 
     except JudgeError as exc:
         raise ApiError("model_unavailable", str(exc), 503) from exc
     settings = app.state.settings
-    if settings.judge == "openrouter" and not (settings.openrouter_api_key and (settings.ai_model or settings.judge_model)):
+    if settings.judge in {"openrouter", "real"} and not (settings.openrouter_api_key and (settings.ai_model or settings.judge_model)):
         raise ApiError("model_unavailable", "Укажите ключ OpenRouter и модель в настройках сервера", 503)
     if not is_current():
         raise ApiError("stale_source", "Данные изменились. Повторите запрос", 409)
@@ -367,8 +367,10 @@ def _evaluation_hash(evaluation):
 
 @router.get("/evaluations/{evaluation_id}/coaching")
 async def coaching(evaluation_id: str, request: Request, refresh: bool = False, stream: bool = False):
+    from .evaluations import require_evaluation_visible
     db = request.app.state.db
     evaluation = db.get_evaluation(evaluation_id)
+    require_evaluation_visible(evaluation)
     if evaluation["status"] != "done":
         raise ApiError("evaluation_not_ready", "Дождитесь завершения оценки", 409)
     conversation = db.get_conversation(evaluation["conversationId"])
@@ -518,9 +520,11 @@ async def suggest(body: SuggestRequest, request: Request, refresh: bool = False)
 
 @router.post("/appeals/{appeal_id}/second-opinion")
 async def second_opinion(appeal_id: str, request: Request, refresh: bool = False):
+    from .evaluations import require_evaluation_visible
     db = request.app.state.db
     appeal = db.get_appeal(appeal_id)
     evaluation = db.get_evaluation(appeal["evaluationId"])
+    require_evaluation_visible(evaluation)
     conversation = db.get_conversation(evaluation["conversationId"])
     if evaluation.get("transcriptHash") != _conversation_hash(conversation):
         raise ApiError("stale_evaluation", "Диалог изменился после оценки. Оцените его заново", 409)

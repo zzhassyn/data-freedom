@@ -162,8 +162,9 @@ def seed_checklist(db) -> None:
 
 @router.get("/checklists")
 def list_checklists(request: Request):
+    from .evaluations import is_evaluation_visible
     db = request.app.state.db
-    evaluations = db.all_evaluations()
+    evaluations = [ev for ev in db.all_evaluations() if is_evaluation_visible(ev)]
     keys = ("id", "version", "name", "isActive", "createdAt", "basedOnVersion")
     return {"items": [{**{key: checklist[key] for key in keys},
                        "criteriaCount": len(checklist["criteria"]),

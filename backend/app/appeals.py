@@ -6,7 +6,7 @@ from fastapi import APIRouter, Body, Request
 
 from .db import utcnow
 from .errors import ApiError
-from .evaluations import public_evaluation, source_conversation
+from .evaluations import is_evaluation_visible, public_evaluation, require_evaluation_visible, source_conversation
 from .extras import visible_appeal
 from .scoring import score_evaluation, validate_answer
 
@@ -48,6 +48,7 @@ async def create_appeal(request: Request, body: dict = Body(...)):
     db = request.app.state.db
     with db.transaction() as conn:
         evaluation = db.get_evaluation(evaluation_id, conn)
+        require_evaluation_visible(evaluation)
         if evaluation["status"] != "done":
             raise ApiError(
                 "evaluation_not_ready", "Апелляцию можно подать после завершения оценки", 409
@@ -92,7 +93,8 @@ async def list_appeals(request: Request, status: str = "open"):
         raise ApiError("invalid_filter", "Статус апелляций должен быть open, decided или all", 400)
     db = request.app.state.db
     with db.transaction() as conn:
-        appeals = db.all_appeals(conn)
+        appeals = [appeal for appeal in db.all_appeals(conn)
+                   if is_evaluation_visible(db.get_evaluation(appeal["evaluationId"], conn))]
         counts = {
             "open": sum(a["status"] == "open" for a in appeals),
             "decided": sum(a["status"] != "open" for a in appeals),
@@ -132,6 +134,7 @@ async def get_appeal(request: Request, appeal_id: str):
     with db.transaction() as conn:
         appeal = db.get_appeal(appeal_id, conn)
         evaluation = db.get_evaluation(appeal["evaluationId"], conn)
+        require_evaluation_visible(evaluation)
         _, criterion, _ = _criterion_and_item(db, evaluation, appeal["criterionId"], conn)
         conversation = source_conversation(db, evaluation, conn)
     return {**visible_appeal(appeal), "evaluation": public_evaluation(evaluation), "conversation": conversation, "criterion": criterion}
@@ -154,6 +157,7 @@ async def decide_appeal(request: Request, appeal_id: str, body: dict = Body(...)
         if appeal["status"] != "open":
             raise ApiError("appeal_decided", "Решение по этой апелляции уже принято", 409)
         evaluation = db.get_evaluation(appeal["evaluationId"], conn)
+        require_evaluation_visible(evaluation)
         checklist, criterion, item = _criterion_and_item(db, evaluation, appeal["criterionId"], conn)
         new_answer = body.get("newAnswer") if action == "change" else None
         if action == "change":

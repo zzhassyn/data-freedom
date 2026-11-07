@@ -248,6 +248,7 @@ def test_old_appeal_keeps_evaluated_transcript_and_hides_internal_fields(seeded_
     assert result["conversation"] == original
     assert set(result["conversation"]) == {
         "id", "number", "startedAt", "datasetGroupId", "channel", "language", "audioUrl", "transcript", "importedAt",
+        "contextualNaCriteria", "contextualNaCriterionHashes",
     }
     assert not any(key.startswith("_") for key in result["evaluation"])
     for item in result["evaluation"]["items"]:

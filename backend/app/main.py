@@ -176,11 +176,18 @@ def create_app(settings=None):
                 state.health_cache = {'at': time.monotonic(), 'model': model, 'online': online}
             cached = state.health_cache
         db = state.db
-        evaluations_done = [ev for ev in db.all_evaluations() if ev['status'] == 'done']
+        from .evaluations import is_evaluation_visible
+        evaluations_done = [ev for ev in db.all_evaluations() if ev['status'] == 'done' and is_evaluation_visible(ev)]
         costs = [ev['usage']['costUsd'] for ev in evaluations_done]
         with db.transaction() as conn:
             metrics = conn.execute("SELECT AVG(CASE WHEN kind='evaluation' THEN latency_ms END) AS avg_ms, SUM(cost_usd) AS cost FROM model_calls").fetchone()
-        return dict(ok=True, model=cached['model'], modelOnline=cached['online'], avgCriterionMs=round(metrics['avg_ms'] or 0, 2), avgEvaluationCostUsd=sum(costs)/len(costs) if costs else 0, totalCostUsd=metrics['cost'] or 0)
+        average_ms = metrics['avg_ms'] or 0
+        if llm_switch.current_mode() != 'fake':
+            timings = [item['latencyMs'] for ev in db.all_evaluations() if is_evaluation_visible(ev)
+                       for item in ev['items'] if not item.get('reused') and item.get('latencyMs') is not None
+                       and (item.get('usage') or {}).get('calls', 0) > 0]
+            average_ms = sum(timings) / len(timings) if timings else 0
+        return dict(ok=True, model=cached['model'], modelOnline=cached['online'], avgCriterionMs=round(average_ms, 2), avgEvaluationCostUsd=sum(costs)/len(costs) if costs else 0, totalCostUsd=metrics['cost'] or 0)
 
     application.mount('/', StaticFiles(directory=str(BASE_DIR.parent / 'web'), html=True), name='web')
     return application

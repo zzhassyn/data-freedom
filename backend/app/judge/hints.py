@@ -167,8 +167,25 @@ def contact_na_allowed(conversation: Conversation | dict, criterion: Criterion |
             criterion = Criterion.model_validate(criterion)
     except ValidationError:
         return False
-    return (criterion.id == 'contact' and _is_original(criterion)
+    return (conversation.channel == 'voice call' and criterion.id == 'contact' and _is_original(criterion)
             and build_hints(conversation)['midRecordingCall'])
+
+
+@lru_cache(maxsize=1)
+def _canonical_contact():
+    seed = json.loads(_SEED_PATH.read_text(encoding='utf-8'))
+    return prepare_criterion(next(item for item in seed['criteria'] if item['id'] == 'contact'))
+
+
+def contextual_na_criteria(conversation: Conversation | dict) -> list[str]:
+    """Derived API hint; it does not mutate the original checklist or transcript."""
+    return ['contact'] if contact_na_allowed(conversation, _canonical_contact()) else []
+
+
+def contextual_na_metadata(conversation: Conversation | dict) -> dict:
+    granted = contextual_na_criteria(conversation)
+    return {'contextualNaCriteria': granted,
+            'contextualNaCriterionHashes': {'contact': _canonical_contact()['contentHash']} if granted else {}}
 
 
 def criterion_clarification(criterion: Criterion | dict) -> str:

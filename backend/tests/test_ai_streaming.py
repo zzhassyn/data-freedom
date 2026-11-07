@@ -88,8 +88,9 @@ def test_provider_identity_invalidates_summary_and_persisted_opinion(seeded_clie
     assert seeded_client.get('/api/conversations/p1-ru-001/summary').json() != first
 
 
-def test_summary_stream_missing_key_fails_before_headers(seeded_client):
-    seeded_client.app.state.settings.judge = 'openrouter'
+@pytest.mark.parametrize('mode', ['openrouter', 'real'])
+def test_summary_stream_missing_key_fails_before_headers(seeded_client, mode):
+    seeded_client.app.state.settings.judge = mode
     response = seeded_client.get('/api/conversations/p1-ru-001/summary?stream=true')
     assert response.status_code == 503
     assert response.json()['error']['code'] == 'model_unavailable'

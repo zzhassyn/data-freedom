@@ -23,7 +23,7 @@ def configure(judge: str = "fake", fake_delay: float = 0.4, settings=None) -> No
 
 
 def _get(kind: str) -> ModuleType:
-    mode = os.getenv("JUDGE", _judge)
+    mode = current_mode()
     if mode not in {"fake", "real", "openrouter"}:
         raise ValueError("JUDGE должен быть fake, real или openrouter")
     module_name = f"app.{kind}.{mode}" if mode in {"fake", "openrouter"} else f"app.{kind}"
@@ -41,6 +41,10 @@ def _get(kind: str) -> ModuleType:
         fake = importlib.import_module(f"app.{kind}.fake")
         fake.DELAY_SECONDS = _fake_delay
     return module
+
+
+def current_mode() -> str:
+    return os.getenv("JUDGE", _judge)
 
 
 def get_judge() -> ModuleType:
