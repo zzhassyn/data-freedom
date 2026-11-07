@@ -35,6 +35,7 @@ class Settings:
     judge_concurrency: int = field(default_factory=lambda: int(os.getenv('JUDGE_CONCURRENCY', '8')))
     fake_delay: float = field(default_factory=lambda: float(os.getenv('FAKE_DELAY', '0.4')))
     auto_summarize: bool = field(default_factory=lambda: os.getenv('AUTO_SUMMARIZE', '1') == '1')
+    auto_evaluate_imports: bool = field(default_factory=lambda: env_bool('AUTO_EVALUATE_IMPORTS', True))
     openrouter_api_key: str = field(default_factory=lambda: os.getenv('OPENROUTER_API_KEY', ''), repr=False)
     stt_enabled: bool = field(default_factory=lambda: env_bool('STT_ENABLED', True))
     stt_model: str = field(default_factory=lambda: os.getenv('STT_MODEL', 'elevenlabs/scribe-v2'))

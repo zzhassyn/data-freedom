@@ -13,6 +13,7 @@ def no_live_stt(monkeypatch):
     """Imports in ordinary tests must never submit paid transcription requests."""
     monkeypatch.setenv('STT_ENABLED', 'false')
     monkeypatch.setenv('OPENROUTER_API_KEY', '')
+    monkeypatch.setenv('AUTO_EVALUATE_IMPORTS', 'false')
 
 
 @pytest.fixture

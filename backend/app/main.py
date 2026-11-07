@@ -60,19 +60,23 @@ def create_app(settings=None):
     async def lifespan(application):
         from .checklists import seed_checklist
         from .evaluations import EvaluationQueue
+        from .stt.service import TranscriptionQueue
         application.state.settings = config
         application.state.db = Database(config.db_path)
         seed_checklist(application.state.db)
         llm_switch.configure(config.judge, config.fake_delay)
         application.state.queue = EvaluationQueue(application.state.db, config)
+        application.state.stt = TranscriptionQueue(application.state.db, config)
         application.state.background_tasks = set()
         application.state.health_cache = None
         application.state.health_lock = asyncio.Lock()
         application.state.source_lock = asyncio.Lock()
         await application.state.queue.start()
+        await application.state.stt.start()
         try:
             yield
         finally:
+            await application.state.stt.close()
             for task in application.state.background_tasks:
                 task.cancel()
             await asyncio.gather(*application.state.background_tasks, return_exceptions=True)
@@ -129,8 +133,8 @@ def create_app(settings=None):
         logger.error('Request failed on %s (%s)', request.url.path, type(exc).__name__)
         return error_response('internal_error', 'Не удалось обработать запрос. Повторите попытку', 500)
 
-    from . import conversations, checklists, evaluations, appeals, apply, stats, extras, export, operators
-    for feature in (conversations, checklists, evaluations, appeals, apply, stats, extras, export, operators):
+    from . import conversations, checklists, evaluations, appeals, apply, stats, extras, export, operators, stt
+    for feature in (conversations, checklists, evaluations, appeals, apply, stats, extras, export, operators, stt):
         application.include_router(feature.router)
 
     @application.get('/api/health')

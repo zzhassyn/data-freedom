@@ -99,6 +99,7 @@ def import_steps(db, payload, group_id, audio_allowed_hosts=AUDIO_ALLOWED_HOSTS,
     rejected_audio = []
     records = normalize_records(payload, group_id, audio_allowed_hosts, rejected_audio)
     imported, updated = 0, 0
+    new_ids, existing_ids = [], []
     yield dict(stage='importing', processed=0, total=len(records))
     with db.transaction() as conn:
         existing = {c['id']: c for c in db.all_conversations(conn)}
@@ -106,22 +107,27 @@ def import_steps(db, payload, group_id, audio_allowed_hosts=AUDIO_ALLOWED_HOSTS,
             old = existing.get(record['id'])
             if old is None:
                 imported += 1
+                new_ids.append(record['id'])
             elif old['transcriptHash'] != record['transcriptHash']:
                 updated += 1
             else:
                 record['importedAt'] = old['importedAt']
+            if old is not None:
+                existing_ids.append(record['id'])
             if old and old['transcriptHash'] != record['transcriptHash']:
                 db.invalidate_cache('summary', record['id'], conn)
                 db.invalidate_cache('translation', record['id'], conn)
             db.save_conversation(record, conn)
             yield dict(stage='importing', processed=index, total=len(records))
         total = conn.execute('SELECT COUNT(*) FROM conversations WHERE group_id=?', (group_id,)).fetchone()[0]
-        result = dict(groupId=group_id, imported=imported, updated=updated, total=total, audioRejected=len(rejected_audio))
+        result = dict(groupId=group_id, imported=imported, updated=updated, unchanged=len(records)-imported-updated,
+                      total=total, audioRejected=len(rejected_audio))
         if source:
             result = dict(imported=imported, updated=updated, unchanged=len(records)-imported-updated,
                           total=len(records), lastSyncAt=utcnow())
             db.set_setting('lastSyncAt', result['lastSyncAt'], conn)
             db.set_setting('lastResult', {k: result[k] for k in ('imported', 'updated', 'unchanged')}, conn)
+        result.update(newConversationIds=new_ids, existingConversationIds=existing_ids)
     yield dict(stage='done', result=result, ids=[r['id'] for r in records])
 
 
@@ -142,6 +148,19 @@ def schedule_summaries(request, ids):
         if not t.cancelled() and t.exception():
             log.error('Background summaries failed (%s)', type(t.exception()).__name__)
     task.add_done_callback(finished)
+
+
+async def schedule_import_work(request, result):
+    """Only new records auto-process; existing records await the user's choice."""
+    ids = result['newConversationIds']
+    queued = request.app.state.stt.enqueue(ids)
+    result.update(sttQueued=len(queued), sttConversationIds=queued, evaluationJob=None)
+    if ids and request.app.state.settings.auto_evaluate_imports:
+        checklist = request.app.state.db.get_checklist('active')
+        accepted = await request.app.state.queue.submit(ids, checklist['id'], reuse=False)
+        result['evaluationJob'] = {**accepted, 'checklistId': checklist['id'],
+                                   'checklistVersion': checklist['version'], 'reuse': False}
+    schedule_summaries(request, ids)
 
 
 def source_group(body):
@@ -176,7 +195,7 @@ async def import_dataset(request: Request):
     group_id = source_group(await request.json())
     payload = await fetch_dataset(request, group_id)
     result, ids = import_records(request.app.state.db, payload, group_id, request.app.state.settings.audio_allowed_hosts)
-    schedule_summaries(request, ids)
+    await schedule_import_work(request, result)
     return result
 
 
@@ -225,7 +244,8 @@ async def sync_source(request: Request):
                     if isinstance(step, Exception):
                         raise step
                     if step['stage'] == 'done':
-                        schedule_summaries(request, step.pop('ids'))
+                        step.pop('ids')
+                        await schedule_import_work(request, step['result'])
                     yield step
                     if step['stage'] == 'done':
                         break
@@ -257,7 +277,7 @@ async def sync_source(request: Request):
 @router.post('/conversations/upload')
 async def upload(request: Request):
     result, ids = import_records(request.app.state.db, await request.json(), 'UPLOAD', request.app.state.settings.audio_allowed_hosts)
-    schedule_summaries(request, ids)
+    await schedule_import_work(request, result)
     return result
 
 

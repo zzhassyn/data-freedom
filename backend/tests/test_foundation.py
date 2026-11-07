@@ -29,6 +29,11 @@ def error(response, status, code):
     return body['error']['message']
 
 
+def import_work(new_ids, existing_ids):
+    return {'newConversationIds': new_ids, 'existingConversationIds': existing_ids,
+            'sttQueued': 0, 'sttConversationIds': [], 'evaluationJob': None}
+
+
 def install_transport(monkeypatch, handler):
     actual_client = httpx.AsyncClient
     opened = []
@@ -50,10 +55,13 @@ def public_audio_dns(monkeypatch):
 
 def test_dev_upload_is_idempotent_and_public_conversation_matches_contract(client, dev_payload):
     first = client.post('/api/conversations/upload', json=dev_payload)
-    assert first.json() == {'groupId': 'UPLOAD', 'imported': 65, 'updated': 0, 'total': 65, 'audioRejected': 0}
+    ids = [r['conversation_id'] for r in dev_payload['data']['records']]
+    assert first.json() == {'groupId': 'UPLOAD', 'imported': 65, 'updated': 0, 'unchanged': 0,
+                            'total': 65, 'audioRejected': 0, **import_work(ids, [])}
     before = client.get('/api/conversations/p4-ru-001').json()
     second = client.post('/api/conversations/upload', json=dev_payload)
-    assert second.json() == {'groupId': 'UPLOAD', 'imported': 0, 'updated': 0, 'total': 65, 'audioRejected': 0}
+    assert second.json() == {'groupId': 'UPLOAD', 'imported': 0, 'updated': 0, 'unchanged': 65,
+                             'total': 65, 'audioRejected': 0, **import_work([], ids)}
     after = client.get('/api/conversations/p4-ru-001').json()
     assert before == after
     Conversation.model_validate(after)
@@ -79,7 +87,8 @@ def test_turn_indexes_duplicates_and_seven_digit_iso_timestamps_are_preserved(cl
         {'timestamp': '2026-11-03T18:10:01.8888249+05:00', 'speaker': 'operator', 'text': 'Ответ'},
     ])
     response = client.post('/api/conversations/upload', json=[chat, call])
-    assert response.json() == {'groupId': 'UPLOAD', 'imported': 2, 'updated': 0, 'total': 2, 'audioRejected': 0}
+    assert response.json() == {'groupId': 'UPLOAD', 'imported': 2, 'updated': 0, 'unchanged': 0,
+                               'total': 2, 'audioRejected': 0, **import_work(['test-1', 'call-1'], [])}
     actual = client.get('/api/conversations/test-1').json()['transcript']
     assert [turn['tSec'] for turn in actual] == [0, 2, 2, 3, 4]
     assert [turn['idx'] for turn in actual] == [0, 1, 2, 3, 4]
@@ -150,7 +159,8 @@ def test_stale_evaluation_is_retained_but_not_listed_as_current_done(seeded_clie
     raw = deepcopy(next(r for r in dev_payload['data']['records'] if r['conversation_id'] == 'p1-ru-001'))
     raw['transcript'][0]['text'] += ' Дополнительный вопрос.'
     changed = seeded_client.post('/api/conversations/upload', json=[raw])
-    assert changed.json() == {'groupId': 'UPLOAD', 'imported': 0, 'updated': 1, 'total': 65, 'audioRejected': 0}
+    assert changed.json() == {'groupId': 'UPLOAD', 'imported': 0, 'updated': 1, 'unchanged': 0,
+                              'total': 65, 'audioRejected': 0, **import_work([], ['p1-ru-001'])}
     stale = seeded_client.get('/api/conversations', params={'status': 'stale'}).json()['items']
     assert [r['id'] for r in stale] == ['p1-ru-001']
     assert stale[0]['lastEvaluation']['status'] == 'stale'
@@ -176,7 +186,9 @@ def test_live_import_adapter_encodes_group_and_retries_once(client, dev_payload,
     opened = install_transport(monkeypatch, upstream)
     response = client.post('/api/datasets/import', json={'groupId': 'DEV & контроль'})
     assert response.status_code == 200, response.text
-    assert response.json() == {'groupId': 'DEV & контроль', 'imported': 65, 'updated': 0, 'total': 65, 'audioRejected': 0}
+    ids = [r['conversation_id'] for r in dev_payload['data']['records']]
+    assert response.json() == {'groupId': 'DEV & контроль', 'imported': 65, 'updated': 0, 'unchanged': 0,
+                               'total': 65, 'audioRejected': 0, **import_work(ids, [])}
     assert len(requests) == 2
     assert requests[-1].url.params['group_id'] == 'DEV & контроль'
     assert requests[-1].url.params['sig'] == 'test-signature'

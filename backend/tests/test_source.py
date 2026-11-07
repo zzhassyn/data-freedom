@@ -30,7 +30,8 @@ def test_sync_fetches_fresh_data_and_preserves_stale_history(client, dev_payload
     first = client.post('/api/source/sync', json={})
     assert first.status_code == 200, first.text
     result = first.json()
-    assert set(result) == {'imported', 'updated', 'unchanged', 'total', 'lastSyncAt'}
+    assert set(result) == {'imported', 'updated', 'unchanged', 'total', 'lastSyncAt',
+                           'newConversationIds', 'existingConversationIds', 'sttQueued', 'sttConversationIds', 'evaluationJob'}
     assert (result['imported'], result['updated'], result['unchanged'], result['total']) == (65, 0, 0, 65)
     ev = evaluate(client)[0]
     before = client.get('/api/conversations/p1-ru-001').json()
