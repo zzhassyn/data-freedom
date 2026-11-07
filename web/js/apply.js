@@ -25,10 +25,15 @@
     let run = readRun(target.version), mode = "version", selected = new Set(), searchText = "", sort = "delta", resultError = "";
     const fetching = new Set();
     const versions = [...DA.state.checklists].sort((a, b) => b.version - a.version);
-    const current = DA.bulk?.current();
-    let sourceVersion = (current?.source === "apply" && Number(current.toVersion) === target.version && !["done", "failed"].includes(current.status) ? Number(current.fromVersion) : null) || run?.fromVersion || target.basedOnVersion || versions.find((cl) => cl.version < target.version)?.version || versions.find((cl) => cl.version !== target.version)?.version || target.version;
+    const jobs = () => DA.bulk?.jobs?.() || [DA.bulk?.current()].filter(Boolean);
+    const belongs = (job) => job?.source === "apply" && Number(job.toVersion) === target.version && job.applyRunId;
+    const newest = () => [...jobs()].reverse().find(belongs);
     let ignoredRun = run?.dismissed || null;
+    const current = newest()?.applyRunId === ignoredRun ? null : newest();
+    let pinnedRunId = current?.applyRunId || run?.key || null, pendingRunId = null;
+    let sourceVersion = Number(current?.fromVersion) || run?.fromVersion || target.basedOnVersion || versions.find((cl) => cl.version < target.version)?.version || versions.find((cl) => cl.version !== target.version)?.version || target.version;
     if (run?.dismissed) run = null;
+    if (current && run?.key !== current.applyRunId) run = null;
     // Возврат к сравнению сохраняет точный набор, даже если общий список вырос.
     if (run?.ids) { mode = "manual"; selected = new Set(run.ids); }
     let allEvaluations = [], sourceEvaluations = [], diff = null, baseline = {}, loadError = "", actionError = "";
@@ -61,7 +66,8 @@
           if (busy()) return;
           box.open = false;
           if (cl.version === sourceVersion) return;
-          ignoredRun = run?.key || DA.bulk?.current()?.applyRunId || null;
+          ignoredRun = pinnedRunId || newest()?.applyRunId || null;
+          pinnedRunId = null; pendingRunId = null;
           sourceVersion = cl.version; run = null; actionError = ""; resultError = "";
           saveRun(target.version, { dismissed: ignoredRun, fromVersion: sourceVersion });
           load();
@@ -190,7 +196,7 @@
         h("p", { class: "ap-summary", "aria-live": "polite" }, summary, complete < rows.length ? ` Готово ${complete} из ${rows.length}.` : "", complete > paired.length ? ` У ${complete - paired.length} нет прежнего итога для сравнения.` : ""),
         h("div", { class: "ap-table-wrap" }, h("table", { class: "ap-table" }, h("thead", {}, h("tr", {}, h("th", {}, "Обращение"), h("th", {}, `Версия ${run.fromVersion}`), h("th", {}, `Версия ${target.version}`), h("th", {}, "Разница"), h("th", {}, "Изменившиеся ответы"))), tbody)),
         failed.length ? h("div", { class: "ap-retry" }, h("span", {}, `Не удалось оценить ${failed.length} ${DA.fmt.plural(failed.length, ["обращение", "обращения", "обращений"])}.`), h("button", { class: "da-btn", type: "button", "data-focus": "retry", disabled: busy(), onclick: () => start(failed) }, "Повторить их")) : null,
-        resultError ? h("div", { class: "ap-retry", role: "alert" }, h("span", {}, resultError), h("button", { class: "da-btn", type: "button", "data-focus": "reload", onclick: () => { resultError = ""; receive(DA.bulk.current()); } }, "Обновить сравнение")) : null].filter(Boolean));
+        resultError ? h("div", { class: "ap-retry", role: "alert" }, h("span", {}, resultError), h("button", { class: "da-btn", type: "button", "data-focus": "reload", onclick: () => { resultError = ""; refreshRun(); } }, "Обновить сравнение")) : null].filter(Boolean));
       if (focusId) [...result.querySelectorAll("[data-focus]")].find((node) => node.dataset.focus === focusId)?.focus({ preventScroll: true });
     }
     function loadMissing(item, key) {
@@ -202,20 +208,31 @@
         run.results[item.conversationId] = { status: "done", ...brief(ev) };
         saveRun(target.version, run); renderResults();
       }).catch((error) => {
-        if (!disposed && run?.key === key) { resultError = error.message || "Не удалось загрузить новые итоги"; renderResults(); }
+        if (!disposed && run?.key === key && run.results[item.conversationId]?.id === item.evaluationId) { resultError = error.message || "Не удалось загрузить новые итоги"; renderResults(); }
       }).finally(() => fetching.delete(item.evaluationId));
+    }
+    function refreshRun() {
+      jobs().filter((job) => belongs(job) && job.applyRunId === pinnedRunId).forEach(receive);
     }
     function receive(snapshot) {
       if (disposed) return;
-      if (snapshot?.source === "apply" && Number(snapshot.toVersion) === target.version && Number(snapshot.fromVersion) === sourceVersion && snapshot.applyRunId && snapshot.applyRunId !== ignoredRun) {
+      if (belongs(snapshot) && Number(snapshot.fromVersion) === sourceVersion && snapshot.applyRunId === (pendingRunId || pinnedRunId) && snapshot.applyRunId !== ignoredRun) {
+        if (pendingRunId === snapshot.applyRunId) { pinnedRunId = pendingRunId; pendingRunId = null; }
         if (run?.key !== snapshot.applyRunId) {
           run = { key: snapshot.applyRunId, fromVersion: Number(snapshot.fromVersion), ids: snapshot.selectedIds || snapshot.ids, baseline: snapshot.beforeEvaluations || {}, results: {} };
           if (!starting) { mode = "manual"; selected = new Set(run.ids); if (loaded) renderSetup(); }
         }
+        // Повтор одного обращения создаёт новую оценку, исходная задача больше не может её заменить.
+        const latest = new Map();
+        jobs().filter((job) => belongs(job) && job.applyRunId === pinnedRunId).forEach((job) => {
+          (job.items || []).forEach((item) => latest.set(item.conversationId, item.evaluationId));
+        });
         for (const item of snapshot.items || []) {
+          if (latest.has(item.conversationId) && latest.get(item.conversationId) !== item.evaluationId) continue;
           const ev = item.evaluation;
           // Итог и ответы берутся только из оценки, принадлежащей текущей задаче.
           const old = run.results[item.conversationId];
+          if (old?.id === item.evaluationId && old.status === "done" && item.status !== "done") continue;
           if (item.status === "done" && ev?.id !== item.evaluationId) {
             if (old?.id === item.evaluationId && old.status === "done") continue;
             run.results[item.conversationId] = { status: "loading", id: item.evaluationId, total: null, answers: {} };
@@ -232,12 +249,12 @@
       const chosen = retryIds || ids();
       if (!chosen.length) return;
       const next = retryIds && run ? run : { key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, fromVersion: sourceVersion, ids: chosen, baseline: structuredClone(baseline), results: {} };
-      starting = true; actionError = ""; refreshActions();
+      starting = true; pendingRunId = next.key; actionError = ""; refreshActions();
       try {
         await DA.bulk.start(chosen, { checklistVersion: target.version, reuse: true, source: "apply", fromVersion: next.fromVersion, toVersion: target.version,
           applyRunId: next.key, selectedIds: next.ids, beforeEvaluations: next.baseline });
       } catch (error) { actionError = error.message || "Не удалось начать оценку. Ваш выбор сохранён"; }
-      finally { starting = false; if (!disposed) { refreshActions(); renderResults(); } }
+      finally { starting = false; pendingRunId = null; if (!disposed) { refreshRun(); refreshActions(); renderResults(); } }
     }
     async function load() {
       const request = ++loadId;
@@ -259,6 +276,7 @@
     document.addEventListener("click", outside);
     notice(); load();
     const unsubscribe = DA.bulk?.subscribe(receive);
+    refreshRun();
     return () => { disposed = true; loadId++; unsubscribe?.(); document.removeEventListener("click", outside); };
   };
 })();
