@@ -13,8 +13,7 @@ function environment() {
     location: {}, addEventListener() {}, dispatchEvent() {} };
   context.window = context;
   vm.createContext(context);
-  vm.runInContext(fs.readFileSync(path.join(web, 'data/checklist.js'), 'utf8'), context);
-  context.DA_DEV = { records: [] };
+  vm.runInContext(fs.readFileSync(path.join(web, 'tests/fixtures/checklist.js'), 'utf8'), context);
   for (const file of ['i18n.js', 'core.js']) vm.runInContext(fs.readFileSync(path.join(web, 'js', file), 'utf8'), context);
   const DA = context.DA;
   DA.views = {};
@@ -26,7 +25,6 @@ function environment() {
   DA.state.checklists = [cl, changed];
   DA.state.conversations = { a: { conversation_id: 'a', transcriptHash: 'current', transcript: [] }, b: { conversation_id: 'b', transcriptHash: 'current', transcript: [] } };
   DA.state.numbers = { a: 1, b: 2 };
-  DA.mode = 'server';
   return { DA, cl, context };
 }
 
@@ -47,6 +45,11 @@ test('CSV validates canonical v1 even when active/latest v3 removed its criterio
   assert.equal(labels.rows.length, 1);
   assert.equal(labels.rows[0].criterionId, 'contact');
   assert.throws(() => DA.accuracy.readGold('conversation_id,criterion_id,answer\na,contact,10', 'bad.csv'), /не подходит/);
+});
+
+test('blank CSV template requires an explicit human answer and contains no preset row', () => {
+  const { DA } = environment();
+  assert.throws(() => DA.accuracy.readGold('conversation_id,criterion_id,answer,note\n', 'human-labels-template.csv'), /нет ответов/);
 });
 
 test('duplicate gold pairs and malformed quoted CSV are rejected before they can weight metrics', () => {

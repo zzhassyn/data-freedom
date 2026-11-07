@@ -30,7 +30,7 @@
     "app.backToWork": { ru: "Вернуться к работе", kk: "Жұмысқа оралу", en: "Back to work" }
   });
   const msg = (key) => DA.msg(`app.${key}`);
-  let unmount = null, routeId = 0, routeRequest = null, ready = false;
+  let unmount = null, routeId = 0, routeRequest = null, ready = false, restored = false;
 
   /* Меню по роли. Входа в систему нет, роль выбирается переключателем внизу меню. */
   const NAV = {
@@ -173,6 +173,9 @@
     if (hit) {
       loadingState(hit[1]);
       try {
+        await DA.api.detect();
+        if (current !== routeId || request.signal.aborted) return;
+        if (!restored) { restored = true; DA.bulk?.restore(); DA.stt?.restore(); }
         await DA.data.prepare(hit[1], { id: hit[0][1] ? decodeURIComponent(hit[0][1]) : null,
           evaluationId: query.evaluation, refresh: true, signal: request.signal });
         if (current !== routeId || request.signal.aborted) return;
@@ -191,13 +194,9 @@
   };
 
   async function start() {
-    loadingState("registry");
-    await DA.api.detect();
     DA.initState();
     DA.side = sidebar();
     document.body.prepend(DA.side.mobileBar, DA.side.el, DA.side.scrim);
-    DA.bulk?.restore();
-    DA.stt?.restore();
     ready = true;
     window.addEventListener("hashchange", DA.route);
     await DA.route();

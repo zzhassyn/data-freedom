@@ -177,7 +177,7 @@
     const currentHash = DA.state.conversations[cid]?.transcriptHash;
     const historicAudioChanged = historyView && (!sourceHash || !currentHash || sourceHash !== currentHash);
     const audioHref = DA.audioHref(conv);
-    const canPlay = isCall && audioHref && DA.mode === "server" && !historicAudioChanged && DA.audioPlayer;
+    const canPlay = isCall && audioHref && !historicAudioChanged && DA.audioPlayer;
     const gaps = DA.tx.gaps(conv);
     const firstOp = DA.tx.firstOperatorIdx(conv);
     const turnsBox = h("div", { class: "da-turns" });
@@ -215,9 +215,6 @@
     const canonicalContent = Array.from(turnsBox.childNodes);
 
     if (canPlay) player = DA.audioPlayer({ conversationId: cid, src: audioHref, onTime: playbackTime });
-    const localPlayer = isCall && audioHref && DA.mode !== "server" ? h("div", { class: "da-player da-player-external" },
-      h("a", { class: "da-play", href: audioHref, target: "_blank", rel: "noopener noreferrer", "aria-label": m("listenRecording") }, DA.icon("play")),
-      h("div", {}, h("b", {}, m("recording")), h("div", { class: "da-small da-muted" }, DA.fmt.duration(DA.tx.duration(conv))))) : null;
     const ai = DA.cardAI?.({ conversation: conv, evaluation: ev, historyView, signal: controller.signal,
       onTranscriptChange: () => { if (focused) focusCriterion(ev?.items.find((item) => item.criterionId === focused) || null); } });
     const transcriptTools = h("div", { class: "da-transcript-tools" });
@@ -226,7 +223,7 @@
     sttControls.append(h("h2", { class: "da-transcription-title" }, m("transcript")), sttStatus);
     transcriptTools.append(sttControls);
     if (ai?.translationControl) transcriptTools.append(ai.translationControl);
-    transcript.append(...[bracket, player?.el, localPlayer, ai?.summary,
+    transcript.append(...[bracket, player?.el, ai?.summary,
       historicAudioChanged ? h("p", { class: "da-transcription-status" }, m("historyTranscriptOnly")) : null,
       transcriptTools, turnsBox].filter(Boolean));
 
@@ -375,11 +372,11 @@
       sttStatus.replaceChildren(...[copy ? h("span", { class: !sttError && waiting ? "da-thinking" : "" }, copy) : null,
         action ? h("button", { class: "da-btn is-text is-sm", type: "button", disabled: sttPending, onclick: () => loadTranscription(!sttError) },
           m(sttPending ? "loading" : status === "not_queued" && !sttError ? "transcribe" : "retry")) : null].filter(Boolean));
-      sttStatus.hidden = !copy || !isCall || DA.mode !== "server" || historyView || status === "disabled";
+      sttStatus.hidden = !copy || !isCall || historyView || status === "disabled";
       presentTranscript();
     }
     async function loadTranscription(retry) {
-      if (disposed || sttPending || !isCall || DA.mode !== "server" || historyView) return;
+      if (disposed || sttPending || !isCall || historyView) return;
       clearTimeout(sttTimer); sttPending = true; sttError = ""; renderTranscriptionState();
       try {
         const next = retry ? await DA.api.retryTranscription(cid, { signal: controller.signal }) : await DA.api.getTranscription(cid, { signal: controller.signal });
@@ -597,7 +594,7 @@
           h("span", {}, m("checklistVersion", { version: ev.checklistVersion })),
           ev.checklistVersion !== DA.activeChecklist().version ? h("span", {}, m("activeVersion", { version: DA.activeChecklist().version })) : null,
           h("span", {}, running ? m("modelReading") : ev.status === "failed" ? m("someUnfinished") : m(ev.durationSec != null ? "evaluatedDuration" : "evaluatedAgo", () => ({ ago: DA.fmt.ago(ev.minutesAgo || 0), seconds: Math.max(1, Math.round(ev.durationSec)) }))),
-          DA.mode === "server" && Number.isFinite(ev.usage?.costUsd) && ev.usage.costUsd >= 0 ? h("span", { class: "da-eval-cost",
+          Number.isFinite(ev.usage?.costUsd) && ev.usage.costUsd >= 0 ? h("span", { class: "da-eval-cost",
             title: m("evaluationUsage", () => {
               const count = (value) => Number.isFinite(value) && value >= 0 ? new Intl.NumberFormat(DA.fmt.locale()).format(value) : "—";
               return { calls: count(ev.usage.calls), input: count(ev.usage.inputTokens), output: count(ev.usage.outputTokens) };
@@ -709,7 +706,7 @@
       }
       if (it.status === "failed") node.append(h("div", { class: "da-card-error" },
         h("p", {}, it.explanation || m("criterionFailed")),
-        readOnly ? null : h("button", { class: "da-btn is-sm", disabled: running, onclick: () => runEvaluation(DA.mode === "server" ? "retry" : "start", c.id) }, m("retry"))));
+        readOnly ? null : h("button", { class: "da-btn is-sm", disabled: running, onclick: () => runEvaluation("retry", c.id) }, m("retry"))));
       if (ready) {
         const reveal = h("div", { class: "da-cr-reveal", id: `da-criterion-${c.id}`, "aria-hidden": String(!isOpen) }, h("div", { class: "da-cr-inner" }, critBody(c, it, tone, appeal)));
         reveal.inert = !isOpen;
@@ -933,7 +930,7 @@
     attachDisplayedTranscript();
     renderTranscriptionState();
     refreshAudioMarkers();
-    if (isCall && DA.mode === "server") loadTranscription(false);
+    if (isCall) loadTranscription(false);
     setHeadBusy(running);
     if (running) runEvaluation("resume");
     if (params.query.turn) timers.push(setTimeout(() => jumpTo(+params.query.turn, "yes"), 200));

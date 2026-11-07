@@ -12,6 +12,7 @@
   DA.ApiError = ApiError;
   DA.i18n.addMessages({
     "apiError.network": { ru: "Нет связи с сервером. Проверьте соединение и повторите запрос.", kk: "Сервермен байланыс жоқ. Қосылымды тексеріп, сұрауды қайталаңыз.", en: "Cannot reach the server. Check your connection and try again." },
+    "apiError.server_required": { ru: "Для работы нужен сервер приложения. Откройте адрес запущенного сервера и повторите запрос.", kk: "Жұмыс істеу үшін қолданба сервері қажет. Іске қосылған сервердің мекенжайын ашып, сұрауды қайталаңыз.", en: "The application server is required. Open the running server's address and try again." },
     "apiError.invalid_response": { ru: "Не удалось прочитать ответ сервера. Повторите запрос.", kk: "Сервер жауабын оқу мүмкін болмады. Сұрауды қайталаңыз.", en: "Could not read the server response. Try again." },
     "apiError.interrupted": { ru: "Загрузка прервалась. Проверьте список обращений перед повторной загрузкой.", kk: "Жүктеу үзілді. Қайта жүктемес бұрын өтініштер тізімін тексеріңіз.", en: "The upload was interrupted. Check the conversation list before uploading again." },
     "apiError.not_found": { ru: "Запрошенные данные не найдены. Обновите список и повторите действие.", kk: "Сұралған деректер табылмады. Тізімді жаңартып, әрекетті қайталаңыз.", en: "The requested data was not found. Refresh the list and try again." },
@@ -47,7 +48,7 @@
     "apiError.fallback": { ru: "Не удалось выполнить действие. Повторите запрос.", kk: "Әрекетті орындау мүмкін болмады. Сұрауды қайталаңыз.", en: "Could not complete the action. Try again." },
     "apiError.cancelled": { ru: "Действие отменено.", kk: "Әрекет тоқтатылды.", en: "The action was cancelled." }
   });
-  const localizedErrors = new Set(["network", "invalid_response", "interrupted", "not_found", "model_failed", "model_unavailable",
+  const localizedErrors = new Set(["network", "server_required", "invalid_response", "interrupted", "not_found", "model_failed", "model_unavailable",
     "translation_unavailable", "stt_disabled", "no_audio", "evaluation_not_ready", "evaluation_running", "criterion_not_failed",
     "appeal_exists", "appeal_decided", "comment_too_short", "reason_too_short", "stale_evaluation", "stale_source", "batch_running",
     "no_conversations", "nothing_to_retry", "too_many", "too_large", "forbidden_origin", "upstream_failed", "unavailable",
@@ -142,19 +143,23 @@
   const aiOptions = (options) => ({ ...options, timeout: options?.timeout ?? 120000 });
   const aiGet = (path, options) => get(path, { refresh: options?.refresh, stream: options?.onProgress ? true : undefined }, aiOptions(options));
   let detected;
-  DA.mode = "local";
+  DA.mode = "server";
+  DA.backendAvailable = false;
   DA.api = {
     request,
     detect() {
-      if (!detected) detected = (window.location?.protocol === "file:" ? Promise.resolve("local")
-        : request("/health", { timeout: 2000 }).then((health) => {
-          DA.health = health;
-          return health?.ok === false ? "local" : "server";
-        }, (error) => [404, 405].includes(error.status) ? "local" : "server")).then((mode) => {
-        // A failed server health check must never expose the browser's demo data.
-        DA.mode = mode;
-        DA.backendAvailable = mode === "server";
-        return mode;
+      const unavailable = () => new ApiError("server_required", "Для работы нужен сервер приложения", 0);
+      if (!detected) detected = (window.location?.protocol === "file:" ? Promise.reject(unavailable())
+        : request("/health", { timeout: 5000 })).then((health) => {
+        if (health?.ok === false) throw unavailable();
+        if (health?.ok !== true) throw new ApiError("invalid_response", "Не удалось прочитать ответ сервера", 200);
+        DA.health = health;
+        DA.backendAvailable = true;
+        return DA.mode;
+      }).catch((error) => {
+        detected = null;
+        DA.backendAvailable = false;
+        throw [404, 405].includes(error.status) ? unavailable() : error;
       });
       return detected;
     },
@@ -173,6 +178,7 @@
     getEvaluationConversation: (id, options) => request(`/evaluations/${part(id)}/conversation`, options),
     getCoaching: (id, options) => aiGet(`/evaluations/${part(id)}/coaching`, options),
     startEvaluation: (body, options) => post("/evaluations", body, options),
+    listJobs: (filters, options) => get("/jobs", filters, options),
     getJob: (id, options) => request(`/jobs/${part(id)}`, options),
     retryCriterion: (id, criterionId, options) => post(`/evaluations/${part(id)}/criteria/${part(criterionId)}/retry`, {}, options),
     listChecklists: (options) => request("/checklists", options),

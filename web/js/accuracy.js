@@ -5,6 +5,7 @@
   const t = (key, params) => DA.t("accuracy." + key, params);
   DA.i18n.addMessages({
     "accuracy.emptyFile": { ru: "Файл пустой.", kk: "Файл бос.", en: "The file is empty." },
+    "accuracy.emptyTemplate": { ru: "В шаблоне пока нет ответов. Заполните хотя бы одну строку ручной разметки.", kk: "Үлгіде әлі жауаптар жоқ. Қолмен белгіленген кемінде бір жолды толтырыңыз.", en: "The template has no answers yet. Fill in at least one row of human labels." },
     "accuracy.columns": { ru: "В первой строке нужны столбцы conversation_id, criterion_id и answer.", kk: "Бірінші жолда conversation_id, criterion_id және answer бағандары болуы керек.", en: "The header must include conversation_id, criterion_id and answer." },
     "accuracy.invalidAnswer": { ru: "В строке {line} ответ «{answer}» не подходит к критерию «{criterion}». Допустимо: {allowed}.", kk: "{line}-жолдағы «{answer}» жауабы «{criterion}» критерийіне сәйкес келмейді. Рұқсат етілген жауаптар: {allowed}.", en: "On line {line}, answer “{answer}” is not valid for “{criterion}”. Allowed: {allowed}." },
     "accuracy.noRows": { ru: "В файле нет строк с обращениями и критериями из этого набора.", kk: "Файлда осы жинақтағы өтініштер мен критерийлерге сәйкес жолдар жоқ.", en: "The file has no rows matching conversations and criteria in this dataset." },
@@ -19,7 +20,8 @@
     "accuracy.chooseCsv": { ru: "или нажмите, чтобы выбрать CSV", kk: "немесе CSV таңдау үшін басыңыз", en: "or click to choose a CSV" },
     "accuracy.uploadTitle": { ru: "Загрузите ручную разметку, чтобы сравнить с ней ответы модели", kk: "Модель жауаптарымен салыстыру үшін қолмен белгіленген деректерді жүктеңіз", en: "Upload human labels to compare them with model answers" },
     "accuracy.csvHelp": { ru: "Нужен файл CSV: одна строка на ответ по одному критерию. В ответе yes, no, na или число баллов по шкале.", kk: "CSV файлы қажет: әр жолда бір критерийге берілген жауап. Жауап yes, no, na немесе шкаладағы ұпай саны болуы керек.", en: "Use a CSV with one criterion answer per row. Answers can be yes, no, na, or a numeric score from the scale." },
-    "accuracy.sample": { ru: "Скачать пример файла", kk: "Файл үлгісін жүктеу", en: "Download sample file" },
+    "accuracy.blankTemplate": { ru: "Скачать пустой CSV-шаблон", kk: "Бос CSV үлгісін жүктеу", en: "Download blank CSV template" },
+    "accuracy.templateHelp": { ru: "В шаблоне только названия столбцов. Добавьте ID обращения, ID критерия и свой ответ; примечание необязательно.", kk: "Үлгіде тек баған атаулары бар. Өтініш ID-ін, критерий ID-ін және өз жауабыңызды қосыңыз; ескерту міндетті емес.", en: "The template contains column names only. Add the conversation ID, criterion ID and your answer; the note is optional." },
     "accuracy.replace": { ru: "Заменить разметку", kk: "Белгілеуді ауыстыру", en: "Replace labels" },
     "accuracy.nothingToCompare": { ru: "Сравнить пока не с чем", kk: "Әзірге салыстыратын дерек жоқ", en: "Nothing to compare yet" },
     "accuracy.notEvaluated": { ru: "Для загруженной разметки пока нет готовых оценок по исходной версии чек-листа.", kk: "Жүктелген белгілеу үшін тексеру парағының бастапқы нұсқасы бойынша дайын бағалаулар жоқ.", en: "There are no completed evaluations using the original checklist for these labels yet." },
@@ -48,6 +50,7 @@
     "accuracy.internalTool": { ru: "Внутренний инструмент команды: сравнение ответов модели с ручной разметкой", kk: "Команданың ішкі құралы: модель жауаптарын қолмен белгілеумен салыстыру", en: "Internal team tool for comparing model answers with human labels" }
   });
   const GOLD_KEY = "da.gold";
+  const CSV_COLUMNS = ["conversation_id", "criterion_id", "answer", "note"];
   const one = (x) => new Intl.NumberFormat(DA.fmt.locale(), { maximumFractionDigits: 1 }).format(x);
   const pct = (x) => new Intl.NumberFormat(DA.fmt.locale(), { style: "percent", maximumFractionDigits: 0 }).format(x);
   function goldError(key, params) { return Object.assign(new Error(t(key, params)), { uiMessage: m(key, params) }); }
@@ -63,7 +66,7 @@
     const item = ev.items.find((i) => i.criterionId === criterionId && i.status === "done");
     const c = item && DA.criterionById(DA.checklist(1), criterionId);
     const model = item?.original?.model || item?.model || ev.model;
-    if (DA.mode === "server" && (!ev.model || isFake(ev.model) || !model || isFake(model))) return null;
+    if (!ev.model || isFake(ev.model) || !model || isFake(model)) return null;
     return c && allowedAnswers(c, ev.conversationId).includes(modelAnswer(item)) ? { item, c } : null;
   }
   /* ---------- Точность модели ---------- */
@@ -100,6 +103,7 @@
     const header = rows[0].cells.map((c) => c.toLowerCase());
     const col = Object.fromEntries(["conversation_id", "criterion_id", "answer", "note"].map((k) => [k, header.indexOf(k)]));
     if (col.conversation_id < 0 || col.criterion_id < 0 || col.answer < 0) throw goldError("columns");
+    if (rows.length === 1) throw goldError("emptyTemplate");
     const cl = DA.checklist(1);
     if (!cl) throw goldError("canonicalMissing");
     const out = [], seen = new Set();
@@ -221,8 +225,8 @@
         h("div", { class: "da-ins-gold-intro" },
           h("h2", {}, m("uploadTitle")),
           h("p", { class: "da-muted" }, m("csvHelp")),
-          sampleTable(),
-          h("a", { class: "da-btn is-sm da-ins-download", href: "data/gold-sample.csv", download: "gold-sample.csv" }, DA.icon("upload", 16), m("sample"))),
+          schemaTable(), h("p", { class: "da-small da-muted" }, m("templateHelp")),
+          h("a", { class: "da-btn is-sm da-ins-download", href: `data:text/csv;charset=utf-8,${encodeURIComponent(CSV_COLUMNS.join(",") + "\n")}`, download: "human-labels-template.csv" }, DA.icon("upload", 16), m("blankTemplate"))),
         h("div", { class: "da-ins-gold-drop" }, drop, error));
     }
 
@@ -273,11 +277,9 @@
             DA.icon("chevron", 16)))) : h("p", { class: "da-muted" }, m("allMatch"))));
   }
 
-  function sampleTable() {
-    const rows = [["p1-ru-007", "contact", "yes", ""], ["p1-ru-007", "identification", "na", ""], ["p1-ru-007", "consultation", "5", "Не ответил, когда снова подавать на вывод"]];
+  function schemaTable() {
     return h("div", { class: "da-ins-sample" }, h("table", {},
-      h("thead", {}, h("tr", {}, ["conversation_id", "criterion_id", "answer", "note"].map((c) => h("th", {}, c)))),
-      h("tbody", {}, rows.map((r) => h("tr", {}, r.map((c) => h("td", {}, c)))))));
+      h("thead", {}, h("tr", {}, CSV_COLUMNS.map((c) => h("th", {}, c))))));
   }
 
   DA.views.accuracy = function mount(root) {

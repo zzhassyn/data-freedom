@@ -252,7 +252,7 @@
 
   /* Повторная проверка помогает человеку выбрать ответ, но не принимает решение. */
   function secondOpinionBlock(appeal, c, conv, hooks) {
-    if (!DA.backendAvailable || (appeal.status !== "open" && !appeal.secondOpinion)) return null;
+    if (appeal.status !== "open" && !appeal.secondOpinion) return null;
     const node = h("section", { class: "rv-side rv-opinion", "aria-label": m("secondCheck") });
     const controller = new AbortController();
     let opinion = appeal.secondOpinion || null, busy = false, disposed = false, error = "", returnFocus = false;

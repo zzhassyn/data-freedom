@@ -40,7 +40,7 @@
   DA.cardAI = function create(options) {
     const conv = options.conversation;
     // Эти маршруты работают с текущим диалогом, а не с сохранённым снимком оценки.
-    if (DA.mode !== "server" || options.historyView || !conv) return emptyController();
+    if (options.historyView || !conv) return emptyController();
     const cid = conv.conversation_id, originalKey = sourceKey(conv);
     const controller = new AbortController();
     let disposed = false, summaryData = null, collapsed = false;
