@@ -216,6 +216,7 @@
   let evaluationsRead = 0, appealsRead = 0;
   const polls = new Map();
   const jobMetadata = new Map();
+  const reopenedAt = new Map();
   const time = (value) => typeof value === "number" ? value : value ? Date.parse(value) : null;
   const emit = (name) => window.dispatchEvent(new CustomEvent(name));
   const failure = (code, message) => new DA.ApiError(code, message, 0);
@@ -477,6 +478,7 @@
       if (opts.signal?.aborted) throw new DOMException("Действие прервано", "AbortError");
       const revision = epoch.value;
       const raw = await DA.api.getEvaluation(id, { signal: opts.signal });
+      if ((reopenedAt.get(id) || 0) > revision) continue;
       const current = DA.state.evaluations[raw.conversationId];
       const latest = summaries.get(raw.conversationId)?.lastEvaluation;
       const ev = revision !== epoch.value && current?.id === id ? current : retainEvaluationProgress(evaluation(raw));
@@ -531,6 +533,33 @@
     return { ...job, items, finishedAt, durationSec: elapsed,
       checklistVersion: job.checklistVersion || items.find((item) => item.evaluation)?.evaluation.checklistVersion,
       usage: job.usage ?? null };
+  }
+  /* Явная граница повторного запуска из свежего списка активных задач.
+     Обычные запоздавшие ответы опроса по-прежнему не откатывают готовый результат. */
+  function reopenJob(raw) {
+    const terminal = (value) => value && ["done", "failed"].includes(value.status);
+    if (!raw?.id || !["queued", "running"].includes(raw.status)) return [];
+    const known = DA.state.jobs[raw.id];
+    if (known && !terminal(known)) return [];
+    const active = (raw.items || []).filter((item) => item.conversationId && item.evaluationId && ["queued", "running"].includes(item.status));
+    if (!active.length) return [];
+    const reopened = [];
+    for (const item of active) {
+      const current = DA.state.evaluations[item.conversationId];
+      const historical = DA.state.evaluationHistory[item.evaluationId];
+      const cached = current?.id === item.evaluationId ? current : historical;
+      const summary = summaries.get(item.conversationId);
+      if (summary?.lastEvaluation?.id === item.evaluationId) summary.lastEvaluation = current && current.id !== item.evaluationId
+        ? { id: current.id, status: current.status } : { ...summary.lastEvaluation, status: item.status };
+      if (!terminal(cached)) continue;
+      if (terminal(historical)) delete DA.state.evaluationHistory[item.evaluationId];
+      if (current?.id === item.evaluationId && terminal(current)) delete DA.state.evaluations[item.conversationId];
+      reopened.push(item.evaluationId);
+    }
+    epoch.value++;
+    active.forEach((item) => reopenedAt.set(item.evaluationId, epoch.value));
+    DA.state.jobs[raw.id] = { ...known, ...raw, items: raw.items.map((item) => ({ ...item })) };
+    return reopened;
   }
   function registerBatch(started, cl, options, replaceCurrent) {
     const opts = options || {}, ids = Object.keys(started.evaluationIds);
@@ -689,7 +718,7 @@
     return DA.state;
   }
   DA.data = { prepare, conversations, checklists, evaluation: getEvaluation, evaluations, appeals, appealContext, cardContext,
-    evaluate, watchEvaluation, retryCriterion, startBatch, adoptBatch, getJob, watchJob, retryBatch,
+    evaluate, watchEvaluation, retryCriterion, startBatch, adoptBatch, reopenJob, getJob, watchJob, retryBatch,
     history, evaluationById, latestEvaluations, diffChecklists, compareChecklists, createAppeal, decideAppeal, secondOpinion, saveChecklist, activateChecklist, stats,
     invalidate, refresh: () => prepare("registry", { refresh: true }),
     normalizeConversation: conversation, normalizeEvaluation: evaluation };

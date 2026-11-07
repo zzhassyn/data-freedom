@@ -520,3 +520,172 @@ test('a multi-item job keeps newer card progress while another evaluation read i
   assert.equal(DA.state.evaluations.fixture.total, 93.75);
   assert.equal(job.items[0].evaluation.status, 'done');
 });
+
+async function terminalReopenFixture(terminalStatus = 'failed') {
+  const env = fixtureServer();
+  const originalUsage = { inputTokens: 120, outputTokens: 30, calls: 1, costUsd: 0.003 };
+  const itemUsage = { inputTokens: 50, outputTokens: 10, calls: 1, costUsd: 0.001 };
+  Object.assign(env.ev, { status: terminalStatus, total: terminalStatus === 'done' ? 93.75 : null, usage: originalUsage });
+  env.ev.items = env.ev.items.map((item, index) => ({ ...item, status: terminalStatus === 'failed' && index === 0 ? 'failed' : 'done', usage: itemUsage }));
+  const completed = rawEvaluation(env.cl, { id: 'ev_completed_other', conversationId: 'completed_other',
+    usage: { inputTokens: 80, outputTokens: 20, calls: 1, costUsd: 0.002 } });
+  const originalJob = { id: 'job_reopen', status: terminalStatus, total: 2, done: terminalStatus === 'done' ? 2 : 1,
+    failed: terminalStatus === 'failed' ? 1 : 0, startedAt: '2026-11-01T10:00:00Z', finishedAt: '2026-11-01T10:02:00Z',
+    checklistVersion: env.cl.version, usage: { inputTokens: 200, outputTokens: 50, calls: 2, costUsd: 0.005 },
+    items: [{ conversationId: 'fixture', evaluationId: env.ev.id, status: terminalStatus },
+      { conversationId: completed.conversationId, evaluationId: completed.id, status: 'done' }] };
+  const model = { job: json(originalJob), target: json(env.ev) }, requests = [];
+  const baseFetch = env.context.fetch;
+  env.context.fetch = (url, options = {}) => {
+    requests.push({ url, method: options.method || 'GET' });
+    if (url === '/api/jobs/' + originalJob.id) return Promise.resolve(reply(model.job));
+    if (url === '/api/evaluations/' + env.ev.id) return Promise.resolve(reply(model.target));
+    if (url === '/api/evaluations/' + completed.id) return Promise.resolve(reply(completed));
+    return baseFetch(url, options);
+  };
+  await env.DA.data.prepare('registry', { refresh: true });
+  await env.DA.data.getJob(originalJob.id);
+  const resume = (status = 'running') => {
+    model.target = { ...json(env.ev), status, total: null, finishedAt: null,
+      usage: { inputTokens: 240, outputTokens: 60, calls: 2, costUsd: 0.006 },
+      items: env.ev.items.map((item, index) => index ? json(item) : { ...json(item), status, answer: null,
+        usage: { inputTokens: 170, outputTokens: 40, calls: 2, costUsd: 0.004 } }) };
+    model.job = { ...json(originalJob), status, done: 1, failed: 0, finishedAt: null,
+      usage: { inputTokens: 320, outputTokens: 80, calls: 3, costUsd: 0.008 },
+      items: originalJob.items.map((item, index) => ({ ...item, status: index ? 'done' : status })) };
+    return json(model.job);
+  };
+  const noPost = () => assert.deepEqual(requests.filter(request => request.method !== 'GET'), [], 'reopening and polling must not submit work');
+  return { ...env, originalJob, completed, originalUsage, itemUsage, model, requests, resume, noPost };
+}
+
+test('a normal stale job poll cannot replace a terminal evaluation with running data', async t => {
+  for (const terminalStatus of ['done', 'failed']) await t.test(terminalStatus, async () => {
+    const env = await terminalReopenFixture(terminalStatus);
+    env.resume();
+    const job = await env.DA.data.getJob(env.originalJob.id);
+    assert.equal(job.items[0].evaluation.status, terminalStatus);
+    assert.equal(env.DA.state.evaluations.fixture.status, terminalStatus);
+    assert.deepEqual(json(job.items[0].evaluation.usage), env.originalUsage);
+    env.noPost();
+  });
+});
+
+test('explicit reopen admits fresh queued/running data and preserves completed records and cumulative API usage', async t => {
+  for (const status of ['queued', 'running']) await t.test(status, async () => {
+    const env = await terminalReopenFixture();
+    const completed = env.DA.state.evaluations.completed_other;
+    const completedHistory = env.DA.state.evaluationHistory[env.completed.id];
+    const unrelatedJob = env.DA.state.jobs.unrelated = { id: 'unrelated', status: 'done', items: [], usage: { costUsd: 0.25 } };
+    if (status === 'queued') delete env.DA.state.jobs[env.originalJob.id]; // caller can know a terminal UI job before core cached it
+    const active = env.resume(status), requestsBefore = env.requests.length;
+    assert.deepEqual(json(env.DA.data.reopenJob(active)), [env.ev.id]);
+    assert.equal(env.requests.length, requestsBefore, 'the explicit boundary is a cache operation only');
+    assert.equal(env.DA.state.evaluations.fixture, undefined);
+    assert.equal(env.DA.state.evaluationHistory[env.ev.id], undefined);
+    assert.equal(env.DA.state.evaluations.completed_other, completed);
+    assert.equal(env.DA.state.evaluationHistory[env.completed.id], completedHistory);
+    assert.equal(env.DA.state.jobs.unrelated, unrelatedJob);
+    assert.equal(env.DA.state.jobs[active.id].status, status);
+    const job = await env.DA.data.getJob(active.id);
+    assert.equal(job.items[0].evaluation.status, status);
+    assert.equal(env.DA.state.evaluations.fixture.status, status);
+    assert.deepEqual(json(job.usage), active.usage);
+    assert.deepEqual(json(job.items[0].evaluation.usage), env.model.target.usage);
+    assert.deepEqual(json(job.items[0].evaluation.items[0].usage), env.model.target.items[0].usage);
+    assert.deepEqual(json(job.items[0].evaluation.items[1].usage), env.itemUsage, 'completed criterion usage is retained');
+    assert.deepEqual(json(job.items[1].evaluation.usage), env.completed.usage, 'completed conversation usage is retained');
+    const resumed = env.DA.state.evaluations.fixture;
+    assert.deepEqual(json(env.DA.data.reopenJob(active)), [], 'an already active cached job is not reset a second time');
+    assert.equal(env.DA.state.evaluations.fixture, resumed);
+    env.noPost();
+  });
+});
+
+test('reopen and subsequent polling preserve a newer current ID despite an older summary pointer', async t => {
+  for (const keepOldHistory of [true, false]) await t.test(keepOldHistory ? 'old history cached' : 'old history absent', async () => {
+    const env = await terminalReopenFixture();
+    const newer = env.DA.data.normalizeEvaluation({ ...env.ev, id: 'ev_newer_current', status: 'done', total: 88,
+      usage: { inputTokens: 400, outputTokens: 90, calls: 4, costUsd: 0.02 } });
+    env.DA.state.evaluations.fixture = newer;
+    env.DA.state.evaluationHistory[newer.id] = newer;
+    if (!keepOldHistory) delete env.DA.state.evaluationHistory[env.ev.id];
+    const active = env.resume();
+    assert.deepEqual(json(env.DA.data.reopenJob(active)), keepOldHistory ? [env.ev.id] : []);
+    assert.equal(env.DA.state.evaluations.fixture, newer);
+    const job = await env.DA.data.getJob(active.id);
+    assert.equal(job.items[0].evaluation.id, env.ev.id, 'job still shows the explicitly reopened evaluation');
+    assert.equal(job.items[0].evaluation.status, 'running');
+    assert.equal(env.DA.state.evaluations.fixture, newer, 'old job must not replace the newer current evaluation');
+    assert.equal(env.DA.state.evaluationHistory[newer.id], newer);
+    assert.equal(env.DA.state.evaluationHistory[env.ev.id].status, 'running');
+    env.noPost();
+  });
+});
+
+test('inactive raw jobs/items and already active cached jobs do not clear terminal results', async t => {
+  const variants = [
+    ['raw job done', raw => { raw.status = 'done'; }],
+    ['raw job failed', raw => { raw.status = 'failed'; }],
+    ['all raw items done', raw => { raw.items.forEach(item => { item.status = 'done'; }); }],
+    ['all raw items failed', raw => { raw.items.forEach(item => { item.status = 'failed'; }); }],
+    ['cached job running', (_raw, env) => { env.DA.state.jobs[env.originalJob.id].status = 'running'; }],
+    ['cached job queued', (_raw, env) => { env.DA.state.jobs[env.originalJob.id].status = 'queued'; }]
+  ];
+  for (const [name, change] of variants) await t.test(name, async () => {
+    const env = await terminalReopenFixture(), raw = env.resume();
+    change(raw, env);
+    const before = json(env.DA.state), requestsBefore = env.requests.length;
+    assert.deepEqual(json(env.DA.data.reopenJob(raw)), []);
+    assert.deepEqual(json(env.DA.state), before);
+    assert.equal(env.requests.length, requestsBefore);
+    env.noPost();
+  });
+});
+
+test('reopen invalidates an in-flight old job read and returns a fresh active snapshot', async () => {
+  const env = await terminalReopenFixture();
+  const baseFetch = env.context.fetch;
+  let release, jobReads = 0;
+  env.context.fetch = (url, options) => {
+    if (url === '/api/jobs/' + env.originalJob.id && ++jobReads === 1) return new Promise(resolve => { release = resolve; });
+    return baseFetch(url, options);
+  };
+  const loading = env.DA.data.getJob(env.originalJob.id);
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  const active = env.resume();
+  env.DA.data.reopenJob(active);
+  release(reply(env.originalJob));
+  const refreshed = await loading;
+  assert.equal(jobReads, 2, 'the pre-reopen response must trigger a new API read');
+  assert.equal(refreshed.status, 'running');
+  assert.equal(refreshed.items[0].evaluation.status, 'running');
+  assert.equal(env.DA.state.jobs[active.id].status, 'running');
+  assert.deepEqual(json(refreshed.usage), active.usage);
+  env.noPost();
+});
+
+test('reopen prevents an old evaluation watcher from emitting or completing with a stale terminal result', async () => {
+  const env = await terminalReopenFixture();
+  const baseFetch = env.context.fetch;
+  let release, evaluationReads = 0;
+  env.context.fetch = (url, options) => {
+    if (url === '/api/evaluations/' + env.ev.id && ++evaluationReads === 1) return new Promise(resolve => { release = resolve; });
+    return baseFetch(url, options);
+  };
+  const progress = [], controller = new AbortController();
+  const watching = env.DA.data.watchEvaluation(env.ev.id, { signal: controller.signal, onProgress: evaluation => {
+    progress.push(evaluation.status);
+    if (evaluation.status === 'running') controller.abort();
+  } });
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  const active = env.resume();
+  env.DA.data.reopenJob(active);
+  release(reply(env.ev));
+  await assert.rejects(watching, error => error.name === 'AbortError');
+  assert.equal(evaluationReads, 2);
+  assert.deepEqual(progress, ['running'], 'only fresh resumed progress may reach the caller');
+  assert.equal(env.DA.state.evaluations.fixture.status, 'running');
+  assert.deepEqual(json(env.DA.state.evaluations.fixture.usage), env.model.target.usage);
+  env.noPost();
+});

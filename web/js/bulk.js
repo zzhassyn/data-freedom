@@ -31,6 +31,7 @@
     "bulk.checkEvaluation": { ru: "Проверить оценку", kk: "Бағалауды тексеру", en: "Check evaluation" },
     "bulk.failedCount": { ru: "Не удалось оценить {count}", kk: "{count} өтінішті бағалау мүмкін болмады", en: "Failed to evaluate {count}" },
     "bulk.ready": { ru: "Готово", kk: "Дайын", en: "Done" },
+    "bulk.evaluationReady": { ru: "Оценка завершена", kk: "Бағалау аяқталды", en: "Evaluation complete" },
     "bulk.progressCount": { ru: "Оценка {done} из {total}", kk: "Бағалау: {total} ішінен {done}", en: "Evaluating {done} of {total}" },
     "bulk.moreEvaluations": {
       ru: { one: "Ещё {count} оценка", few: "Ещё {count} оценки", many: "Ещё {count} оценок", other: "Ещё {count} оценки" },
@@ -47,6 +48,11 @@
       ru: { one: "Готово: оценено {count} обращение за {time}", few: "Готово: оценено {count} обращения за {time}", many: "Готово: оценено {count} обращений за {time}", other: "Готово: оценено {count} обращения за {time}" },
       kk: "Дайын: {time} ішінде {count} өтініш бағаланды",
       en: { one: "Done: {count} conversation evaluated in {time}", other: "Done: {count} conversations evaluated in {time}" }
+    },
+    "bulk.finishedWithErrors": {
+      ru: { one: "Оценено {done} из {total} обращения", other: "Оценено {done} из {total} обращений" },
+      kk: "{total} өтініштің {done} бағаланды",
+      en: { one: "{done} of {total} conversation evaluated", other: "{done} of {total} conversations evaluated" }
     },
     "bulk.evaluating": { ru: "Оцениваем обращения: {done} из {total}", kk: "Өтініштер бағалануда: {total} ішінен {done}", en: "Evaluating conversations: {done} of {total}" },
     "bulk.collapse": { ru: "Свернуть", kk: "Жию", en: "Collapse" },
@@ -73,65 +79,85 @@
   };
   const errorMessage = (value, key, detail) => key ? msg(key) : DA.msg(() => DA.apiErrorMessage(detail || { name: "ApiError", message: value }));
   const listeners = new Set(), batches = new Map(), controllers = new Map(), reconnects = new Map(), starts = new Map();
+  const completionTimers = new Map(), restoringJobs = new Set(), savedPreferences = new Map();
   let batch = null, selection = null, starting = 0;
-  let panel = null, panelKind = "", restored = false, hideTimer = null, collapseTimer = null;
+  let panel = null, panelKind = "", restored = false, discoveryTimer = null, discoveryRequest = null;
   let selectionError = "", selectionErrorKey = null, selectionErrorDetail = null, version = null;
 
   const terminal = (job) => job && ["done", "failed"].includes(job.status);
+  const obsoleteJob = (error) => error.code === "provider_changed" || error.code === "not_found" || error.status === 404;
   const running = (job) => job && !job.unavailable && !terminal(job);
   const busy = () => starting > 0 || [...batches.values()].some(running);
   const visibleJobs = () => [...batches.values()].filter((job) => !job.hidden);
+  const serverJobId = (id) => typeof id === "string" && /^job_\d+$/.test(id);
   const elapsedText = (seconds) => {
     const s = Math.max(0, Math.round(seconds || 0)), m = Math.floor(s / 60);
     return text(m ? s % 60 ? "durationBoth" : "durationMinutes" : "durationSeconds", { minutes: m, seconds: s % 60 });
   };
   function save() {
     try {
-      if (!batches.size) sessionStorage.removeItem(KEY);
+      const preferences = new Map(savedPreferences);
+      batches.forEach((job) => preferences.set(job.jobId, { jobId: job.jobId, meta: job.meta,
+        hidden: !!job.hidden, collapsed: !!job.collapsed, completionAt: job.completionAt || 0, wasRunning: running(job) }));
+      if (!preferences.size) sessionStorage.removeItem(KEY);
       else {
-        const snapshots = [...batches.values()].map((job) => ({ ...job, items: job.items.map(({ evaluation, ...item }) => item) }));
-        const stored = { ...snapshots.find((job) => job.jobId === batch?.jobId), mode: DA.mode, focusedJobId: batch?.jobId, jobs: snapshots };
+        // Only operation identity and display preferences survive reload. Job
+        // status/results are fetched from the server before they can be shown.
+        const stored = { mode: DA.mode, schemaVersion: 2, focusedJobId: batch?.jobId, jobs: [...preferences.values()] };
         sessionStorage.setItem(KEY, JSON.stringify(stored));
       }
     } catch (e) { /* Оценка продолжается и без хранилища браузера. */ }
   }
   function publish(changed) {
+    updateCompletionTimers();
     render();
     save();
     listeners.forEach((fn) => fn(changed || batch));
   }
-  function timersOff() { clearTimeout(hideTimer); clearTimeout(collapseTimer); }
+  function updateCompletionTimers() {
+    batches.forEach((job, id) => {
+      clearTimeout(completionTimers.get(id));
+      completionTimers.delete(id);
+      if (!terminal(job) || job.failed || job.error) {
+        if (!terminal(job)) job.completionAt = 0;
+        return;
+      }
+      if (!job.completionAt) job.completionAt = Date.now() + 4000;
+      const remaining = job.completionAt - Date.now();
+      if (remaining <= 0) job.hidden = true;
+      else if (!job.hidden) completionTimers.set(id, setTimeout(() => {
+        completionTimers.delete(id);
+        if (batches.get(id) === job && terminal(job) && !job.failed && job.completionAt <= Date.now()) {
+          const hadFocus = panel?.contains(document.activeElement);
+          job.hidden = true;
+          publish(job);
+          if (hadFocus) (panel?.querySelector("button") || document.querySelector("#da-main h1"))?.focus({ preventScroll: true });
+        }
+      }, remaining));
+    });
+  }
   function hideNotice() {
     if (!batch) return;
     const hadFocus = panel?.contains(document.activeElement);
-    timersOff();
     visibleJobs().forEach((job) => { job.hidden = true; });
     publish();
     batches.forEach((job) => { if (job.hidden && job.error && running(job)) watch(job); });
     if (hadFocus) document.querySelector("#da-main h1")?.focus({ preventScroll: true });
   }
   const dismissButton = () => h("button", { class: "bulk-dismiss", type: "button", "aria-label": msg("dismiss"), title: msg("dismiss"), onclick: hideNotice }, DA.icon("x", 18));
-  function finishLater(job) {
-    if (!job || job.hidden || job !== batch) return;
-    timersOff();
-    collapseTimer = setTimeout(() => {
-      if (batch !== job || job.hidden || !terminal(job)) return;
-      job.collapsed = true;
-      publish(job);
-      if (!job.failed) hideTimer = setTimeout(() => { if (batch === job && terminal(job)) { job.hidden = true; publish(job); } }, 3000);
-    }, 6000);
-  }
   function receive(job) {
     const target = batches.get(job.id);
     if (!target) return;
     const wasDone = terminal(target);
     Object.assign(target, job, { jobId: job.id, error: null, errorKey: null, errorDetail: null, unavailable: false });
-    if (!wasDone && terminal(target) && target === batch) {
-      const next = visibleJobs().find((item) => item !== target && running(item));
-      if (next) { timersOff(); batch = next; }
+    if (!wasDone && terminal(target)) {
+      target.collapsed = true;
+      if (target === batch) {
+        const next = visibleJobs().find((item) => item !== target && running(item));
+        if (next) batch = next;
+      }
     }
     publish(target);
-    if (!wasDone && terminal(target)) finishLater(target);
   }
   async function watch(target = batch) {
     if (!target?.jobId) return;
@@ -149,6 +175,13 @@
       if (!own.signal.aborted) receive(job);
     } catch (error) {
       if (own.signal.aborted || batches.get(id) !== target) return;
+      if (obsoleteJob(error)) {
+        batches.delete(id); savedPreferences.delete(id);
+        clearTimeout(completionTimers.get(id)); completionTimers.delete(id);
+        if (batch === target) batch = null;
+        publish();
+        return;
+      }
       Object.assign(target, errorInfo(error));
       if (error.code === "not_found" || error.status === 404) target.unavailable = true;
       publish(target);
@@ -221,7 +254,12 @@
   async function retryFailed() {
     const old = batch, failed = old.items.filter((item) => item.status === "failed").map((item) => item.conversationId);
     if (!failed.length) return;
-    try { await start(failed, { ...old.meta, checklistVersion: old.checklistVersion, reuse: true, retryOf: old.jobId, allowConcurrent: true }); }
+    try {
+      const replacement = await start(failed, { ...old.meta, checklistVersion: old.checklistVersion, reuse: true, retryOf: old.jobId, allowConcurrent: true });
+      old.hidden = true;
+      old.retriedBy = replacement.jobId;
+      publish(replacement);
+    }
     catch (error) { if (batch === old) { Object.assign(old, errorInfo(error), { collapsed: false }); publish(); } }
   }
   function progressBar() {
@@ -244,10 +282,10 @@
     ring.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle class="bulk-ring-value" cx="12" cy="12" r="9"/></svg>';
     ring.querySelector(".bulk-ring-value").style.strokeDasharray = `${value * 56.55} 56.55`;
     return h("div", { class: "bulk-pill-wrap" },
-      h("button", { class: "bulk-pill", type: "button", onclick: () => { timersOff(); batch.collapsed = false; publish(); } },
+      h("button", { class: "bulk-pill", type: "button", onclick: () => { batch.collapsed = false; publish(); } },
         finished && !batch.failed ? DA.icon("check", 18) : ring,
         h("span", { class: "bulk-pill-label" },
-          h("span", {}, batch.error ? msg("checkEvaluation") : finished ? batch.failed ? msg("failedCount", { count: batch.failed }) : msg("ready") : msg("progressCount", { done, total: batch.total })),
+          h("span", {}, batch.error ? msg("checkEvaluation") : finished ? batch.failed ? msg("failedCount", { count: batch.failed }) : msg("evaluationReady") : msg("progressCount", { done, total: batch.total })),
           other ? h("small", {}, msg("moreEvaluations", { count: other })) : null)),
       dismissButton());
   }
@@ -256,7 +294,7 @@
     if (jobs.length < 2) return null;
     return h("div", { class: "bulk-jobs", role: "group", "aria-label": msg("jobsLabel") }, jobs.map((job, index) =>
       h("button", { class: "bulk-job", type: "button", "data-bulk-focus": job.jobId, "aria-pressed": String(job === batch),
-        onclick: () => { timersOff(); batch = job; job.collapsed = false; publish(job); } },
+        onclick: () => { batch = job; job.collapsed = false; publish(job); } },
       h("b", {}, msg("evaluationNumber", { number: index + 1 })),
       h("span", {}, job.unavailable ? msg("missingJob") : job.error ? msg("offline") : msg("countOf", { done: job.done + job.failed, total: job.total })),
       job.failed ? h("small", {}, msg("errorCount", { count: job.failed })) : null)));
@@ -265,11 +303,12 @@
     const finished = terminal(batch), settled = batch.done + batch.failed;
     const job = batch;
     const title = h("b", { class: "bulk-progress-title", "aria-live": "polite" }, finished
-      ? msg("finished", () => ({ count: job.done, time: elapsedText(job.durationSec) }))
+      ? job.failed ? msg("finishedWithErrors", { count: job.total, done: job.done, total: job.total })
+        : msg("finished", () => ({ count: job.done, time: elapsedText(job.durationSec) }))
       : msg("evaluating", { done: settled, total: batch.total }));
     const head = h("div", { class: "bulk-progress-head" }, title,
       h("div", { class: "bulk-progress-actions" },
-        h("button", { class: "da-btn is-text is-sm", type: "button", onclick: () => { timersOff(); batch.collapsed = true; publish(); } }, msg("collapse")),
+        h("button", { class: "da-btn is-text is-sm", type: "button", onclick: () => { batch.collapsed = true; publish(); } }, msg("collapse")),
         dismissButton()));
     const foot = h("div", { class: "bulk-progress-foot" });
     if (batch.failed) foot.append(h("button", { class: "da-btn is-text is-sm bulk-failures", type: "button", onclick: showFailures }, msg("showFailures", { count: batch.failed })));
@@ -309,16 +348,16 @@
     const existing = batches.get(result.jobId);
     if (existing) return existing;
     const meta = { ...options };
-    delete meta.signal;
+    ["signal", "hidden", "collapsed", "completionAt", "jobId", "wasRunning", "meta"].forEach((key) => delete meta[key]);
     const job = { ...meta, meta, ids, evaluationIds: result.evaluationIds, jobId: result.jobId, attachedAt: Date.now(), startedAt: new Date().toISOString(),
       finishedAt: null, durationSec: 0, status: "running", total: ids.length, done: 0, failed: 0,
       items: ids.map((cid) => ({ conversationId: cid, evaluationId: result.evaluationIds[cid], status: "queued", total: null })),
-      ...result.job, jobId: result.jobId, collapsed: false, hidden: false, error: null, errorKey: null, errorDetail: null };
+      ...result.job, jobId: result.jobId, collapsed: options?.collapsed ?? terminal(result.job), hidden: options?.hidden === true,
+      completionAt: Number.isFinite(options?.completionAt) ? options.completionAt : 0, error: null, errorKey: null, errorDetail: null };
     batches.set(job.jobId, job);
-    if (focus || !batch || batch.hidden || terminal(batch)) { timersOff(); batch = job; }
+    if (focus || !batch || batch.hidden || terminal(batch)) batch = job;
     publish(job);
-    if (terminal(job)) finishLater(job);
-    else watch(job);
+    if (!terminal(job)) watch(job);
     return job;
   }
   function start(ids, options) {
@@ -354,22 +393,88 @@
     const result = await DA.data.adoptBatch(accepted, options);
     return retain(result, Object.keys(result.evaluationIds), { ...options }, false);
   }
+  async function restoreJob(preferences) {
+    const id = preferences.jobId;
+    if (restoringJobs.has(id) || batches.has(id)) return;
+    restoringJobs.add(id);
+    try {
+      const current = await DA.data.getJob(id);
+      const ids = current.items.map((item) => item.conversationId);
+      const result = { jobId: id, evaluationIds: Object.fromEntries(current.items.map((item) => [item.conversationId, item.evaluationId])), job: current };
+      // An already acknowledged success is not an idle status widget. A job
+      // that finished while this browser was away gets one brief confirmation.
+      const hidden = preferences.hidden || terminal(current) && !current.failed && !preferences.wasRunning && !preferences.completionAt;
+      retain(result, ids, { ...preferences.meta, ...preferences, hidden, collapsed: preferences.collapsed ?? true }, false);
+    } catch (error) {
+      if (obsoleteJob(error)) { savedPreferences.delete(id); save(); }
+      else reconnects.set(id, setTimeout(() => { reconnects.delete(id); restoreJob(preferences); }, 5000));
+    } finally { restoringJobs.delete(id); }
+  }
+  async function discover() {
+    if (!restored || DA.mode !== "server" || !DA.api.listJobs || discoveryRequest) return;
+    clearTimeout(discoveryTimer);
+    const own = new AbortController();
+    discoveryRequest = own;
+    try {
+      const result = await DA.api.listJobs({ status: "active" }, { signal: own.signal });
+      const jobs = (result.items || []).filter((job) => serverJobId(job.id) && running(job) && Array.isArray(job.items) && job.items.length);
+      const unknown = jobs.filter((job) => !batches.has(job.id) && !restoringJobs.has(job.id));
+      if (unknown.length) {
+        // The registry's latest evaluation IDs may have changed in another
+        // browser. Refresh those pointers before following the accepted jobs.
+        await DA.data.conversations({ refresh: true });
+        await DA.data.checklists();
+      }
+      for (const incoming of jobs) {
+        if (restoringJobs.has(incoming.id)) continue;
+        const existing = batches.get(incoming.id);
+        if (existing) {
+          if (terminal(existing)) {
+            DA.data.reopenJob?.(incoming);
+            Object.assign(existing, incoming, { hidden: false, collapsed: true, completionAt: 0 });
+            publish(existing);
+          }
+          if (!controllers.has(incoming.id)) watch(existing);
+          continue;
+        }
+        const accepted = { jobId: incoming.id, evaluationIds: Object.fromEntries(incoming.items.map((item) => [item.conversationId, item.evaluationId])),
+          checklistId: incoming.checklistId, checklistVersion: incoming.checklistVersion, startedAt: incoming.startedAt };
+        const adopted = await DA.data.adoptBatch(accepted, { source: "server" });
+        const preferences = savedPreferences.get(incoming.id);
+        retain({ ...adopted, job: { ...adopted.job, ...incoming } }, Object.keys(accepted.evaluationIds), {
+          source: "server", checklistId: incoming.checklistId, checklistVersion: incoming.checklistVersion,
+          collapsed: true, hidden: !!preferences?.wasRunning && preferences.hidden
+        }, false);
+      }
+    } catch (_) {
+      // Discovery has no idle error widget. An already followed job retains its
+      // contextual connection error and the existing read-only reconnect action.
+    } finally {
+      if (discoveryRequest === own) discoveryRequest = null;
+      discoveryTimer = setTimeout(discover, 3000);
+    }
+  }
   async function restore() {
     if (restored) return;
     restored = true;
     let stored;
-    try { stored = JSON.parse(sessionStorage.getItem(KEY) || "null"); } catch (e) { return; }
-    if (!stored || stored.mode !== DA.mode) return;
-    const snapshots = Array.isArray(stored.jobs) ? stored.jobs : [stored];
-    snapshots.forEach((job) => {
-      if (typeof job.jobId === "string" && Array.isArray(job.ids) && Array.isArray(job.items)) batches.set(job.jobId, job);
-    });
-    batch = batches.get(stored.focusedJobId || stored.jobId) || [...batches.values()].at(-1) || null;
-    publish();
-    batches.forEach((job) => { if (!terminal(job) || !job.hidden) watch(job); });
+    try { stored = JSON.parse(sessionStorage.getItem(KEY) || "null"); } catch (_) { /* Discover live server work instead. */ }
+    if (stored?.mode === "server") {
+      const snapshots = Array.isArray(stored.jobs) ? stored.jobs : [stored];
+      snapshots.forEach((job) => {
+        if (!serverJobId(job.jobId)) return;
+        const preferences = { jobId: job.jobId, hidden: !!job.hidden, collapsed: job.collapsed ?? true, meta: job.meta,
+          completionAt: Number.isFinite(job.completionAt) ? job.completionAt : 0, wasRunning: job.wasRunning ?? running(job) };
+        savedPreferences.set(job.jobId, preferences);
+        restoreJob(preferences);
+      });
+    } else if (stored) sessionStorage.removeItem(KEY);
+    window.addEventListener("focus", discover);
+    window.addEventListener("online", discover);
+    await discover();
   }
   DA.bulk = {
-    start, adopt, attach: adopt, restore, current: () => batch, jobs: () => [...batches.values()], isBusy: busy,
+    start, adopt, attach: adopt, restore, discover, current: () => batch, jobs: () => [...batches.values()], isBusy: busy,
     subscribe(fn) { listeners.add(fn); fn(batch); return () => listeners.delete(fn); },
     setSelection(ids, onClear) {
       selection = ids.length ? { ids: [...ids], onClear } : null;
