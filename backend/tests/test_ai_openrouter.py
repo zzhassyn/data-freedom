@@ -96,6 +96,7 @@ def test_assistant_uses_server_context_and_validates_reply(monkeypatch, source):
     assert answer.usage.cost_usd == pytest.approx(.0042)
     request = calls[0]
     assert request['stream'] is False and request['model'] == 'test/ai'
+    assert request['max_tokens'] <= 4096  # Bound the assistant's requested credit reservation.
     data = json.loads(request['messages'][1]['content'])
     assert data['language'] == 'EN' and data['history'] == history
     assert data['assessment'] is None and data['message'] == 'Find the answer'

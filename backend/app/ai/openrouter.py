@@ -156,7 +156,7 @@ def _body(kind, data, schema, stream):
         {'role': 'system', 'content': (_PROMPTS / 'system.md').read_text(encoding='utf-8') + '\n' +
                                     (_PROMPTS / f'{kind}.md').read_text(encoding='utf-8')},
         {'role': 'user', 'content': json.dumps(data, ensure_ascii=False)}],
-        'temperature': 0, 'max_tokens': 8192, 'stream': stream,
+        'temperature': 0, 'max_tokens': 4096 if kind == 'assistant' else 8192, 'stream': stream,
         'usage': {'include': True}, 'provider': {'require_parameters': True},
         **({'stream_options': {'include_usage': True}} if stream else {}),
         'response_format': {'type': 'json_schema', 'json_schema': {
