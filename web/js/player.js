@@ -1,7 +1,32 @@
 /* Плеер звонка. Волна строится из записи; при ошибке декодирования остаётся перемотка. */
 (function () {
   const DA = window.DA, h = DA.h;
+  const M = (key, params) => DA.msg(`player.${key}`, params), T = (key, params) => DA.t(`player.${key}`, params);
+  DA.i18n.addMessages(Object.fromEntries(Object.entries({
+    recording: { ru: "Запись звонка", kk: "Қоңырау жазбасы", en: "Call recording" },
+    play: { ru: "Воспроизвести запись", kk: "Жазбаны ойнату", en: "Play recording" },
+    pause: { ru: "Поставить запись на паузу", kk: "Жазбаны кідірту", en: "Pause recording" },
+    time: { ru: "Время записи", kk: "Жазба уақыты", en: "Recording time" },
+    speedGroup: { ru: "Скорость воспроизведения", kk: "Ойнату жылдамдығы", en: "Playback speed" },
+    speed: { ru: "Скорость {value}×", kk: "Жылдамдық: {value}×", en: "Speed {value}×" },
+    speedValue: { ru: "{value}×", kk: "{value}×", en: "{value}×" },
+    position: { ru: "Позиция в записи", kk: "Жазбадағы орын", en: "Position in recording" },
+    loading: { ru: "Запись загружается", kk: "Жазба жүктеліп жатыр", en: "Recording loading" },
+    positionValue: { ru: "{current} из {duration}", kk: "{current}, жалпы ұзақтығы {duration}", en: "{current} of {duration}" },
+    keyboardHint: { ru: "Стрелки перематывают запись на пять секунд. Пробел включает и останавливает воспроизведение.", kk: "Көрсеткі пернелері жазбаны бес секундқа алға не артқа жылжытады. Бос орын пернесі ойнатуды бастайды не кідіртеді.", en: "Arrow keys seek by five seconds. Space starts and pauses playback." },
+    incomplete: { ru: "Запись обрывается на {available} из {duration}", kk: "Жазба {available} белгісінде үзіледі. Жалпы ұзақтығы: {duration}.", en: "Recording cuts off at {available} of {duration}" },
+    unavailablePart: { ru: "Этой части нет в записи", kk: "Жазбаның бұл бөлігі жоқ", en: "This part is missing from the recording" },
+    seekHint: { ru: "Нажмите, чтобы перемотать запись", kk: "Осы жерге өту үшін басыңыз", en: "Click to seek" },
+    evidenceMarker: { ru: "Цитата критерия, {time}", kk: "Критерийге қатысты дәйексөз, {time}", en: "Criterion quote, {time}" },
+    operatorMarker: { ru: "Реплика оператора, {time}", kk: "Оператордың сөзі, {time}", en: "Agent turn, {time}" },
+    retry: { ru: "Повторить", kk: "Қайталап көру", en: "Retry" },
+    playPermission: { ru: "Нажмите кнопку воспроизведения, чтобы начать запись.", kk: "Тыңдауды бастау үшін ойнату түймесін басыңыз.", en: "Press play to start the recording." },
+    playError: { ru: "Не удалось воспроизвести запись. Попробуйте ещё раз.", kk: "Жазбаны ойнату мүмкін болмады. Қайталап көріңіз.", en: "Could not play the recording. Try again." },
+    loadError: { ru: "Не удалось загрузить запись. Попробуйте ещё раз.", kk: "Жазбаны жүктеу мүмкін болмады. Қайталап көріңіз.", en: "Could not load the recording. Try again." },
+    unavailable: { ru: "Запись недоступна.", kk: "Жазба қолжетімді емес.", en: "Recording unavailable." }
+  }).map(([key, values]) => [`player.${key}`, values])));
   let sequence = 0;
+  const rate = (value) => new Intl.NumberFormat(DA.i18n.locale(), { maximumFractionDigits: 2 }).format(value);
   const positive = (value) => Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : 0;
   const time = (value) => {
     const seconds = Math.max(0, Math.floor(Number(value) || 0));
@@ -16,27 +41,27 @@
       if (url.origin === location.origin && ["http:", "https:"].includes(url.protocol)) source = url.href;
     } catch (_) { /* Недопустимый адрес не назначается элементу audio. */ }
     const audio = h("audio", { preload: "metadata", hidden: true });
-    const playButton = h("button", { class: "da-player-play", type: "button", "aria-label": "Воспроизвести запись" },
+    const playButton = h("button", { class: "da-player-play", type: "button" },
       h("span", { class: "da-player-play-icon", "aria-hidden": "true" }, DA.icon("play", 20)),
       h("span", { class: "da-player-pause-icon", "aria-hidden": "true" }, DA.icon("pause", 20)));
     const currentText = h("span", {}, "00:00"), durationText = h("span", {}, "…");
-    const times = h("div", { class: "da-player-times", "aria-label": "Время записи" }, currentText, h("span", { "aria-hidden": "true" }, "/"), durationText);
-    const speeds = h("div", { class: "da-player-speed", role: "group", "aria-label": "Скорость воспроизведения" },
-      [1, 1.25, 1.5, 2].map((value) => h("button", { type: "button", "aria-pressed": String(value === 1), "aria-label": `Скорость ${String(value).replace(".", ",")}×`,
+    const times = h("div", { class: "da-player-times", "aria-label": M("time") }, currentText, h("span", { "aria-hidden": "true" }, "/"), durationText);
+    const speeds = h("div", { class: "da-player-speed", role: "group", "aria-label": M("speedGroup") },
+      [1, 1.25, 1.5, 2].map((value) => h("button", { type: "button", "aria-pressed": String(value === 1), "aria-label": M("speed", () => ({ value: rate(value) })),
         onclick: () => { audio.playbackRate = value; for (const button of speeds.children) button.setAttribute("aria-pressed", String(Number(button.dataset.speed) === value)); },
-        "data-speed": value }, `${String(value).replace(".", ",")}×`)));
+        "data-speed": value }, M("speedValue", () => ({ value: rate(value) })))));
     const canvas = h("canvas", { "aria-hidden": "true" });
-    const wave = h("div", { class: "da-player-wave", role: "slider", tabindex: 0, "aria-label": "Позиция в записи", "aria-valuemin": "0", "aria-valuemax": "0", "aria-valuenow": "0", "aria-valuetext": "Запись загружается", "aria-describedby": `${id}-hint ${id}-missing` }, canvas);
-    const hint = h("span", { class: "da-sr", id: `${id}-hint` }, "Стрелки перематывают запись на пять секунд. Пробел включает и останавливает воспроизведение.");
+    const wave = h("div", { class: "da-player-wave", role: "slider", tabindex: 0, "aria-label": M("position"), "aria-valuemin": "0", "aria-valuemax": "0", "aria-valuenow": "0", "aria-describedby": `${id}-hint ${id}-missing` }, canvas);
+    const hint = h("span", { class: "da-sr", id: `${id}-hint` }, M("keyboardHint"));
     const missing = h("p", { class: "da-player-missing", id: `${id}-missing`, hidden: true });
     const issueText = h("span");
-    const retry = h("button", { class: "da-btn is-text is-sm", type: "button", onclick: retryAudio }, "Повторить");
+    const retry = h("button", { class: "da-btn is-text is-sm", type: "button", onclick: retryAudio }, M("retry"));
     const issue = h("div", { class: "da-player-error", role: "status", hidden: true }, issueText, retry);
-    const el = h("section", { class: "da-player", "aria-label": "Запись звонка", "data-waveform": "loading" },
+    const el = h("section", { class: "da-player", "aria-label": M("recording"), "data-waveform": "loading" },
       h("div", { class: "da-player-controls" }, playButton, times, speeds), wave, hint, missing, issue, audio);
     let disposed = false, metadata = {}, markers = [], envelope = null, decodedDuration = 0, displayEnvelope = null;
     let frame = 0, fetchController = null, audioContext = null, pendingSeek = null, loadGeneration = 0;
-    let lastPlaying = null, lastSecond = -1;
+    let lastPlaying = null, lastSecond = -1, issueKey = null, hoveredMarker = null;
 
     const duration = () => positive(metadata.audioSecondsDeclared) || positive(audio.duration) || decodedDuration || positive(metadata.audioSecondsDecoded);
     const available = () => metadata.incomplete && positive(metadata.audioSecondsDecoded)
@@ -44,12 +69,17 @@
       : positive(audio.duration) || decodedDuration || positive(metadata.audioSecondsDecoded) || duration();
     const isPlaying = () => !audio.paused && !audio.ended;
     const color = (name) => getComputedStyle(el).getPropertyValue(name).trim();
-    function report(message, recoverable) {
+    DA.i18n.bindAttr(playButton, "aria-label", DA.msg(() => T(isPlaying() ? "pause" : "play")));
+    DA.i18n.bindAttr(wave, "aria-valuetext", DA.msg(() => duration() ? T("positionValue", { current: time(audio.currentTime), duration: time(duration()) }) : T("loading")));
+    DA.i18n.bindAttr(wave, "title", DA.msg(() => hoveredMarker ? T(hoveredMarker.kind === "evidence" ? "evidenceMarker" : "operatorMarker", { time: time(hoveredMarker.time) }) : T("seekHint")));
+    DA.i18n.bindText(missing, M("incomplete", () => ({ available: time(available()), duration: time(duration()) })));
+    DA.i18n.bindText(issueText, DA.msg(() => issueKey ? T(issueKey) : ""));
+    function report(key, recoverable) {
       if (disposed) return;
-      issueText.textContent = message; issue.hidden = false; retry.hidden = !recoverable;
-      opts.onError?.(message);
+      issueKey = key; DA.i18n.refresh(issueText); issue.hidden = false; retry.hidden = !recoverable;
+      opts.onError?.(T(key));
     }
-    function clearIssue() { issue.hidden = true; issueText.textContent = ""; }
+    function clearIssue() { issue.hidden = true; issueKey = null; DA.i18n.refresh(issueText); }
 
     /* Пересчитываем энергию под ширину панели: столбцы остаются читаемыми и на телефоне. */
     function signalForWidth(width) {
@@ -127,15 +157,15 @@
       durationText.textContent = total ? time(total) : "…";
       if (playing !== lastPlaying) {
         el.classList.toggle("is-playing", playing);
-        playButton.setAttribute("aria-label", playing ? "Поставить запись на паузу" : "Воспроизвести запись");
+        DA.i18n.refresh(playButton);
         lastPlaying = playing;
       }
       wave.setAttribute("aria-valuemax", String(Math.round(total)));
       wave.setAttribute("aria-valuenow", String(second));
-      wave.setAttribute("aria-valuetext", total ? `${time(second)} из ${time(total)}` : "Запись загружается");
+      DA.i18n.refresh(wave);
       wave.setAttribute("aria-disabled", String(!total));
       missing.hidden = !metadata.incomplete;
-      if (metadata.incomplete) missing.textContent = `Запись обрывается на ${time(available())} из ${time(total)}`;
+      if (metadata.incomplete) DA.i18n.refresh(missing);
       draw();
       if (notify) opts.onTime?.(audio.currentTime || 0, { playing, duration: total });
     }
@@ -151,7 +181,7 @@
       try { await audio.play(); return !disposed; }
       catch (error) {
         if (disposed || error.name === "AbortError") return false;
-        report(error.name === "NotAllowedError" ? "Нажмите кнопку воспроизведения, чтобы начать запись." : "Не удалось воспроизвести запись. Попробуйте ещё раз.", error.name !== "NotAllowedError");
+        report(error.name === "NotAllowedError" ? "playPermission" : "playError", error.name !== "NotAllowedError");
         return false;
       }
     }
@@ -160,7 +190,7 @@
     function seek(seconds, settings) {
       if (disposed || !Number.isFinite(Number(seconds))) return false;
       const target = Math.max(0, Number(seconds)), limit = available();
-      if (metadata.incomplete && limit && target > limit) { DA.toast("Этой части нет в записи", wave); return false; }
+      if (metadata.incomplete && limit && target > limit) { DA.toast(M("unavailablePart"), wave); return false; }
       const value = limit ? Math.min(target, limit) : target;
       if (audio.readyState === 0) pendingSeek = value;
       else { try { audio.currentTime = value; pendingSeek = null; } catch (_) { pendingSeek = value; } }
@@ -176,7 +206,7 @@
     function onPlay() { clearIssue(); render(true); animate(); }
     function onPause() { cancelAnimationFrame(frame); render(true); }
     function onTime() { render(true); }
-    function onError() { if (!disposed) { report("Не удалось загрузить запись. Попробуйте ещё раз.", true); render(true); } }
+    function onError() { if (!disposed) { report("loadError", true); render(true); } }
     function onWaiting() { el.classList.add("is-buffering"); }
     function onPlaying() { el.classList.remove("is-buffering"); }
 
@@ -245,7 +275,8 @@
     function hoverMarker(event) {
       const total = duration(), rect = wave.getBoundingClientRect();
       const marker = total && markers.find((item) => Math.abs(item.time / total * rect.width - (event.clientX - rect.left)) <= 5);
-      wave.title = marker ? `${marker.kind === "evidence" ? "Цитата критерия" : "Реплика оператора"}, ${time(marker.time)}` : "Нажмите, чтобы перемотать запись";
+      if (marker === hoveredMarker) return;
+      hoveredMarker = marker; DA.i18n.refresh(wave);
     }
 
     playButton.addEventListener("click", toggle);
@@ -255,16 +286,17 @@
     for (const [name, listener] of Object.entries(events)) audio.addEventListener(name, listener);
     const observer = new ResizeObserver(draw); observer.observe(wave);
     if (source) { audio.src = source; buildWave(); }
-    else { report("Запись недоступна.", false); playButton.disabled = true; }
+    else { report("unavailable", false); playButton.disabled = true; }
     render(false);
 
     return {
       el, audio, seek,
-      setMarkers(value) { markers = (Array.isArray(value) ? value : []).filter((item) => Number.isFinite(Number(item.time)) && Number(item.time) >= 0).map((item) => ({ ...item, time: Number(item.time) })); draw(); },
+      setMarkers(value) { markers = (Array.isArray(value) ? value : []).filter((item) => Number.isFinite(Number(item.time)) && Number(item.time) >= 0).map((item) => ({ ...item, time: Number(item.time) })); hoveredMarker = null; DA.i18n.refresh(wave); draw(); },
       setMetadata(value) { metadata = { ...metadata, ...value }; render(false); },
       destroy() {
         if (disposed) return;
         disposed = true; loadGeneration++; fetchController?.abort(); cancelAnimationFrame(frame); observer.disconnect();
+        DA.i18n.release(el);
         document.removeEventListener("keydown", documentKey);
         for (const [name, listener] of Object.entries(events)) audio.removeEventListener(name, listener);
         audio.pause(); audio.removeAttribute("src"); audio.load();
