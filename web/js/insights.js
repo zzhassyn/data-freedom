@@ -1,13 +1,68 @@
 /* Сводка: выполнение критериев по языкам и операторы. */
 (function () {
   const DA = window.DA, h = DA.h;
+  const m = (key, params) => DA.msg("insights." + key, params);
+  const t = (key, params) => DA.t("insights." + key, params);
+  DA.i18n.addMessages({
+    "insights.quality": { ru: "Качество", kk: "Сапа", en: "Quality" },
+    "insights.operators": { ru: "Операторы", kk: "Операторлар", en: "Agents" },
+    "insights.conversations": { ru: { one: "{count} обращение", few: "{count} обращения", many: "{count} обращений", other: "{count} обращения" }, kk: "{count} өтініш", en: { one: "{count} conversation", other: "{count} conversations" } },
+    "insights.nameHidden": { ru: "Имя скрыто в записи", kk: "Жазбада аты жасырылған", en: "Name hidden in the record" },
+    "insights.noIntroduction": { ru: "Оператор не представился", kk: "Оператор өзін таныстырмады", en: "Agent did not introduce themselves" },
+    "insights.fullScore": { ru: "Полный балл", kk: "Толық ұпай", en: "Full score" },
+    "insights.yes": { ru: "Да", kk: "Иә", en: "Yes" },
+    "insights.partial": { ru: "Частично", kk: "Ішінара", en: "Partial" },
+    "insights.no": { ru: "Нет", kk: "Жоқ", en: "No" },
+    "insights.na": { ru: "Не применимо", kk: "Қолданылмайды", en: "Not applicable" },
+    "insights.all": { ru: "Все", kk: "Барлығы", en: "All" },
+    "insights.allLanguages": { ru: "Все языки", kk: "Барлық тілдер", en: "All languages" },
+    "insights.criterion": { ru: "Критерий", kk: "Критерий", en: "Criterion" },
+    "insights.noEvaluations": { ru: "Нет оценок", kk: "Бағалар жоқ", en: "No evaluations" },
+    "insights.weakPoint": { ru: "Слабое место", kk: "Әлсіз тұсы", en: "Weak area" },
+    "insights.foundIn": { ru: "в {count} из {total}", kk: "{total} ішінен {count}", en: "in {count} of {total}" },
+    "insights.notFound": { ru: "не найдены", kk: "табылған жоқ", en: "none found" },
+    "insights.cellLabel": { ru: "{criterion}, {language}: {result}", kk: "{criterion}, {language}: {result}", en: "{criterion}, {language}: {result}" },
+    "insights.fulfilled": { ru: "выполнено {rate}", kk: "орындалуы: {rate}", en: "completion: {rate}" },
+    "insights.openConversations": { ru: "Нажмите, чтобы открыть эти обращения в списке.", kk: "Осы өтініштерді тізімнен ашу үшін басыңыз.", en: "Click to view these conversations in the list." },
+    "insights.meanScore": { ru: "Средний итог", kk: "Орташа қорытынды", en: "Mean score" },
+    "insights.of100": { ru: "из 100", kk: "100 ұпайдан", en: "of 100" },
+    "insights.distribution": { ru: "Распределение итогов: {ranges}", kk: "Қорытынды ұпайлардың үлестірімі: {ranges}", en: "Score distribution: {ranges}" },
+    "insights.grossErrors": { ru: "Грубые ошибки", kk: "Өрескел қателер", en: "Critical errors" },
+    "insights.noGrossErrors": { ru: "Грубых ошибок не найдено", kk: "Өрескел қателер табылған жоқ", en: "No critical errors found" },
+    "insights.checked": { ru: { one: "Проверено {count} обращение.", few: "Проверено {count} обращения.", other: "Проверено {count} обращений." }, kk: "{count} өтініш тексерілді.", en: { one: "{count} conversation checked.", other: "{count} conversations checked." } },
+    "insights.confirmed": { ru: "Оценка подтверждена", kk: "Баға расталды", en: "Score confirmed" },
+    "insights.changed": { ru: "Оценка изменена", kk: "Баға өзгертілді", en: "Score changed" },
+    "insights.pending": { ru: "На рассмотрении", kk: "Қаралуда", en: "Under review" },
+    "insights.appeals": { ru: "Апелляции", kk: "Апелляциялар", en: "Appeals" },
+    "insights.submitted": { ru: { one: "подана", few: "поданы", other: "подано" }, kk: "берілді", en: "submitted" },
+    "insights.noAppeals": { ru: "Оценки пока никто не оспаривал.", kk: "Бағаларға әзірге ешкім шағымданған жоқ.", en: "No scores have been appealed yet." },
+    "insights.openAppeals": { ru: "Открыть апелляции", kk: "Апелляцияларды ашу", en: "Open appeals" },
+    "insights.emptyTitle": { ru: "Сводка появится после первой оценки", kk: "Алғашқы бағалаудан кейін жиынтық пайда болады", en: "Insights appear after the first evaluation" },
+    "insights.emptyHelp": { ru: "Здесь будет видно, какие пункты чек-листа выполняются хуже всего и на каком языке.", kk: "Мұнда чек-листтің қай тармақтары және қай тілде нашар орындалатыны көрсетіледі.", en: "See which checklist criteria have the lowest completion rates and in which languages." },
+    "insights.backToList": { ru: "К списку обращений", kk: "Өтініштер тізіміне", en: "Back to conversations" },
+    "insights.operator": { ru: "Оператор", kk: "Оператор", en: "Agent" },
+    "insights.conversationColumn": { ru: "Обращений", kk: "Өтініштер", en: "Conversations" },
+    "insights.botClosed": { ru: { one: "Бот закрыл {count} обращение без оператора", few: "Бот закрыл {count} обращения без оператора", other: "Бот закрыл {count} обращений без оператора" }, kk: "Бот {count} өтінішті операторсыз жапты", en: { one: "The bot closed {count} conversation without an agent", other: "The bot closed {count} conversations without an agent" } },
+    "insights.awaitingEvaluation": { ru: { one: "Ещё {count} обращение без оценки: операторы появятся здесь после оценки их обращений", few: "Ещё {count} обращения без оценки: операторы появятся здесь после оценки их обращений", other: "Ещё {count} обращений без оценки: операторы появятся здесь после оценки их обращений" }, kk: "Тағы {count} өтініш бағаланбаған: операторлар өтініштері бағаланғаннан кейін осында пайда болады", en: { one: "{count} more conversation awaits evaluation; its agent will appear here once it is evaluated", other: "{count} more conversations await evaluation; their agents will appear here once they are evaluated" } },
+    "insights.fulfilledRate": { ru: "выполняет в {rate} обращений", kk: "өтініштердің {rate} бөлігінде орындайды", en: "met in {rate} of conversations" },
+    "insights.fulfilledCount": { ru: "Выполнено: {count} из {total}", kk: "Орындалғаны: {count} / {total}", en: "Met in {count} of {total}" },
+    "insights.grossError": { ru: "Грубая ошибка", kk: "Өрескел қате", en: "Critical error" },
+    "insights.notEvaluated": { ru: "Не оценено", kk: "Бағаланбаған", en: "Not evaluated" },
+    "insights.missingNameHelp": { ru: "В этих обращениях оператор не назвал имя в первом ответе", kk: "Бұл өтініштерде оператор алғашқы жауабында атын атамаған", en: "The agent did not give their name in the first response in these conversations" },
+    "insights.evaluatedCount": { ru: "Оценено {count} из {total}", kk: "{total} ішінен {count} бағаланды", en: "Evaluated {count} of {total}" },
+    "insights.contact": { ru: "Установление контакта", kk: "Байланыс орнату", en: "Establishing contact" },
+    "insights.missingName": { ru: "Не названо имя в первом ответе", kk: "Алғашқы жауапта аты аталмаған", en: "No name given in the first response" },
+    "insights.noWeakAreas": { ru: "Слабых мест нет", kk: "Әлсіз тұстары жоқ", en: "No weak areas" },
+    "insights.section": { ru: "Раздел сводки", kk: "Жиынтық бөлімі", en: "Insights section" },
+    "insights.coverage": { ru: "Оценено {count} из {total} обращений", kk: "Бағаланған өтініштер: {count} / {total}", en: "Evaluated {count} of {total} conversations" },
+    "insights.title": { ru: "Сводка", kk: "Жиынтық", en: "Insights" }
+  });
 
   const LANGS = ["RU", "KZ", "EN"];
-  const TABS = [{ value: "quality", label: "Качество" }, { value: "operators", label: "Операторы" }];
+  const TABS = [{ value: "quality", label: m("quality") }, { value: "operators", label: m("operators") }];
   const BUCKETS = [[0, 49], [50, 69], [70, 84], [85, 100]];
-  const pct = (x) => `${Math.round(x * 100)} %`;
-  const convForms = ["обращение", "обращения", "обращений"];
-  const nConv = (n) => `${n} ${DA.fmt.plural(n, convForms)}`;
+  const pct = (x) => new Intl.NumberFormat(DA.fmt.locale(), { style: "percent", maximumFractionDigits: 0 }).format(x);
+  const nConv = (count) => t("conversations", { count });
 
   /* ---------- Данные ---------- */
   const evaluated = () => Object.values(DA.state.evaluations)
@@ -82,7 +137,7 @@
       const name = operatorName(conv);
       const kind = name ? "named" : turns.some((t) => HIDDEN_NAME.test(t.text)) ? "hidden" : "missing";
       const key = kind === "named" ? "name:" + name : kind;
-      if (!byName.has(key)) byName.set(key, { name: name || (kind === "hidden" ? "Имя скрыто в записи" : "Оператор не представился"), kind, convs: [] });
+      if (!byName.has(key)) byName.set(key, { name, kind, convs: [] });
       byName.get(key).convs.push(conv.conversation_id);
     }
     const evs = evaluated(), cl = DA.activeChecklist();
@@ -103,7 +158,7 @@
 
   /* ---------- Мелкие элементы ---------- */
   const TONES = ["yes", "partial", "no", "na"];
-  const toneLabel = (tone, c) => ({ yes: c && c.type === "scale" ? "Полный балл" : "Да", partial: "Частично", no: "Нет", na: "Не применимо" })[tone];
+  const toneLabel = (tone, c) => t(({ yes: c && c.type === "scale" ? "fullScore" : "yes", partial: "partial", no: "no", na: "na" })[tone]);
 
   function stackBar(parts, cls) {
     const total = parts.reduce((s, p) => s + p.n, 0);
@@ -115,18 +170,18 @@
     const conv = DA.state.conversations[cid];
     return h("a", { class: "da-ins-conv", href: `#/c/${encodeURIComponent(cid)}` + (extra || "") },
       h("b", { class: "da-num" }, `№ ${DA.convNumber(cid)}`),
-      h("span", { class: "da-muted" }, `${DA.langLabel[conv.language]}, ${DA.channelLabel(conv).toLowerCase()}`));
+      h("span", { class: "da-muted" }, DA.msg(() => `${DA.langLabel[conv.language]}, ${DA.channelLabel(conv).toLocaleLowerCase(DA.fmt.locale())}`)));
   }
 
   /* ---------- Качество ---------- */
   function quality(evs) {
     const cl = DA.activeChecklist();
     if (!evs.length) return emptyQuality();
-    const cols = [{ key: null, label: "Все", evs }, ...LANGS.map((l) => ({ key: l, label: DA.langLabel[l], evs: evs.filter((ev) => DA.state.conversations[ev.conversationId].language === l) }))];
+    const cols = [{ key: null, evs }, ...LANGS.map((l) => ({ key: l, evs: evs.filter((ev) => DA.state.conversations[ev.conversationId].language === l) }))];
     const weak = weakest(cl, evs);
 
-    const head = h("tr", {}, h("th", { scope: "col" }, "Критерий"),
-      cols.map((col) => h("th", { scope: "col" }, col.label, h("small", {}, col.evs.length ? nConv(col.evs.length) : "нет оценок"))));
+    const head = h("tr", {}, h("th", { scope: "col" }, m("criterion")),
+      cols.map((col) => h("th", { scope: "col" }, DA.msg(() => col.key ? DA.langLabel[col.key] : t("all")), h("small", {}, col.evs.length ? m("conversations", { count: col.evs.length }) : m("noEvaluations")))));
     const body = [];
     let i = 0;
     for (const sec of cl.sections.slice().sort((a, b) => a.order - b.order)) {
@@ -135,7 +190,7 @@
       body.push(h("tr", { class: "da-ins-sec" }, h("th", { colspan: cols.length + 1, scope: "colgroup" }, sec.title)));
       for (const c of crits) {
         body.push(h("tr", {},
-          h("th", { scope: "row" }, h("span", {}, c.title), weak && weak.c.id === c.id ? h("span", { class: "da-ins-weak" }, "Слабое место") : null),
+          h("th", { scope: "row" }, h("span", {}, c.title), weak && weak.c.id === c.id ? h("span", { class: "da-ins-weak" }, m("weakPoint")) : null),
           cols.map((col) => h("td", {}, matrixCell(c, col, i++)))));
       }
     }
@@ -145,7 +200,7 @@
       cols.map((col) => {
         const s = cellStats(col.evs, gross.id);
         if (!s.n) return h("td", {}, h("span", { class: "da-ins-dash" }, "—"));
-        return h("td", {}, s.flag ? h("span", { class: "da-ins-flag" }, DA.icon("flag", 14), `в ${s.flag} из ${s.n}`) : h("span", { class: "da-muted" }, "не найдены"));
+        return h("td", {}, s.flag ? h("span", { class: "da-ins-flag" }, DA.icon("flag", 14), m("foundIn", { count: s.flag, total: s.n })) : h("span", { class: "da-muted" }, m("notFound")));
       }))) : null;
 
     return h("div", { class: "da-ins-quality" },
@@ -155,17 +210,17 @@
 
   function matrixCell(c, col, i) {
     const s = cellStats(col.evs, c.id);
-    if (!s.n) return h("span", { class: "da-ins-dash", "aria-label": "Нет оценок" }, "—");
+    if (!s.n) return h("span", { class: "da-ins-dash", "aria-label": m("noEvaluations") }, "—");
     const href = col.key ? `#/?lang=${col.key}&state=done` : "#/?state=done";
     const cell = h("a", { class: "da-ins-cell", href, style: { "--i": i },
-      "aria-label": `${c.title}, ${col.label.toLowerCase()}: ${s.rate == null ? "не применяется" : "выполнено " + pct(s.rate)}` },
-      h("span", { class: "da-ins-rate" + (s.rate == null ? " is-na" : "") }, s.rate == null ? "Не применимо" : pct(s.rate)),
+      "aria-label": m("cellLabel", () => ({ criterion: c.title, language: col.key ? DA.langLabel[col.key] : t("all"), result: s.rate == null ? t("na") : t("fulfilled", { rate: pct(s.rate) }) })) },
+      h("span", { class: "da-ins-rate" + (s.rate == null ? " is-na" : "") }, s.rate == null ? m("na") : DA.msg(() => pct(s.rate))),
       stackBar(TONES.map((tone) => ({ tone, n: s[tone] }))));
     DA.hoverCard(cell, () => [
-      h("div", { class: "da-hc-title" }, `${col.key ? col.label : "Все языки"}: ${nConv(s.n)}. ${TONES.filter((t) => s[t]).map((t) => `${toneLabel(t, c)} ${s[t]}`).join(", ")}`),
-      h("ul", { class: "da-hc-list" }, TONES.filter((t) => s[t]).map((t) => h("li", {}, h("i", { class: `da-swatch t-${t}` }), h("span", {}, toneLabel(t, c)),
-        h("b", {}, s.cids.filter((cid) => DA.tone(doneItem(DA.state.evaluations[cid], c.id).item.answer, c) === t).map((cid) => `№ ${DA.convNumber(cid)}`).join(", "))))),
-      h("p", { class: "da-hc-note" }, "Нажмите, чтобы открыть эти обращения в списке.")
+      h("div", { class: "da-hc-title" }, DA.msg(() => `${col.key ? DA.langLabel[col.key] : t("allLanguages")}: ${nConv(s.n)}. ${TONES.filter((tone) => s[tone]).map((tone) => `${toneLabel(tone, c)} ${s[tone]}`).join(", ")}`)),
+      h("ul", { class: "da-hc-list" }, TONES.filter((tone) => s[tone]).map((tone) => h("li", {}, h("i", { class: `da-swatch t-${tone}` }), h("span", {}, DA.msg(() => toneLabel(tone, c))),
+        h("b", {}, s.cids.filter((cid) => DA.tone(doneItem(DA.state.evaluations[cid], c.id).item.answer, c) === tone).map((cid) => `№ ${DA.convNumber(cid)}`).join(", "))))),
+      h("p", { class: "da-hc-note" }, m("openConversations"))
     ]);
     return cell;
   }
@@ -174,9 +229,9 @@
     const counts = BUCKETS.map(([lo, hi]) => evs.filter((ev) => ev.total >= lo && (hi === 100 ? ev.total <= 100 : ev.total < hi + 1)).length);
     const max = Math.max(1, ...counts);
     return h("section", { class: "da-ins-block is-totals" },
-      h("h2", {}, "Средний итог"),
-      h("div", { class: "da-ins-big" }, DA.fmt.score(average(evs)), h("small", {}, "из 100")),
-      h("div", { class: "da-ins-hist", role: "img", "aria-label": "Распределение итогов: " + BUCKETS.map(([lo, hi], i) => `${lo}–${hi}: ${counts[i]}`).join(", ") },
+      h("h2", {}, m("meanScore")),
+      h("div", { class: "da-ins-big" }, DA.msg(() => DA.fmt.score(average(evs))), h("small", {}, m("of100"))),
+      h("div", { class: "da-ins-hist", role: "img", "aria-label": m("distribution", { ranges: BUCKETS.map(([lo, hi], i) => `${lo}–${hi}: ${counts[i]}`).join(", ") }) },
         BUCKETS.map(([lo, hi], i) => h("div", { class: "da-ins-col" },
           h("b", { class: counts[i] ? "" : "da-quiet" }, counts[i]),
           h("i", { style: { height: `${(counts[i] / max) * 100}%`, "--i": i }, class: counts[i] ? "" : "is-zero" }),
@@ -186,36 +241,36 @@
   function grossBlock(evs) {
     const found = evs.filter((ev) => ev.grossFlagged);
     return h("section", { class: "da-ins-block" },
-      h("h2", {}, "Грубые ошибки"),
+      h("h2", {}, m("grossErrors")),
       found.length
         ? h("div", { class: "da-ins-convs" }, found.map((ev) => convLink(ev.conversationId, "?criterion=gross")))
         : h("div", { class: "da-ins-clean" }, h("span", { class: "da-ins-ok" }, DA.icon("check", 16)),
-          h("div", {}, h("b", {}, "Грубых ошибок не найдено"), h("p", {}, `Проверено ${nConv(evs.length)}.`))));
+          h("div", {}, h("b", {}, m("noGrossErrors")), h("p", {}, m("checked", { count: evs.length })))));
   }
 
   function appealsBlock() {
     const all = DA.state.appeals;
     const parts = [
-      { tone: "confirmed", n: all.filter((a) => a.status === "confirmed").length, label: "Оценка подтверждена" },
-      { tone: "changed", n: all.filter((a) => a.status === "changed").length, label: "Оценка изменена" },
-      { tone: "open", n: all.filter((a) => a.status === "open").length, label: "На рассмотрении" }
+      { tone: "confirmed", n: all.filter((a) => a.status === "confirmed").length, label: m("confirmed") },
+      { tone: "changed", n: all.filter((a) => a.status === "changed").length, label: m("changed") },
+      { tone: "open", n: all.filter((a) => a.status === "open").length, label: m("pending") }
     ];
     return h("section", { class: "da-ins-block" },
-      h("h2", {}, "Апелляции"),
-      h("div", { class: "da-ins-big" }, all.length, h("small", {}, DA.fmt.plural(all.length, ["подана", "поданы", "подано"]))),
+      h("h2", {}, m("appeals")),
+      h("div", { class: "da-ins-big" }, all.length, h("small", {}, m("submitted", { count: all.length }))),
       all.length ? stackBar(parts, "is-appeals") : null,
       all.length
         ? h("ul", { class: "da-ins-legend" }, parts.map((p) => h("li", { class: p.n ? "" : "is-zero" }, h("i", { class: `da-ins-dot t-${p.tone}` }), h("span", {}, p.label), h("b", {}, p.n))))
-        : h("p", { class: "da-muted da-small" }, "Оценки пока никто не оспаривал."),
-      all.length ? h("a", { class: "da-btn is-text is-sm da-ins-more", href: "#/appeals" }, "Открыть апелляции") : null);
+        : h("p", { class: "da-muted da-small" }, m("noAppeals")),
+      all.length ? h("a", { class: "da-btn is-text is-sm da-ins-more", href: "#/appeals" }, m("openAppeals")) : null);
   }
 
   function emptyQuality() {
     return h("div", { class: "da-empty" },
       h("div", { class: "da-empty-ribbon", "aria-hidden": "true" }, [10, 15, 20, 20, 15, 15, 5].map((w) => h("i", { style: { "--w": w } }))),
-      h("h2", {}, "Сводка появится после первой оценки"),
-      h("p", {}, "Здесь будет видно, какие пункты чек-листа выполняются хуже всего и на каком языке."),
-      h("a", { class: "da-btn", href: "#/" }, "К списку обращений"));
+      h("h2", {}, m("emptyTitle")),
+      h("p", {}, m("emptyHelp")),
+      h("a", { class: "da-btn", href: "#/" }, m("backToList")));
   }
 
   /* ---------- Операторы ---------- */
@@ -223,17 +278,17 @@
     const { shown, hiddenConvs, botOnly } = operators();
     const list = h("div", { class: "da-ins-ops", role: "list" },
       h("div", { class: "da-ins-op-head", "aria-hidden": "true" },
-        h("span", {}, "Оператор"), h("span", {}, "Обращений"), h("span", {}, "Средний итог"), h("span", {}, "Слабое место"), h("span", {}, "Грубые ошибки")),
+        h("span", {}, m("operator")), h("span", {}, m("conversationColumn")), h("span", {}, m("meanScore")), h("span", {}, m("weakPoint")), h("span", {}, m("grossErrors"))),
       shown.map((op, i) => operatorRow(op, i)));
     return h("div", {}, shown.length ? list : emptyQuality(),
-      botOnly ? h("p", { class: "da-ins-after" }, `${nConv(botOnly)} закрыл бот без оператора`) : null,
-      hiddenConvs ? h("p", { class: "da-ins-after" }, `и ещё ${hiddenConvs} ${DA.fmt.plural(hiddenConvs, convForms)} без оценки: операторы появятся здесь, когда их обращения оценят`) : null);
+      botOnly ? h("p", { class: "da-ins-after" }, m("botClosed", { count: botOnly })) : null,
+      hiddenConvs ? h("p", { class: "da-ins-after" }, m("awaitingEvaluation", { count: hiddenConvs })) : null);
   }
 
   function operatorRow(op, i) {
     const weakText = !op.weak ? null : op.weak.stats.possible >= 5
-      ? `выполняет в ${pct(op.weak.stats.yes / op.weak.stats.possible)} обращений`
-      : `выполняет в ${op.weak.stats.yes} из ${op.weak.stats.possible} ${DA.fmt.plural(op.weak.stats.possible, ["обращения", "обращений", "обращений"])}`;
+      ? m("fulfilledRate", () => ({ rate: pct(op.weak.stats.yes / op.weak.stats.possible) }))
+      : m("fulfilledCount", { count: op.weak.stats.yes, total: op.weak.stats.possible });
     const panel = h("div", { class: "da-ins-op-panel", id: `da-op-${i}` },
       h("div", { class: "da-ins-op-inner" },
         op.convs.map((cid) => {
@@ -243,20 +298,20 @@
             h("b", { class: "da-num" }, `№ ${DA.convNumber(cid)}`),
             h("span", { class: "da-ins-op-preview" }, DA.tx.preview(conv)),
             ev && !ev.stale && ev.total != null
-              ? h("span", { class: "da-ins-op-total" }, ev.grossFlagged ? h("span", { class: "da-flag", title: "Грубая ошибка" }, DA.icon("flag", 14)) : null, DA.fmt.score(ev.total))
-              : h("span", { class: "da-quiet" }, "Не оценено"));
+              ? h("span", { class: "da-ins-op-total" }, ev.grossFlagged ? h("span", { class: "da-flag", title: m("grossError") }, DA.icon("flag", 14)) : null, DA.msg(() => DA.fmt.score(ev.total)))
+              : h("span", { class: "da-quiet" }, m("notEvaluated")));
         })));
     const row = h("button", { class: "da-ins-op", type: "button", "aria-expanded": "false", "aria-controls": `da-op-${i}` },
       h("span", { class: "da-ins-op-name" },
         h("span", { class: "da-ins-chev" }, DA.icon("chevron", 16)),
         h("span", {}, h("b", { class: op.kind === "named" ? "" : "is-unnamed" },
-          op.kind === "missing" ? h("span", { class: "da-review", title: "В этих обращениях оператор не назвал имя в первом ответе" }, DA.icon("alert", 16)) : null, op.name),
-          h("small", {}, `Оценено ${op.evs.length} из ${op.convs.length}`))),
-      h("span", { class: "da-ins-op-n" }, h("i", { class: "da-ins-m" }, "Обращений "), op.convs.length),
-      h("span", { class: "da-ins-op-avg" }, h("b", {}, DA.fmt.score(op.avg)), op.avg != null ? h("span", { class: "da-ins-meter" }, h("i", { style: { width: op.avg + "%", "--i": i } })) : null),
-      h("span", { class: "da-ins-op-weak" }, op.kind === "missing" ? [h("b", {}, "Установление контакта"), h("small", {}, "Не названо имя в первом ответе")] : op.weak ? [h("b", {}, op.weak.c.title), h("small", {}, weakText)] : h("span", { class: "da-quiet" }, op.evs.length ? "Слабых мест нет" : "Нет оценок")),
-      h("span", { class: "da-ins-op-gross" }, op.gross ? h("span", { class: "da-ins-flag" }, DA.icon("flag", 14), op.gross) : h("span", { class: "da-quiet" }, op.evs.length ? "Нет" : "Нет оценок")));
-    if (op.kind === "missing") DA.hoverCard(row, () => "В этих обращениях оператор не назвал имя в первом ответе");
+          op.kind === "missing" ? h("span", { class: "da-review", title: m("missingNameHelp") }, DA.icon("alert", 16)) : null, op.kind === "named" ? op.name : m(op.kind === "hidden" ? "nameHidden" : "noIntroduction")),
+          h("small", {}, m("evaluatedCount", { count: op.evs.length, total: op.convs.length })))),
+      h("span", { class: "da-ins-op-n" }, h("i", { class: "da-ins-m" }, m("conversationColumn"), " "), op.convs.length),
+      h("span", { class: "da-ins-op-avg" }, h("b", {}, DA.msg(() => DA.fmt.score(op.avg))), op.avg != null ? h("span", { class: "da-ins-meter" }, h("i", { style: { width: op.avg + "%", "--i": i } })) : null),
+      h("span", { class: "da-ins-op-weak" }, op.kind === "missing" ? [h("b", {}, DA.activeChecklist().criteria.find((c) => c.id === "contact")?.title || m("contact")), h("small", {}, m("missingName"))] : op.weak ? [h("b", {}, op.weak.c.title), h("small", {}, weakText)] : h("span", { class: "da-quiet" }, m(op.evs.length ? "noWeakAreas" : "noEvaluations"))),
+      h("span", { class: "da-ins-op-gross" }, op.gross ? h("span", { class: "da-ins-flag" }, DA.icon("flag", 14), op.gross) : h("span", { class: "da-quiet" }, m(op.evs.length ? "no" : "noEvaluations"))));
+    if (op.kind === "missing") DA.hoverCard(row, () => m("missingNameHelp"));
     row.addEventListener("click", () => {
       const open = row.getAttribute("aria-expanded") !== "true";
       row.setAttribute("aria-expanded", String(open));
@@ -275,13 +330,12 @@
       tab = v;
       history.replaceState(null, "", v === "quality" ? "#/insights" : `#/insights?tab=${v}`);
       render();
-    }, "Раздел сводки");
+    }, m("section"));
 
     function coverage(evs) {
       const total = Object.keys(DA.state.conversations).length;
-      const forms = ["обращения", "обращений", "обращений"];
       return h("div", { class: "da-ins-cover" },
-        h("span", {}, `Оценено ${evs.length} из ${total} ${DA.fmt.plural(total, forms)}`),
+        h("span", {}, m("coverage", { count: evs.length, total })),
         evs.length < total ? h("span", { class: "da-ins-cover-bar", "aria-hidden": "true" }, h("i", { style: { width: (evs.length / total) * 100 + "%" } })) : null);
     }
 
@@ -292,7 +346,7 @@
     }
 
     root.append(h("div", { class: "da-page da-ins" },
-      h("div", { class: "da-page-head da-ins-head" }, h("h1", { class: "da-h1", tabindex: -1 }, "Сводка"), seg),
+      h("div", { class: "da-page-head da-ins-head" }, h("h1", { class: "da-h1", tabindex: -1 }, m("title")), seg),
       body));
     render();
     window.addEventListener("da:appeals-changed", render);

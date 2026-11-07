@@ -1,10 +1,46 @@
 /* Внутренний инструмент сравнения модели с ручной разметкой. */
 (function () {
   const DA = window.DA, h = DA.h;
+  const m = (key, params) => DA.msg("accuracy." + key, params);
+  const t = (key, params) => DA.t("accuracy." + key, params);
+  DA.i18n.addMessages({
+    "accuracy.emptyFile": { ru: "Файл пустой.", kk: "Файл бос.", en: "The file is empty." },
+    "accuracy.columns": { ru: "В первой строке нужны столбцы conversation_id, criterion_id и answer.", kk: "Бірінші жолда conversation_id, criterion_id және answer бағандары болуы керек.", en: "The header must include conversation_id, criterion_id and answer." },
+    "accuracy.invalidAnswer": { ru: "В строке {line} ответ «{answer}» не подходит к критерию «{criterion}». Допустимо: {allowed}.", kk: "{line}-жолдағы «{answer}» жауабы «{criterion}» критерийіне сәйкес келмейді. Рұқсат етілген жауаптар: {allowed}.", en: "On line {line}, answer “{answer}” is not valid for “{criterion}”. Allowed: {allowed}." },
+    "accuracy.noRows": { ru: "В файле нет строк с обращениями и критериями из этого набора.", kk: "Файлда осы жинақтағы өтініштер мен критерийлерге сәйкес жолдар жоқ.", en: "The file has no rows matching conversations and criteria in this dataset." },
+    "accuracy.loaded": { ru: { one: "Разметка загружена: {count} ответ", few: "Разметка загружена: {count} ответа", many: "Разметка загружена: {count} ответов", other: "Разметка загружена: {count} ответа" }, kk: "Белгілеу жүктелді: {count} жауап", en: { one: "Labels uploaded: {count} answer", other: "Labels uploaded: {count} answers" } },
+    "accuracy.skipped": { ru: ", пропущено строк: {count}", kk: ", өткізіп жіберілген жолдар: {count}", en: ", rows skipped: {count}" },
+    "accuracy.readError": { ru: "Не получилось прочитать файл. Попробуйте выбрать его ещё раз.", kk: "Файлды оқу мүмкін болмады. Оны қайта таңдаңыз.", en: "Could not read the file. Try selecting it again." },
+    "accuracy.dropFile": { ru: "Перетащите файл разметки", kk: "Белгілеу файлын сүйреп әкеліңіз", en: "Drop the labels file here" },
+    "accuracy.chooseCsv": { ru: "или нажмите, чтобы выбрать CSV", kk: "немесе CSV таңдау үшін басыңыз", en: "or click to choose a CSV" },
+    "accuracy.uploadTitle": { ru: "Загрузите ручную разметку, чтобы сравнить с ней ответы модели", kk: "Модель жауаптарымен салыстыру үшін қолмен белгіленген деректерді жүктеңіз", en: "Upload human labels to compare them with model answers" },
+    "accuracy.csvHelp": { ru: "Нужен файл CSV: одна строка на ответ по одному критерию. В ответе yes, no, na или число баллов по шкале.", kk: "CSV файлы қажет: әр жолда бір критерийге берілген жауап. Жауап yes, no, na немесе шкаладағы ұпай саны болуы керек.", en: "Use a CSV with one criterion answer per row. Answers can be yes, no, na, or a numeric score from the scale." },
+    "accuracy.sample": { ru: "Скачать пример файла", kk: "Файл үлгісін жүктеу", en: "Download sample file" },
+    "accuracy.replace": { ru: "Заменить разметку", kk: "Белгілеуді ауыстыру", en: "Replace labels" },
+    "accuracy.nothingToCompare": { ru: "Сравнить пока не с чем", kk: "Әзірге салыстыратын дерек жоқ", en: "Nothing to compare yet" },
+    "accuracy.notEvaluated": { ru: "В разметке нет обращений, которые уже оценила модель.", kk: "Белгілеуде модель бағалаған өтініштер жоқ.", en: "None of the labeled conversations have been evaluated by the model." },
+    "accuracy.agreement": { ru: "Совпадение с разметкой", kk: "Белгілеумен сәйкестік", en: "Agreement with labels" },
+    "accuracy.matchAnswers": { ru: { one: "{matched} из {count} ответа", other: "{matched} из {count} ответов" }, kk: "Сәйкес: {matched} / {count}", en: { one: "{matched} of {count} answer", other: "{matched} of {count} answers" } },
+    "accuracy.meanDifference": { ru: "Средняя разница итога", kk: "Қорытындының орташа айырмасы", en: "Mean score difference" },
+    "accuracy.acrossConversations": { ru: { one: "по {count} обращению", other: "по {count} обращениям" }, kk: "{count} өтініш бойынша", en: { one: "across {count} conversation", other: "across {count} conversations" } },
+    "accuracy.fromFile": { ru: "Разметка из файла {file}", kk: "Белгілеу файлы: {file}", en: "Labels from {file}" },
+    "accuracy.unevaluatedRows": { ru: { one: ". Без оценки модели: {count} строка", few: ". Без оценки модели: {count} строки", other: ". Без оценки модели: {count} строк" }, kk: ". Модель бағаламаған: {count} жол", en: { one: ". Without a model evaluation: {count} row", other: ". Without a model evaluation: {count} rows" } },
+    "accuracy.byCriterion": { ru: "По критериям", kk: "Критерийлер бойынша", en: "By criterion" },
+    "accuracy.matchCount": { ru: "{matched} из {total}", kk: "{total} ішінен {matched}", en: "{matched} of {total}" },
+    "accuracy.confusion": { ru: "{model} вместо {gold}: {count}", kk: "{gold} орнына {model}: {count}", en: "{model} instead of {gold}: {count}" },
+    "accuracy.noDifferences": { ru: "без расхождений", kk: "айырмашылық жоқ", en: "no differences" },
+    "accuracy.differencesCount": { ru: "Расхождения: {count}", kk: "Айырмашылықтар: {count}", en: "Differences: {count}" },
+    "accuracy.noDifferencesTitle": { ru: "Расхождений нет", kk: "Айырмашылық жоқ", en: "No differences" },
+    "accuracy.humanLabel": { ru: "разметка", kk: "белгілеу", en: "human label" },
+    "accuracy.modelLabel": { ru: "модель", kk: "модель", en: "model" },
+    "accuracy.allMatch": { ru: "Модель ответила так же, как в разметке, по всем критериям.", kk: "Модельдің барлық критерий бойынша жауаптары белгілеумен сәйкес келді.", en: "The model matched the human labels for every criterion." },
+    "accuracy.title": { ru: "Точность модели", kk: "Модель дәлдігі", en: "Model accuracy" },
+    "accuracy.internalTool": { ru: "Внутренний инструмент команды: сравнение ответов модели с ручной разметкой", kk: "Команданың ішкі құралы: модель жауаптарын қолмен белгілеумен салыстыру", en: "Internal team tool for comparing model answers with human labels" }
+  });
   const GOLD_KEY = "da.gold";
-  const one = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 });
-  const pct = (x) => `${Math.round(x * 100)} %`;
-  const nConv = (n) => `${n} ${DA.fmt.plural(n, ["обращение", "обращения", "обращений"])}`;
+  const one = (x) => new Intl.NumberFormat(DA.fmt.locale(), { maximumFractionDigits: 1 }).format(x);
+  const pct = (x) => new Intl.NumberFormat(DA.fmt.locale(), { style: "percent", maximumFractionDigits: 0 }).format(x);
+  function goldError(key, params) { return Object.assign(new Error(t(key, params)), { uiMessage: m(key, params) }); }
   function doneItem(ev, criterionId) {
     if (ev.stale) return null;
     const item = ev.items.find((i) => i.criterionId === criterionId && i.status === "done");
@@ -40,10 +76,10 @@
   /* Разбор файла разметки. Ошибка формата бросается с понятным текстом. */
   function readGold(text, fileName) {
     const rows = parseCsv(text);
-    if (!rows.length) throw new Error("Файл пустой.");
+    if (!rows.length) throw goldError("emptyFile");
     const header = rows[0].cells.map((c) => c.toLowerCase());
     const col = Object.fromEntries(["conversation_id", "criterion_id", "answer", "note"].map((k) => [k, header.indexOf(k)]));
-    if (col.conversation_id < 0 || col.criterion_id < 0 || col.answer < 0) throw new Error("В первой строке нужны столбцы conversation_id, criterion_id и answer.");
+    if (col.conversation_id < 0 || col.criterion_id < 0 || col.answer < 0) throw goldError("columns");
     const out = [];
     let skipped = 0;
     for (const r of rows.slice(1)) {
@@ -54,11 +90,11 @@
       if (!c) { skipped++; continue; }
       const answer = /^\d+$/.test(raw) ? Number(raw) : raw;
       if (!DA.allowedAnswers(c).includes(answer)) {
-        throw new Error(`В строке ${r.line} ответ «${r.cells[col.answer]}» не подходит к критерию «${c.title}». Допустимо: ${DA.allowedAnswers(c).join(", ")}.`);
+        throw goldError("invalidAnswer", { line: r.line, answer: r.cells[col.answer], criterion: c.title, allowed: DA.allowedAnswers(c).join(", ") });
       }
       out.push({ conversationId: cid, criterionId: crit, answer, note: col.note >= 0 ? r.cells[col.note] || "" : "" });
     }
-    if (!out.length) throw new Error("В файле нет строк с обращениями и критериями из этого набора.");
+    if (!out.length) throw goldError("noRows");
     return { fileName, loadedAt: Date.now(), rows: out, skipped };
   }
 
@@ -90,8 +126,10 @@
       const row = byCrit.get(p.c.id);
       row.total++;
       if (p.gold === p.model) { row.match++; continue; }
-      const key = `${short(p.model, p.c)} вместо ${short(p.gold, p.c)}` + (p.c.type === "scale" && p.gold !== "na" ? " " + DA.fmt.plural(p.gold, ["балла", "баллов", "баллов"]) : "");
-      row.confusions.set(key, (row.confusions.get(key) || 0) + 1);
+      const key = JSON.stringify([p.model, p.gold]);
+      const confusion = row.confusions.get(key) || { model: p.model, gold: p.gold, count: 0 };
+      confusion.count++;
+      row.confusions.set(key, confusion);
     }
     const crits = [...byCrit.values()].sort((a, b) => a.c.order - b.c.order);
     const misses = pairs.filter((p) => p.gold !== p.model)
@@ -99,7 +137,7 @@
     return { pairs, match, noEval, meanDiff: diffs.length ? diffs.reduce((s, d) => s + d, 0) / diffs.length : null, crits, misses };
   }
   /* «4,1 балла», но «4 балла» и «5 баллов». */
-  const points = (x) => (Math.round(x * 10) % 10 ? "балла" : DA.fmt.plural(Math.round(x), ["балл", "балла", "баллов"]));
+  const points = (x) => DA.fmt.plural(x, { ru: { one: "балл", few: "балла", many: "баллов", other: "балла" }, kk: { other: "ұпай" }, en: { one: "point", other: "points" } });
   const short = (answer, c) => (c.type === "scale" && answer !== "na" ? String(answer) : DA.answerLabel(answer, c));
 
   function accuracyView(rerender) {
@@ -114,19 +152,19 @@
           const next = readGold(String(reader.result), file.name);
           saveGold(next);
           rerender();
-          DA.toast(`Разметка загружена: ${next.rows.length} ${DA.fmt.plural(next.rows.length, ["ответ", "ответа", "ответов"])}` + (next.skipped ? `, пропущено строк: ${next.skipped}` : ""));
+          DA.toast(DA.msg(() => t("loaded", { count: next.rows.length }) + (next.skipped ? t("skipped", { count: next.skipped }) : "")));
         } catch (e) {
-          error.textContent = e.message;
+          DA.i18n.bindText(error, e.uiMessage || (() => e.message));
           error.hidden = false;
           drop.classList.remove("is-shake"); void drop.offsetWidth; drop.classList.add("is-shake");
         }
       };
-      reader.onerror = () => { error.textContent = "Не получилось прочитать файл. Попробуйте выбрать его ещё раз."; error.hidden = false; };
+      reader.onerror = () => { DA.i18n.bindText(error, m("readError")); error.hidden = false; };
       reader.readAsText(file, "utf-8");
     }
     input.addEventListener("change", () => { take(input.files[0]); input.value = ""; });
     const drop = h("label", { class: "da-drop da-ins-drop" }, input, DA.icon("upload"),
-      h("b", {}, "Перетащите файл разметки"), h("span", { class: "da-small da-muted" }, "или нажмите, чтобы выбрать CSV"));
+      h("b", {}, m("dropFile")), h("span", { class: "da-small da-muted" }, m("chooseCsv")));
     drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("is-over"); });
     drop.addEventListener("dragleave", () => drop.classList.remove("is-over"));
     drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("is-over"); take(e.dataTransfer.files[0]); });
@@ -134,52 +172,52 @@
     if (!gold) {
       return h("div", { class: "da-ins-gold-empty" },
         h("div", { class: "da-ins-gold-intro" },
-          h("h2", {}, "Загрузите ручную разметку, чтобы сравнить с ней ответы модели"),
-          h("p", { class: "da-muted" }, "Нужен файл CSV: одна строка на ответ по одному критерию. В ответе yes, no, na или число баллов по шкале."),
+          h("h2", {}, m("uploadTitle")),
+          h("p", { class: "da-muted" }, m("csvHelp")),
           sampleTable(),
-          h("a", { class: "da-btn is-sm da-ins-download", href: "data/gold-sample.csv", download: "gold-sample.csv" }, DA.icon("upload", 16), "Скачать пример файла")),
+          h("a", { class: "da-btn is-sm da-ins-download", href: "data/gold-sample.csv", download: "gold-sample.csv" }, DA.icon("upload", 16), m("sample"))),
         h("div", { class: "da-ins-gold-drop" }, drop, error));
     }
 
     const r = compare(gold);
-    const replace = h("button", { class: "da-btn is-sm", type: "button", onclick: () => input.click() }, DA.icon("refresh", 16), "Заменить разметку");
+    const replace = h("button", { class: "da-btn is-sm", type: "button", onclick: () => input.click() }, DA.icon("refresh", 16), m("replace"));
     drop.hidden = true;
     if (!r.pairs.length) {
-      return h("div", { class: "da-empty" }, drop, h("h2", {}, "Сравнить пока не с чем"),
-        h("p", {}, "В разметке нет обращений, которые уже оценила модель."), replace, error);
+      return h("div", { class: "da-empty" }, drop, h("h2", {}, m("nothingToCompare")),
+        h("p", {}, m("notEvaluated")), replace, error);
     }
     const rate = r.match / r.pairs.length;
     return h("div", { class: "da-ins-acc" }, drop,
       h("div", { class: "da-ins-acc-head" },
-        h("div", { class: "da-ins-kpi" }, h("span", {}, "Совпадение с разметкой"), h("b", {}, pct(rate)),
-          h("small", {}, `${r.match} из ${r.pairs.length} ${DA.fmt.plural(r.pairs.length, ["ответа", "ответов", "ответов"])}`)),
-        h("div", { class: "da-ins-kpi" }, h("span", {}, "Средняя разница итога"),
-          h("b", {}, one.format(r.meanDiff), h("em", {}, points(r.meanDiff))),
-          h("small", {}, `по ${nConv(new Set(r.pairs.map((p) => p.cid)).size)}`)),
+        h("div", { class: "da-ins-kpi" }, h("span", {}, m("agreement")), h("b", {}, DA.msg(() => pct(rate))),
+          h("small", {}, m("matchAnswers", { matched: r.match, count: r.pairs.length }))),
+        h("div", { class: "da-ins-kpi" }, h("span", {}, m("meanDifference")),
+          h("b", {}, DA.msg(() => one(r.meanDiff)), h("em", {}, DA.msg(() => points(r.meanDiff)))),
+          h("small", {}, m("acrossConversations", { count: new Set(r.pairs.map((p) => p.cid)).size }))),
         h("div", { class: "da-ins-acc-file" },
-          h("span", { class: "da-small da-muted" }, `Разметка из файла ${gold.fileName}`,
-            r.noEval ? `. Без оценки модели: ${r.noEval} ${DA.fmt.plural(r.noEval, ["строка", "строки", "строк"])}` : ""),
+          h("span", { class: "da-small da-muted" }, m("fromFile", { file: gold.fileName }),
+            r.noEval ? m("unevaluatedRows", { count: r.noEval }) : ""),
           replace, error)),
       h("section", { class: "da-ins-block is-flat" },
-        h("h2", {}, "По критериям"),
+        h("h2", {}, m("byCriterion")),
         h("div", { class: "da-ins-acc-rows" }, r.crits.map((row, i) => {
-          const top = [...row.confusions.entries()].sort((a, b) => b[1] - a[1])[0];
+          const top = [...row.confusions.values()].sort((a, b) => b.count - a.count)[0];
           return h("div", { class: "da-ins-acc-row" },
             h("span", { class: "da-ins-acc-title" }, row.c.title),
             h("span", { class: "da-ins-meter is-wide" + (row.match < row.total ? " is-miss" : "") }, h("i", { style: { width: (row.match / row.total) * 100 + "%", "--i": i } })),
-            h("b", { class: "da-ins-acc-n" }, `${row.match} из ${row.total}`),
-            h("span", { class: "da-ins-acc-conf" }, top ? `${top[0]}: ${top[1]}` : h("span", { class: "da-quiet" }, "без расхождений")));
+            h("b", { class: "da-ins-acc-n" }, m("matchCount", { matched: row.match, total: row.total })),
+            h("span", { class: "da-ins-acc-conf" }, top ? m("confusion", () => ({ model: short(top.model, row.c), gold: short(top.gold, row.c), count: top.count })) : h("span", { class: "da-quiet" }, m("noDifferences"))));
         }))),
       h("section", { class: "da-ins-block is-flat" },
-        h("h2", {}, r.misses.length ? `Расхождения: ${r.misses.length}` : "Расхождений нет"),
+        h("h2", {}, r.misses.length ? m("differencesCount", { count: r.misses.length }) : m("noDifferencesTitle")),
         r.misses.length ? h("div", { class: "da-ins-misses" }, r.misses.map((p) =>
           h("a", { class: "da-ins-miss", href: `#/c/${encodeURIComponent(p.cid)}?criterion=${encodeURIComponent(p.c.id)}` },
             h("b", { class: "da-num" }, `№ ${DA.convNumber(p.cid)}`),
             h("span", { class: "da-ins-miss-main" }, h("b", {}, p.c.title), p.note ? h("span", { class: "da-muted" }, p.note) : null),
             h("span", { class: "da-ins-miss-ans" },
-              h("span", {}, h("span", { class: "da-small da-muted" }, "разметка"), DA.answerPill(p.gold, p.c)),
-              h("span", {}, h("span", { class: "da-small da-muted" }, "модель"), DA.answerPill(p.model, p.c))),
-            DA.icon("chevron", 16)))) : h("p", { class: "da-muted" }, "Модель ответила так же, как в разметке, по всем критериям.")));
+              h("span", {}, h("span", { class: "da-small da-muted" }, m("humanLabel")), DA.answerPill(p.gold, p.c)),
+              h("span", {}, h("span", { class: "da-small da-muted" }, m("modelLabel")), DA.answerPill(p.model, p.c))),
+            DA.icon("chevron", 16)))) : h("p", { class: "da-muted" }, m("allMatch"))));
   }
 
   function sampleTable() {
@@ -193,8 +231,8 @@
     const body = h("div");
     function render() { body.replaceChildren(accuracyView(render)); }
     root.append(h("div", { class: "da-page da-ins" },
-      h("div", { class: "da-page-head" }, h("h1", { class: "da-h1", tabindex: -1 }, "Точность модели")), body,
-      h("p", { class: "da-ins-after" }, "Внутренний инструмент команды: сравнение ответов модели с ручной разметкой")));
+      h("div", { class: "da-page-head" }, h("h1", { class: "da-h1", tabindex: -1 }, m("title"))), body,
+      h("p", { class: "da-ins-after" }, m("internalTool"))));
     render();
   };
 })();
