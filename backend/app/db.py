@@ -2,7 +2,7 @@
 import json
 import re
 import sqlite3
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -77,12 +77,31 @@ CREATE INDEX IF NOT EXISTS transcriptions_status ON transcriptions(status);
 
 
 class Database:
-    def __init__(self, path):
+    def __init__(self, path, *, remote_url='', auth_token=''):
         self.path = str(path)
-        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+        self.remote_url = remote_url
+        self._auth_token = auth_token
+        if remote_url:
+            from .remote_db import validate_remote_config
+            validate_remote_config(remote_url, auth_token)
+        else:
+            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         with self.transaction() as conn:
-            conn.executescript(SCHEMA)
-            self._migrate_conversation_metadata(conn)
+            # Functions can cold-start often. Initialize the shared schema once,
+            # in the same write transaction as its version marker, rather than
+            # repeating all DDL and metadata reads for every API instance.
+            version = 0
+            if remote_url and conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'").fetchone():
+                version = self.get_setting('_databaseSchemaVersion', 0, conn)
+                if type(version) is not int or version < 0:
+                    raise RuntimeError('Remote database schema marker is invalid')
+            if remote_url and version > 1:
+                raise RuntimeError('Remote database schema is newer than this application')
+            if version < 1:
+                conn.executescript(SCHEMA)
+                self._migrate_conversation_metadata(conn)
+                if remote_url:
+                    self.set_setting('_databaseSchemaVersion', 1, conn)
 
     def _migrate_conversation_metadata(self, conn):
         """Keep existing registry order once, then persist identity independently of rowid."""
@@ -110,19 +129,41 @@ class Database:
 
     @contextmanager
     def transaction(self):
-        conn = sqlite3.connect(self.path, timeout=15)
-        conn.row_factory = sqlite3.Row
-        conn.execute('PRAGMA foreign_keys=ON')
-        conn.execute('PRAGMA journal_mode=WAL')
-        try:
-            conn.execute('BEGIN IMMEDIATE')
-            yield conn
-            conn.commit()
-        except BaseException:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        if self.remote_url:
+            from .remote_db import TRANSACTION_LOCK, connect_remote
+            guard = TRANSACTION_LOCK
+        else:
+            guard = nullcontext()
+        with guard:
+            if self.remote_url:
+                conn = connect_remote(self.remote_url, self._auth_token)
+            else:
+                conn = sqlite3.connect(self.path, timeout=15)
+                conn.row_factory = sqlite3.Row
+            failed = False
+            try:
+                conn.execute('PRAGMA foreign_keys=ON')
+                if not self.remote_url:
+                    conn.execute('PRAGMA journal_mode=WAL')
+                conn.execute('BEGIN IMMEDIATE')
+                yield conn
+                conn.commit()
+            except BaseException:
+                failed = True
+                # A server timeout can already have rolled back the stream.
+                # Preserve the original failure, including an unknown COMMIT
+                # outcome; never retry a write or hide it with cleanup errors.
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                raise
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    if not failed:
+                        raise
 
     @contextmanager
     def _using(self, conn=None):

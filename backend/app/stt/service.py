@@ -24,8 +24,11 @@ class TranscriptionQueue:
         self.queue = asyncio.Queue()
         self.scheduled = set()
         self.workers = []
+        self.background_guard = None
 
     async def start(self):
+        if getattr(self.settings, 'worker_mode', 'standalone') == 'api':
+            return
         if not self.settings.stt_enabled or not self.settings.openrouter_api_key:
             return
         for row in self.store.all():
@@ -48,10 +51,21 @@ class TranscriptionQueue:
         self.workers.clear()
 
     def _schedule(self, cid, generation):
+        if getattr(self.settings, 'worker_mode', 'standalone') == 'api':
+            return
         key = (cid, generation)
         if key not in self.scheduled:
             self.scheduled.add(key)
             self.queue.put_nowait(key)
+
+    def poll_pending(self):
+        """Discover durable rows created by a separate API process."""
+        if (getattr(self.settings, 'worker_mode', 'standalone') != 'worker'
+                or not self.settings.stt_enabled or not self.settings.openrouter_api_key):
+            return
+        for row in self.store.all():
+            if row['status'] == 'queued':
+                self._schedule(row['conversation_id'], row['generation'])
 
     def enqueue(self, ids, force=False):
         if not self.settings.stt_enabled or not self.settings.openrouter_api_key:
@@ -75,6 +89,8 @@ class TranscriptionQueue:
                 self.queue.task_done()
 
     async def _recognize(self, cid, generation, path, seconds):
+        if self.background_guard:
+            self.background_guard()
         task = asyncio.create_task(provider.transcribe(path, self.settings))
         began = time.monotonic()
         expected = max(1, (seconds or 0) * 0.05)

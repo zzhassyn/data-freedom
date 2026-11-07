@@ -1,2 +1,5 @@
 .pytest-tmp/
 .pytest_cache/
+
+.vercel
+.env*

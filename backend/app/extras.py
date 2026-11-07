@@ -1,6 +1,6 @@
 """Cached AI operations with source checks and isolated provider adapters."""
 import asyncio
-from contextlib import aclosing
+from contextlib import aclosing, asynccontextmanager
 import hashlib
 import json
 import logging
@@ -98,7 +98,16 @@ async def _call(app, function, *args, priority=0):
         raise ApiError('model_unavailable', 'Функция ИИ недоступна: настройте ключ и модель OpenRouter', 503)
     started = time.monotonic()
     try:
-        result = await app.state.queue.call_model(function, *args, priority=priority)
+        from .cache_coordination import active_cache_lease
+        cache_lease = active_cache_lease.get()
+        async def invoke(*values):
+            guard = getattr(app.state, 'background_guard', None)
+            if guard:
+                guard()
+            if cache_lease:
+                cache_lease.before_call()
+            return await function(*values)
+        result = await app.state.queue.call_model(invoke, *args, priority=priority)
         usage = _usage(result)
         app.state.db.record_usage(usage, latency_ms=int((time.monotonic() - started) * 1000), kind="extra")
         return result, usage
@@ -123,11 +132,28 @@ def _validate(model, result):
         raise ApiError("model_failed", "Модель вернула некорректный ответ. Повторите через минуту", 502) from exc
 
 
-def _cache_lock(app, kind, key):
-    locks = getattr(app.state, "ai_locks", None)
-    if locks is None:
-        app.state.ai_locks = locks = {}
-    return locks.setdefault((kind, key), asyncio.Lock())
+@asynccontextmanager
+async def _cache_lock(app, kind, key):
+    if getattr(app.state.settings, 'worker_mode', 'standalone') == 'standalone':
+        locks = getattr(app.state, "ai_locks", None)
+        if locks is None:
+            app.state.ai_locks = locks = {}
+        async with locks.setdefault((kind, key), asyncio.Lock()):
+            yield None
+    else:
+        from .cache_coordination import shared_cache_lock
+        async with shared_cache_lock(app, kind, key) as lease:
+            yield lease
+
+
+def _save_cached(app, lease, kind, key, body, usage):
+    guard = getattr(app.state, 'background_guard', None)
+    with app.state.db.transaction() as conn:
+        if guard:
+            guard(conn)
+        if lease:
+            lease.check(conn)
+        app.state.db.set_cache(kind, key, body, usage, conn)
 
 
 async def _cached(app, kind, key, source_hash, producer, is_current, refresh=False):
@@ -137,7 +163,7 @@ async def _cached(app, kind, key, source_hash, producer, is_current, refresh=Fal
         identity = _cache_identity(app, kind)
     except JudgeError as exc:
         raise ApiError("model_unavailable", str(exc), 503) from exc
-    async with _cache_lock(app, kind, key):
+    async with _cache_lock(app, kind, key) as lease:
         if not is_current():
             raise ApiError("stale_source", "Данные изменились. Повторите запрос", 409)
         cached = _cached_result(db, kind, key, source_hash, identity)
@@ -146,7 +172,7 @@ async def _cached(app, kind, key, source_hash, producer, is_current, refresh=Fal
         result, usage = await producer()
         if not is_current() or _cache_identity(app, kind) != identity:
             raise ApiError("stale_source", "Данные изменились во время обработки. Повторите запрос", 409)
-        db.set_cache(kind, key, {"sourceHash": source_hash, "providerIdentity": identity, "result": result}, usage)
+        _save_cached(app, lease, kind, key, {"sourceHash": source_hash, "providerIdentity": identity, "result": result}, usage)
         return result
 
 
@@ -179,7 +205,7 @@ def _stream_cached(app, kind, key, source_hash, factory, serialize, is_current, 
 
         async def produce():
             try:
-                async with _cache_lock(app, kind, key):
+                async with _cache_lock(app, kind, key) as lease:
                     if not is_current():
                         raise ApiError("stale_source", "Данные изменились. Повторите запрос", 409)
                     result = _cached_result(app.state.db, kind, key, source_hash, identity)
@@ -190,7 +216,7 @@ def _stream_cached(app, kind, key, source_hash, factory, serialize, is_current, 
                     result = serialize(pair[0])
                     if not is_current() or _cache_identity(app, kind) != identity:
                         raise ApiError("stale_source", "Данные изменились во время обработки. Повторите запрос", 409)
-                    app.state.db.set_cache(kind, key,
+                    _save_cached(app, lease, kind, key,
                         {"sourceHash": source_hash, "providerIdentity": identity, "result": result}, usage)
                     await messages.put({"type": "done", "result": result})
             except ApiError as exc:

@@ -23,6 +23,9 @@ def env_bool(name, default):
 @dataclass
 class Settings:
     db_path: str = field(default_factory=lambda: os.getenv('DB_PATH', './data/cqa.sqlite'))
+    db_url: str = field(default_factory=lambda: os.getenv('TURSO_DATABASE_URL', '').strip())
+    db_auth_token: str = field(default_factory=lambda: os.getenv('TURSO_AUTH_TOKEN', '').strip(), repr=False)
+    worker_mode: str = field(default_factory=lambda: os.getenv('WORKER_MODE', 'standalone').strip())
     org_api_url: str = field(default_factory=lambda: os.getenv('ORG_API_URL', DEFAULT_ORG_API_URL))
     audio_allowed_hosts: tuple[str, ...] = field(default_factory=lambda: tuple(
         os.getenv('AUDIO_ALLOWED_HOSTS', ','.join(AUDIO_ALLOWED_HOSTS)).split(',')))
@@ -50,6 +53,12 @@ class Settings:
     model_timeout: float = field(default_factory=lambda: float(os.getenv('MODEL_TIMEOUT_SECONDS', '180')))
 
     def __post_init__(self):
+        if self.worker_mode not in {'standalone', 'api', 'worker'}:
+            raise ValueError('WORKER_MODE должен быть standalone, api или worker')
+        if bool(self.db_url) != bool(self.db_auth_token):
+            raise ValueError('TURSO_DATABASE_URL и TURSO_AUTH_TOKEN задаются вместе')
+        if self.worker_mode == 'api' and not self.db_url:
+            raise ValueError('Серверный API требует постоянную базу TURSO_DATABASE_URL')
         hosts = self.audio_allowed_hosts
         if isinstance(hosts, str):
             hosts = hosts.split(',')

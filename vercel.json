@@ -1,0 +1,20 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "fastapi",
+  "regions": ["iad1"],
+  "functions": {
+    "index.py": {
+      "maxDuration": 300,
+      "includeFiles": "{backend/app/**,web/**}"
+    }
+  },
+  "daemons": {
+    "worker": {
+      "root": "backend",
+      "entrypoint": "Dockerfile.worker",
+      "instances": { "iad1": 1 },
+      "resources": { "requests": { "memory": "1Gi" } },
+      "terminationGracePeriodSeconds": 210
+    }
+  }
+}

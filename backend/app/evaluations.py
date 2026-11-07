@@ -188,6 +188,7 @@ class EvaluationQueue:
         self._evaluations: dict[str, asyncio.Task] = {}
         self._jobs_by_evaluation: dict[str, set[str]] = {}
         self._closing = False
+        self.background_guard = None
 
     async def start(self) -> None:
         if self._workers:
@@ -195,6 +196,10 @@ class EvaluationQueue:
         self._closing = False
         for _ in range(max(1, self.settings.judge_concurrency)):
             self._workers.append(asyncio.create_task(self._model_worker()))
+        # Functions may serve request-bound extras, but only the daemon owns
+        # durable evaluations. A cold API start must never replay paid work.
+        if getattr(self.settings, 'worker_mode', 'standalone') == 'api':
+            return
         for job in self.db.all_jobs():
             for item in job["items"]:
                 self._jobs_by_evaluation.setdefault(item["evaluationId"], set()).add(job["id"])
@@ -204,10 +209,15 @@ class EvaluationQueue:
             if not is_evaluation_visible(evaluation):
                 continue
             with self.db.transaction() as conn:
+                if self.background_guard:
+                    self.background_guard(conn)
                 evaluation = self.db.get_evaluation(evaluation["id"], conn)
                 for item in evaluation["items"]:
                     if item["status"] == "running":
-                        item["status"] = "pending"
+                        if getattr(self.settings, 'worker_mode', 'standalone') == 'worker':
+                            item.update(status="failed", explanation="Обработка прервалась. Повторите критерий.")
+                        else:
+                            item["status"] = "pending"
                 evaluation["status"] = "queued"
                 evaluation["total"] = None
                 self.db.save_evaluation(evaluation, conn)
@@ -356,6 +366,8 @@ class EvaluationQueue:
         return public_evaluation(evaluation)
 
     def _schedule(self, evaluation_id: str) -> None:
+        if getattr(self.settings, 'worker_mode', 'standalone') == 'api' or self._closing:
+            return
         existing = self._evaluations.get(evaluation_id)
         if existing is not None and not existing.done():
             return
@@ -366,9 +378,22 @@ class EvaluationQueue:
                 self._evaluations.pop(evaluation_id, None)
         task.add_done_callback(finished_callback)
 
+    def poll_pending(self) -> None:
+        """Discover API-created rows; called only by the leased daemon."""
+        if getattr(self.settings, 'worker_mode', 'standalone') != 'worker' or self._closing:
+            return
+        for job in self.db.all_jobs():
+            for item in job['items']:
+                self._jobs_by_evaluation.setdefault(item['evaluationId'], set()).add(job['id'])
+        for evaluation in reversed(self.db.all_evaluations()):
+            if evaluation['status'] == 'queued' and is_evaluation_visible(evaluation):
+                self._schedule(evaluation['id'])
+
     async def _run_evaluation(self, evaluation_id: str) -> None:
         try:
             with self.db.transaction() as conn:
+                if self.background_guard:
+                    self.background_guard(conn)
                 evaluation = self.db.get_evaluation(evaluation_id, conn)
                 evaluation["status"] = "running"
                 evaluation["startedAt"] = evaluation["startedAt"] or utcnow()
@@ -388,6 +413,8 @@ class EvaluationQueue:
                 if isinstance(outcome, BaseException):
                     raise outcome
             with self.db.transaction() as conn:
+                if self.background_guard:
+                    self.background_guard(conn)
                 evaluation = self.db.get_evaluation(evaluation_id, conn)
                 self._aggregate(evaluation)
                 if all(item["status"] == "done" for item in evaluation["items"]):
@@ -408,8 +435,13 @@ class EvaluationQueue:
             # Durable queued/running state is resumed by start().
             raise
         except Exception:
+            # A replaced daemon must not overwrite the new owner's state.
+            if self.background_guard:
+                self.background_guard()
             logger.exception("Не удалось завершить оценку %s", evaluation_id)
             with self.db.transaction() as conn:
+                if self.background_guard:
+                    self.background_guard(conn)
                 evaluation = self.db.get_evaluation(evaluation_id, conn)
                 for item in evaluation["items"]:
                     if item["status"] in {"pending", "running"}:
@@ -471,6 +503,8 @@ class EvaluationQueue:
                     # Check when a worker actually starts, including resumed
                     # jobs and work that waited behind another provider call.
                     require_current_judge_compatibility(evaluation)
+                    if self.background_guard:
+                        self.background_guard()
                     return await llm_switch.get_judge().judge(source, rule)
 
                 raw = await self.call_model(
@@ -514,6 +548,8 @@ class EvaluationQueue:
 
     def _save_item(self, evaluation_id: str, criterion_id: str, changes: dict, model: str | None = None) -> None:
         with self.db.transaction() as conn:
+            if self.background_guard:
+                self.background_guard(conn)
             evaluation = self.db.get_evaluation(evaluation_id, conn)
             item = next(i for i in evaluation["items"] if i["criterionId"] == criterion_id)
             item.update(changes)

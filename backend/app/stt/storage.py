@@ -7,6 +7,7 @@ from ..db import json_dumps, utcnow
 class Store:
     def __init__(self, db, keep_raw=False):
         self.db, self.keep_raw = db, keep_raw
+        self.guard = None
         with db.transaction() as conn:
             if keep_raw:
                 conn.execute('CREATE TABLE IF NOT EXISTS transcriptions_raw '
@@ -79,6 +80,8 @@ class Store:
                   json_dumps(value) if key in {'turns', 'speakers'} else value for key, value in fields.items()}
         fields['updated_at'] = utcnow()
         with self.db._using(conn) as c:
+            if self.guard:
+                self.guard(c)
             result = c.execute('UPDATE transcriptions SET ' + ','.join(key + '=?' for key in fields)
                                + ' WHERE conversation_id=? AND generation=? AND transcript_hash='
                                  '(SELECT transcript_hash FROM conversations WHERE id=?)',

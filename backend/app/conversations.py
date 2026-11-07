@@ -161,6 +161,10 @@ def schedule_summaries(request, ids):
     if (not request.app.state.settings.auto_summarize or not ids
             or not llm_switch.provider_configured('ai', request.app.state.settings)):
         return
+    if request.app.state.settings.worker_mode == 'api':
+        from .background import SummaryJobs
+        SummaryJobs(request.app.state.db).enqueue(ids)
+        return
     from .extras import prefetch_summaries
     task = asyncio.create_task(prefetch_summaries(request.app, ids))
     request.app.state.background_tasks.add(task)

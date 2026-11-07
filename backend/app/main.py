@@ -53,7 +53,7 @@ def trusted_request_origin(request):
     return not sites or sites[0] == 'same-origin'
 
 
-def create_app(settings=None, *, providers=None):
+def create_app(settings=None, *, providers=None, background_guard=None):
     config = settings or Settings()
 
     @asynccontextmanager
@@ -62,11 +62,19 @@ def create_app(settings=None, *, providers=None):
         from .evaluations import EvaluationQueue
         from .stt.service import TranscriptionQueue
         application.state.settings = config
-        application.state.db = Database(config.db_path)
+        if config.worker_mode == 'worker' and background_guard is None:
+            raise RuntimeError('Start a cloud worker through python -m app.worker')
+        application.state.db = Database(config.db_path, remote_url=config.db_url, auth_token=config.db_auth_token)
+        if background_guard:
+            background_guard()
         seed_checklist(application.state.db)
         llm_switch.configure(config.judge, config, providers)
         application.state.queue = EvaluationQueue(application.state.db, config)
         application.state.stt = TranscriptionQueue(application.state.db, config)
+        application.state.queue.background_guard = background_guard
+        application.state.stt.background_guard = background_guard
+        application.state.stt.store.guard = background_guard
+        application.state.background_guard = background_guard
         application.state.background_tasks = set()
         application.state.health_cache = None
         application.state.health_lock = asyncio.Lock()

@@ -1,0 +1,14 @@
+.env*
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+**/*.pyc
+.pytest*/
+data/
+verification/
+tests/
+*.sqlite*
+*.db
+README.md
+TESTING.md

@@ -3,4 +3,5 @@ uvicorn==0.38.0
 httpx==0.28.1
 pydantic==2.12.4
 python-dotenv==1.2.1
+libsql==0.1.11
 pytest==9.0.1
