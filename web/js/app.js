@@ -101,6 +101,7 @@
   /* Проверяющий сразу попадает в очередь. Аналитик со страниц проверяющего возвращается к обращениям. */
   DA.setRole = function (v) {
     DA.state.role = v;
+    document.documentElement.dataset.role = v;
     DA.save();
     DA.side.setRole(v);
     DA.side.renderNav(true);
@@ -195,6 +196,7 @@
 
   async function start() {
     DA.initState();
+    document.documentElement.dataset.role = DA.state.role;
     DA.side = sidebar();
     document.body.prepend(DA.side.mobileBar, DA.side.el, DA.side.scrim);
     ready = true;
