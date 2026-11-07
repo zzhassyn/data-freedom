@@ -27,5 +27,6 @@
     <rect x="236" y="0" width="69" height="22" rx="6" fill="#00b323"/>
     <rect x="309" y="0" width="46" height="22" rx="6" fill="#e7e9ee"/>
   </g>
-  <text x="748" y="206" font-family="Segoe UI, Onest, Arial, sans-serif" font-size="15" fill="#5d6878">Ширина сегмента это вес критерия, заливка это набранные баллы</text>
+  <text x="748" y="204" font-family="Segoe UI, Onest, Arial, sans-serif" font-size="14" fill="#5d6878">Ширина сегмента показывает вес критерия,</text>
+  <text x="748" y="222" font-family="Segoe UI, Onest, Arial, sans-serif" font-size="14" fill="#5d6878">заливка показывает набранные баллы</text>
 </svg>
