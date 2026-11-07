@@ -360,8 +360,8 @@
       if (work.existingIds.length) host.append(h("h3", { class: "stt-import-section" }, M("transcription")));
       const content = h("div"); host.append(content);
       m.panel.classList.add("stt-modal");
-      if (!work.existingIds.length) bind(m.panel.querySelector(".da-modal-head h2"), M("transcribing"));
-      detachStt = DA.stt.attach({ pane: content, foot, close: () => m.close(), receipt: resultText(work.result) });
+      const heading = !work.existingIds.length ? m.panel.querySelector(".da-modal-head h2") : null;
+      detachStt = DA.stt.attach({ pane: content, foot, close: () => m.close(), receipt: resultText(work.result), heading, pendingTitle: M("transcribing") });
     }
     function processingView(title, work) {
       secondStep = true;
