@@ -321,24 +321,22 @@ async def upload(request: Request):
     return result
 
 
-@router.get('/conversations')
-async def list_conversations(request: Request, groupId: str = '', language: str = '', channel: str = '', status: str = '', q: str = ''):
+def registry_payload(conversation_records, evaluation_records, appeal_records, summaries, *, groupId='', language='', channel='', status='', q=''):
     from .evaluations import is_evaluation_visible
     if status not in {'', 'new', 'running', 'done', 'failed', 'appeal', 'review', 'stale'}:
         raise ApiError('invalid_filter', 'Неизвестный фильтр состояния')
     if language not in {'', 'RU', 'KZ', 'EN'} or channel not in {'', 'agent chat', 'voice call'}:
         raise ApiError('invalid_filter', 'Неизвестный язык или канал')
-    db, latest = request.app.state.db, {}
-    for ev in db.all_evaluations():
+    latest = {}
+    for ev in evaluation_records:
         if is_evaluation_visible(ev):
             latest.setdefault(ev['conversationId'], ev)
     appeal_counts = {}
-    for ap in db.all_appeals():
+    for ap in appeal_records:
         counts = appeal_counts.setdefault(ap['evaluationId'], {'open': 0, 'decided': 0})
         counts['open' if ap['status'] == 'open' else 'decided'] += 1
-    from .extras import get_cached_summary
     rows = []
-    for conversation in reversed(db.all_conversations()):
+    for conversation in reversed(conversation_records):
         if groupId and conversation['datasetGroupId'] != groupId:
             continue
         if language and conversation['language'] != language or channel and conversation['channel'] != channel:
@@ -351,7 +349,7 @@ async def list_conversations(request: Request, groupId: str = '', language: str 
             counts = appeal_counts.get(ev['id'], {'open': 0, 'decided': 0})
             ev_status = ev['status'] if ev.get('transcriptHash') == conversation['transcriptHash'] else 'stale'
             last = dict(id=ev['id'], status=ev_status, total=ev['total'], originalTotal=ev['originalTotal'], grossFlagged=ev['grossError']['flagged'], checklistVersion=ev['checklistVersion'], openAppeals=counts['open'], decidedAppeals=counts['decided'], needsReviewCount=ev.get('needsReviewCount', 0), ribbon=[{k: item.get(k) for k in ('criterionId','answer','fraction','effectiveWeight')} for item in ev['items']])
-        summary = get_cached_summary(db, conversation)
+        summary = summaries.get(conversation['id'])
         turns = conversation['transcript']
         rows.append(dict(id=conversation['id'], number=conversation['number'], startedAt=conversation['startedAt'], groupId=conversation['datasetGroupId'], language=conversation['language'], channel=conversation['channel'], audioUrl=conversation['audioUrl'], transcriptHash=conversation['transcriptHash'], turns=len(turns), durationSec=turns[-1]['tSec'] if turns else 0, preview=next((t['text'][:140] for t in turns if t['speaker'] == 'client'), ''), lastEvaluation=last, summary=summary))
     counts = dict(all=len(rows), evaluated=sum(bool(r['lastEvaluation'] and r['lastEvaluation']['status'] == 'done') for r in rows), running=sum(bool(r['lastEvaluation'] and r['lastEvaluation']['status'] in {'running','queued'}) for r in rows), appealsOpen=sum(bool(r['lastEvaluation'] and r['lastEvaluation']['openAppeals']) for r in rows))
@@ -373,6 +371,19 @@ async def list_conversations(request: Request, groupId: str = '', language: str 
     return dict(items=[r for r in rows if matches(r)], counts=counts)
 
 
+@router.get('/conversations')
+async def list_conversations(request: Request, groupId: str = '', language: str = '', channel: str = '', status: str = '', q: str = ''):
+    from .extras import get_cached_summaries
+    db = request.app.state.db
+    with db.read_connection() as conn:
+        records = db.all_conversations(conn)
+        evaluations = db.all_evaluations(conn)
+        appeals = db.all_appeals(conn)
+        summaries = get_cached_summaries(db, records, conn)
+    return registry_payload(records, evaluations, appeals, summaries,
+                            groupId=groupId, language=language, channel=channel, status=status, q=q)
+
+
 @router.get('/conversations/{id}')
 async def get_conversation(id: str, request: Request):
     from .judge.hints import contextual_na_metadata
@@ -385,9 +396,10 @@ async def get_conversation(id: str, request: Request):
 async def history(id: str, request: Request):
     from .evaluations import is_evaluation_visible, public_evaluation
     db = request.app.state.db
-    db.get_conversation(id)
-    return dict(items=[public_evaluation(ev) for ev in db.all_evaluations()
-                       if ev['conversationId'] == id and is_evaluation_visible(ev)])
+    with db.read_connection() as conn:
+        db.get_conversation(id, conn)
+        evaluations = db.all_evaluations(conn, conversation_id=id)
+    return dict(items=[public_evaluation(ev) for ev in evaluations if is_evaluation_visible(ev)])
 
 
 class AudioSource(HTMLParser):

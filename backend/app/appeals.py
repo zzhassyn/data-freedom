@@ -1,12 +1,13 @@
 """Appeals preserve the judge's answer while applying a reviewer's decision."""
 
+from collections.abc import Mapping
 from typing import Any
 
 from fastapi import APIRouter, Body, Request
 
 from .db import utcnow
 from .errors import ApiError
-from .evaluations import is_evaluation_visible, public_evaluation, require_evaluation_visible, source_conversation
+from .evaluations import is_evaluation_visible, public_evaluation, require_evaluation_visible, source_conversation, source_conversation_payload
 from .extras import visible_appeal
 from .scoring import score_evaluation, validate_answer
 
@@ -88,50 +89,75 @@ async def create_appeal(request: Request, body: dict = Body(...)):
 
 
 @router.get("/appeals")
-async def list_appeals(request: Request, status: str = "open"):
+def list_appeals(request: Request, status: str = "open"):
     if status not in {"open", "decided", "all"}:
         raise ApiError("invalid_filter", "Статус апелляций должен быть open, decided или all", 400)
     db = request.app.state.db
-    with db.transaction() as conn:
-        appeals = [appeal for appeal in db.all_appeals(conn)
-                   if is_evaluation_visible(db.get_evaluation(appeal["evaluationId"], conn))]
-        counts = {
-            "open": sum(a["status"] == "open" for a in appeals),
-            "decided": sum(a["status"] != "open" for a in appeals),
-        }
-        opened = sorted(
-            (a for a in appeals if a["status"] == "open"),
-            key=lambda a: (a["createdAt"], int(a["id"].split("_")[-1])),
+    with db.read_connection() as conn:
+        all_appeals = db.all_appeals(conn)
+        evaluations = {row['id']: row for row in db.all_evaluations(conn)}
+        checklists = {row['id']: row for row in db.all_checklists(conn)}
+        conversations = {row['id']: row for row in db.all_conversations(conn)}
+    return build_appeals_payload(all_appeals, evaluations, checklists, conversations, status)
+
+
+def build_appeals_payload(appeals, evaluations, checklists, conversations, status="all", *, include_context=False):
+    """Enrich and order appeals from preloaded records without database access.
+
+    Related records can be lists or mappings keyed by ID. Input evaluation order
+    is irrelevant; appeal timestamps and numeric IDs retain the public ordering.
+    """
+    if status not in {"open", "decided", "all"}:
+        raise ApiError("invalid_filter", "Статус апелляций должен быть open, decided или all", 400)
+    evaluations = evaluations if isinstance(evaluations, Mapping) else {row['id']: row for row in evaluations}
+    checklists = checklists if isinstance(checklists, Mapping) else {row['id']: row for row in checklists}
+    conversations = conversations if isinstance(conversations, Mapping) else {row['id']: row for row in conversations}
+    appeals = [appeal for appeal in appeals
+               if is_evaluation_visible(evaluations[appeal['evaluationId']])]
+    counts = {
+        "open": sum(a["status"] == "open" for a in appeals),
+        "decided": sum(a["status"] != "open" for a in appeals),
+    }
+    opened = sorted(
+        (a for a in appeals if a["status"] == "open"),
+        key=lambda a: (a["createdAt"], int(a["id"].split("_")[-1])),
+    )
+    decided = sorted(
+        (a for a in appeals if a["status"] != "open"),
+        key=lambda a: (
+            (a.get("decision") or {}).get("decidedAt", a["createdAt"]),
+            int(a["id"].split("_")[-1]),
+        ),
+        reverse=True,
+    )
+    selected = opened if status == "open" else decided if status == "decided" else opened + decided
+    items = []
+    for appeal in selected:
+        evaluation = evaluations[appeal['evaluationId']]
+        checklist = checklists[evaluation['checklistId']]
+        criterion = next((row for row in checklist['criteria'] if row['id'] == appeal['criterionId']), None)
+        item = next((row for row in evaluation['items'] if row['criterionId'] == appeal['criterionId']), None)
+        if criterion is None or item is None:
+            raise ApiError('not_found', f"Критерий {appeal['criterionId']} не найден в оценке", 404)
+        conversation = evaluation.get('_conversation') or conversations[evaluation['conversationId']]
+        items.append(
+            {
+                **visible_appeal(appeal),
+                "criterionTitle": criterion["title"],
+                "conversationLanguage": conversation["language"],
+                "channel": conversation["channel"],
+            }
         )
-        decided = sorted(
-            (a for a in appeals if a["status"] != "open"),
-            key=lambda a: (
-                (a.get("decision") or {}).get("decidedAt", a["createdAt"]),
-                int(a["id"].split("_")[-1]),
-            ),
-            reverse=True,
-        )
-        selected = opened if status == "open" else decided if status == "decided" else opened + decided
-        items = []
-        for appeal in selected:
-            evaluation = db.get_evaluation(appeal["evaluationId"], conn)
-            _, criterion, _ = _criterion_and_item(db, evaluation, appeal["criterionId"], conn)
-            conversation = source_conversation(db, evaluation, conn)
-            items.append(
-                {
-                    **visible_appeal(appeal),
-                    "criterionTitle": criterion["title"],
-                    "conversationLanguage": conversation["language"],
-                    "channel": conversation["channel"],
-                }
-            )
+        if include_context:
+            items[-1].update(evaluation=public_evaluation(evaluation), criterion=criterion,
+                             conversation=source_conversation_payload(evaluation, conversations[evaluation['conversationId']]))
     return {"items": items, "counts": counts}
 
 
 @router.get("/appeals/{appeal_id}")
-async def get_appeal(request: Request, appeal_id: str):
+def get_appeal(request: Request, appeal_id: str):
     db = request.app.state.db
-    with db.transaction() as conn:
+    with db.read_connection() as conn:
         appeal = db.get_appeal(appeal_id, conn)
         evaluation = db.get_evaluation(appeal["evaluationId"], conn)
         require_evaluation_visible(evaluation)

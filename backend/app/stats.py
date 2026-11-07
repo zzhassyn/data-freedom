@@ -11,7 +11,8 @@ from math import isfinite
 
 from fastapi import APIRouter, Request
 
-from .db import json_dumps, latest_evaluations
+from .db import json_dumps
+from .read_views import latest_ready
 from .errors import ApiError
 from .evaluations import is_evaluation_visible
 from .scoring import score_evaluation, validate_answer
@@ -40,9 +41,12 @@ def _bucket(criterion: dict, answer: str | int | float) -> str:
 @router.get("/stats")
 def stats(request: Request, checklistId: str | None = None, groupId: str | None = None):
     db = request.app.state.db
-    checklist = db.get_checklist(checklistId or "active")
-    evaluations = latest_evaluations(db, checklist["id"], groupId or None)
-    conversations = {conversation["id"]: conversation for conversation in db.all_conversations()}
+    with db.read_connection() as conn:
+        checklist = db.get_checklist(checklistId or "active", conn)
+        all_evaluations = db.all_evaluations(conn)
+        conversations = {row['id']: row for row in db.all_conversations(conn)}
+        all_appeals = db.all_appeals(conn)
+    evaluations = latest_ready(all_evaluations, conversations, checklist['id'], groupId or None)
     totals = [evaluation["total"] for evaluation in evaluations if evaluation["total"] is not None]
     by_criterion = []
     for criterion in sorted(checklist["criteria"], key=lambda item: item["order"]):
@@ -63,12 +67,12 @@ def stats(request: Request, checklistId: str | None = None, groupId: str | None 
             "avgFraction": _mean(fractions), "byLanguage": by_language,
         })
     evaluation_ids = {
-        evaluation["id"] for evaluation in db.all_evaluations()
+        evaluation["id"] for evaluation in all_evaluations
         if is_evaluation_visible(evaluation) and evaluation["checklistId"] == checklist["id"]
         and (not groupId or conversations.get(evaluation["conversationId"], {}).get("datasetGroupId") == groupId)
     }
     appeals = {"open": 0, "confirmed": 0, "changed": 0}
-    for appeal in db.all_appeals():
+    for appeal in all_appeals:
         if appeal["evaluationId"] in evaluation_ids:
             appeals[appeal["status"]] += 1
     return {
@@ -158,18 +162,23 @@ async def upload_gold(request: Request):
 @router.get("/accuracy")
 def accuracy(request: Request, checklistId: str | None = None):
     db = request.app.state.db
-    checklist = db.get_checklist(checklistId or "active")
-    evaluations = latest_evaluations(db, checklist["id"])
-    criteria = {criterion["id"]: criterion for criterion in checklist["criteria"]}
-    with db.transaction() as conn:
+    with db.read_connection() as conn:
+        checklist = db.get_checklist(checklistId or "active", conn)
+        all_evaluations = db.all_evaluations(conn)
+        conversations = {row['id']: row for row in db.all_conversations(conn)}
         rows = conn.execute("SELECT conversation_id, criterion_id, answer FROM gold").fetchall()
+    evaluations = latest_ready(all_evaluations, conversations, checklist['id'])
+    criteria = {criterion["id"]: criterion for criterion in checklist["criteria"]}
     gold_by_conversation = {}
     for row in rows:
         if row["criterion_id"] not in criteria:
             continue
         answer = json.loads(row["answer"])
         try:
-            validate_answer(criteria[row["criterion_id"]], answer, db.get_conversation(row["conversation_id"]))
+            conversation = conversations.get(row['conversation_id'])
+            if conversation is None:
+                continue
+            validate_answer(criteria[row["criterion_id"]], answer, conversation)
         except ApiError:
             # A later checklist can remove a formerly valid scale step or N/A.
             continue

@@ -31,9 +31,7 @@ class TranscriptionQueue:
             return
         if not self.settings.stt_enabled or not self.settings.openrouter_api_key:
             return
-        for row in self.store.all():
-            if row['status'] not in {'queued', 'running'}:
-                continue
+        for row in self.store.all(statuses=('queued', 'running'), include_content=False):
             cid, generation = row['conversation_id'], row['generation']
             if row['step'] in {'queued', 'download'}:
                 self.store.update(cid, generation, status='queued', step='queued', progress=0, error=None)
@@ -63,9 +61,8 @@ class TranscriptionQueue:
         if (getattr(self.settings, 'worker_mode', 'standalone') != 'worker'
                 or not self.settings.stt_enabled or not self.settings.openrouter_api_key):
             return
-        for row in self.store.all():
-            if row['status'] == 'queued':
-                self._schedule(row['conversation_id'], row['generation'])
+        for row in self.store.all(statuses=('queued',), include_content=False):
+            self._schedule(row['conversation_id'], row['generation'])
 
     def enqueue(self, ids, force=False):
         if not self.settings.stt_enabled or not self.settings.openrouter_api_key:
@@ -171,8 +168,9 @@ class TranscriptionQueue:
     def transcription(self, cid):
         from ..translation_service import transcription_source_hash
         from .processing import annotate_roles
-        conversation = self.db.get_conversation(cid)
-        row = self.store.get(cid) if self.settings.stt_enabled else None
+        with self.db.read_connection() as conn:
+            conversation = self.db.get_conversation(cid, conn)
+            row = self.store.get(cid, conn) if self.settings.stt_enabled else None
         status = row['status'] if row else 'not_queued' if self.settings.stt_enabled else 'disabled'
         result = {
             'status': status, 'step': row['step'] if row else status, 'progress': row['progress'] if row else 0,
@@ -193,8 +191,12 @@ class TranscriptionQueue:
         return result
 
     def jobs(self, group_id=None):
-        rows = self.store.all(group_id) if self.settings.stt_enabled else []
-        conversations = {c['id']: c for c in self.db.all_conversations()}
+        rows, conversations = [], {}
+        if self.settings.stt_enabled:
+            with self.db.read_connection() as conn:
+                rows = self.store.all(group_id, conn, include_content=False)
+                if rows:
+                    conversations = {c['id']: c for c in self.db.all_conversations(conn)}
         items = []
         for row in rows:
             conversation = conversations[row['conversation_id']]

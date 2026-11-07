@@ -213,7 +213,7 @@
   let conversationLoad = null, checklistLoad = null, conversationReady = false;
   let summaries = new Map();
   const historyContexts = new Map(), evaluationReads = new Map();
-  let evaluationsRead = 0, appealsRead = 0;
+  let evaluationsRead = 0, appealsRead = 0, bootstrapRead = 0;
   const polls = new Map();
   const jobMetadata = new Map();
   const reopenedAt = new Map();
@@ -235,10 +235,10 @@
   function checklist(raw) {
     return { ...raw, createdAt: time(raw.createdAt), sections: raw.sections || [], criteria: raw.criteria || [] };
   }
-  function evaluationStale(raw) {
-    const currentConversation = DA.state.conversations[raw.conversationId];
+  function evaluationStale(raw, records = DA.state.conversations, rows = summaries) {
+    const currentConversation = records[raw.conversationId];
     if (raw.transcriptHash && currentConversation?.transcriptHash) return raw.transcriptHash !== currentConversation.transcriptHash;
-    const summary = summaries.get(raw.conversationId)?.lastEvaluation;
+    const summary = rows.get(raw.conversationId)?.lastEvaluation;
     const current = DA.state.evaluations[raw.conversationId];
     return !!raw.stale || (summary?.id === raw.id && summary.status === "stale") || (current?.id === raw.id && !!current.stale);
   }
@@ -251,10 +251,10 @@
       durationSec: raw.durationMs == null ? raw.durationSec ?? null : raw.durationMs / 1000,
       stale: stale == null ? evaluationStale(raw) : !!stale };
   }
-  function appeal(raw) {
+  function appeal(raw, records, rows) {
     return { ...raw, createdAt: time(raw.createdAt),
       decision: raw.decision ? { ...raw.decision, decidedAt: time(raw.decision.decidedAt) } : null,
-      ...(raw.evaluation ? { evaluation: evaluation(raw.evaluation) } : {}),
+      ...(raw.evaluation ? { evaluation: evaluation(raw.evaluation, evaluationStale(raw.evaluation, records, rows)) } : {}),
       ...(raw.conversation ? { conversation: conversation(raw.conversation) } : {}) };
   }
   async function mapLimit(items, callback) {
@@ -700,19 +700,52 @@
   async function stats(filters) {
     return DA.api.getStats(filters);
   }
+  /* Один свежий снимок вместо запросов для каждой строки. Собираем новое
+     состояние целиком до публикации; старый маршрут или чтение до мутации
+     не могут заменить уже сохранённые данные. История и задачи живут отдельно. */
+  async function bootstrap(options) {
+    const revision = epoch.value, sequence = ++bootstrapRead;
+    const raw = await DA.api.bootstrap(options);
+    if (options?.signal?.aborted) throw new DOMException("Действие прервано", "AbortError");
+    if (revision !== epoch.value || sequence !== bootstrapRead) return false;
+    if (raw?.schemaVersion !== 1 || !Array.isArray(raw.registry?.items)
+      || !Array.isArray(raw.conversations) || !Array.isArray(raw.evaluations)
+      || !Array.isArray(raw.checklists) || !Array.isArray(raw.appeals?.items)) {
+      throw failure("invalid_response", "Не удалось прочитать ответ сервера");
+    }
+    const nextSummaries = new Map(raw.registry.items.map((row) => [row.id, row]));
+    const records = raw.conversations.map((row) => conversation({ ...nextSummaries.get(row.id), ...row }));
+    const nextConversations = Object.fromEntries(records.map((record) => [record.conversation_id, record]));
+    const nextChecklists = raw.checklists.map(checklist).sort((a, b) => a.version - b.version);
+    const nextEvaluations = raw.evaluations.map((row) => {
+      const retained = retainEvaluationProgress(evaluation(row, evaluationStale(row, nextConversations, nextSummaries)));
+      return evaluation(retained, evaluationStale(retained, nextConversations, nextSummaries));
+    });
+    const nextAppeals = raw.appeals.items.map((row) => {
+      if (!row.evaluation || !row.conversation || !row.criterion || row.evaluation.id !== row.evaluationId
+        || row.evaluation.conversationId !== row.conversationId) {
+        throw failure("invalid_response", "Не удалось прочитать контекст апелляции");
+      }
+      return appeal(row, nextConversations, nextSummaries);
+    });
+    epoch.value++;
+    summaries = nextSummaries;
+    DA.state.conversations = nextConversations;
+    DA.state.numbers = Object.fromEntries(records.map((record, index) => [record.conversation_id, record.number ?? index + 1]));
+    DA.state.checklists = nextChecklists;
+    DA.state.evaluations = Object.fromEntries(nextEvaluations.map((ev) => [ev.conversationId, ev]));
+    DA.state.appeals = nextAppeals;
+    conversationReady = true;
+    conversationLoad = checklistLoad = null;
+    emit("da:appeals-changed");
+    return true;
+  }
   async function prepare(scope, options) {
     const opts = options || {};
     const check = () => { if (opts.signal?.aborted) throw new DOMException("Действие прервано", "AbortError"); };
     check();
-    await checklists({ refresh: opts.refresh });
-    check();
-    if (scope === "checklists") return DA.state;
-    await conversations({ refresh: opts.refresh });
-    check();
-    if (scope === "card") {
-      await Promise.all([getEvaluation(opts.id, { refresh: true, signal: opts.signal }), appeals({ signal: opts.signal })]);
-      if (opts.evaluationId) await loadHistory(opts.id, opts.evaluationId, { signal: opts.signal });
-    } else await Promise.all([evaluations({ signal: opts.signal }), appeals({ signal: opts.signal })]);
+    if (!await bootstrap(opts)) return DA.state;
+    if (scope === "card" && opts.evaluationId) await loadHistory(opts.id, opts.evaluationId, { signal: opts.signal });
     check();
     if (scope === "insights") { const result = await stats(); check(); DA.state.stats = result; }
     return DA.state;

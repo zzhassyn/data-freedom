@@ -4,8 +4,8 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import APIRouter, Request
 
-from .db import latest_evaluations
-from .extras import get_cached_summary
+from .extras import get_cached_summaries
+from .read_views import latest_ready
 
 router = APIRouter(prefix="/api")
 
@@ -19,12 +19,15 @@ def _mean(values):
 @router.get("/operators")
 def operators(request: Request, groupId: str | None = None, checklistId: str | None = None):
     db = request.app.state.db
-    checklist = db.get_checklist(checklistId or "active")
+    with db.read_connection() as conn:
+        checklist = db.get_checklist(checklistId or "active", conn)
+        conversations = {row['id']: row for row in db.all_conversations(conn)}
+        evaluations = db.all_evaluations(conn)
+        summaries = get_cached_summaries(db, conversations.values(), conn)
     criteria = {criterion["id"]: criterion for criterion in checklist["criteria"]}
     grouped = defaultdict(list)
-    for evaluation in latest_evaluations(db, checklist["id"], groupId or None):
-        conversation = db.get_conversation(evaluation["conversationId"])
-        summary = get_cached_summary(db, conversation)
+    for evaluation in latest_ready(evaluations, conversations, checklist["id"], groupId or None):
+        summary = summaries.get(evaluation['conversationId'])
         name = summary.get("operatorName") if summary else None
         grouped[name or "Имя не названо"].append(evaluation)
     items = []

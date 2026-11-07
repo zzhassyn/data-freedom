@@ -79,7 +79,7 @@ flowchart LR
 
 ## Запуск
 
-Для размещения на Vercel через CLI см. [настройку сервера, базы и фонового worker](docs/deployment.md).
+Для размещения на Vercel используйте `python scripts/deploy.py --prod`: команда готовит браузерные файлы для CDN и запускает Vercel CLI. Настройка сервера, базы и фонового worker описана в [инструкции по деплою](docs/deployment.md).
 
 Нужен Python 3.10 или новее. Для проверки полноты записей звонков желательны `ffmpeg` и `ffprobe` в `PATH`.
 

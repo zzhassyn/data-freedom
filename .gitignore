@@ -3,3 +3,5 @@
 
 .vercel
 .env*
+/public/
+/scripts/__pycache__/

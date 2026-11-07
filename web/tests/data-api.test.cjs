@@ -38,12 +38,18 @@ function rawEvaluation(cl, extra) {
     grossError: { flagged: false }, sections: null,
     items: cl.criteria.map((c) => ({ criterionId: c.id, status: 'done', answer: c.type === 'scale' ? c.scale[0].value : c.type === 'flag' ? 'no' : 'yes', evidence: [], points: c.weight, effectiveWeight: c.weight, fraction: 1 })), ...extra };
 }
+function screenSnapshot(cl, ev, record = source, extra = {}) {
+  return { schemaVersion: 1,
+    registry: { items: [{ ...record, lastEvaluation: { id: ev.id, status: 'done' } }] },
+    conversations: [record], evaluations: [ev], checklists: [cl], appeals: { items: [] }, ...extra };
+}
 function fixtureServer() {
   const env = environment();
   const cl = json(checklistFixture), ev = rawEvaluation(cl);
   const calls = [];
   env.context.fetch = async (url, opts) => {
     calls.push([url, opts]);
+    if (url === '/api/bootstrap') return reply(screenSnapshot(cl, ev));
     if (url === '/api/checklists') return reply({ items: [{ id: cl.id }] });
     if (url === '/api/checklists/' + cl.id) return reply(cl);
     if (url === '/api/conversations') return reply({ items: [{ ...source, lastEvaluation: { id: ev.id, status: 'done' } }] });
@@ -68,6 +74,108 @@ test('detect is one request and an API failure never switches a detected server 
   assert.equal(requests, 1);
   await assert.rejects(DA.api.getConversation('fixture'), (e) => e.code === 'network' && e.message === 'Нет связи с сервером');
   assert.equal(DA.mode, 'server');
+});
+
+test('screen navigation uses one uncached snapshot and reads fresh data on the next visit', async () => {
+  const { DA, context, cl, ev, calls } = fixtureServer();
+  const published = [];
+  context.addEventListener('da:appeals-changed', () => published.push({ total: DA.state.evaluations.fixture.total, number: DA.state.numbers.fixture }));
+  await DA.data.prepare('registry', { refresh: true });
+  assert.deepEqual(calls.map(([url]) => url), ['/api/bootstrap']);
+  assert.equal(calls[0][1].cache, 'no-store');
+  const changed = { ...source, number: 81, transcriptHash: 'replaced', transcript: [{ ...turn, text: 'Новый диалог' }] };
+  const newer = { ...ev, id: 'ev_new_visit', total: 62.5, transcriptHash: 'replaced' };
+  let refreshes = 0;
+  context.fetch = async (url) => {
+    assert.equal(url, '/api/bootstrap'); refreshes++;
+    return reply(screenSnapshot({ ...cl, version: 2 }, newer, changed));
+  };
+  await DA.data.prepare('registry');
+  assert.equal(refreshes, 1);
+  assert.equal(DA.state.conversations.fixture.transcript[0].text, 'Новый диалог');
+  assert.equal(DA.state.evaluations.fixture.id, newer.id);
+  assert.equal(DA.state.evaluations.fixture.total, 62.5);
+  assert.equal(DA.state.numbers.fixture, 81);
+  assert.equal(DA.state.checklists[0].version, 2);
+  assert.deepEqual(published, [{ total: 93.75, number: 12 }, { total: 62.5, number: 81 }], 'refresh listeners observe each complete snapshot');
+});
+
+test('aborted and out-of-order screen snapshots never publish their data', async () => {
+  const { DA, cl, ev } = fixtureServer();
+  const releases = [];
+  DA.api.bootstrap = () => new Promise((resolve) => releases.push(resolve));
+  const older = DA.data.prepare('registry');
+  const newer = DA.data.prepare('card', { id: source.id });
+  releases[1](screenSnapshot(cl, { ...ev, total: 80 })); await newer;
+  releases[0](screenSnapshot(cl, ev)); await older;
+  assert.equal(DA.state.evaluations.fixture.total, 80);
+  const controller = new AbortController();
+  const abandoned = DA.data.prepare('registry', { signal: controller.signal });
+  controller.abort(); releases[2](screenSnapshot(cl, { ...ev, total: 20 }));
+  await assert.rejects(abandoned, (error) => error.name === 'AbortError');
+  assert.equal(DA.state.evaluations.fixture.total, 80);
+});
+
+test('a screen snapshot started before a saved decision cannot roll it back', async () => {
+  const { DA, cl, ev } = fixtureServer();
+  await DA.data.prepare('registry');
+  const a = { id: 'ap_snapshot_race', evaluationId: ev.id, conversationId: source.id, criterionId: cl.criteria[0].id,
+    status: 'open', evaluation: ev, conversation: source, criterion: cl.criteria[0] };
+  DA.state.appeals = [a];
+  let release;
+  DA.api.bootstrap = () => new Promise((resolve) => { release = resolve; });
+  const loading = DA.data.prepare('registry');
+  DA.api.decideAppeal = async () => ({ appeal: { ...a, status: 'changed',
+    decision: { action: 'change', newAnswer: 'no', reason: 'Проверено по реплике' } }, evaluation: { ...ev, total: 70 } });
+  await DA.data.decideAppeal(a.id, 'change', 'no', 'Проверено по реплике');
+  release(screenSnapshot(cl, ev, source, { appeals: { items: [a] } })); await loading;
+  assert.equal(DA.state.evaluations.fixture.total, 70);
+  assert.equal(DA.state.appeals[0].status, 'changed');
+});
+
+test('snapshot hydration retains completed poll progress, jobs and historical source contexts', async () => {
+  const { DA, cl, ev } = fixtureServer();
+  const original = { ...source, transcriptHash: 'original' };
+  const changed = { ...source, transcriptHash: 'changed', transcript: [{ ...turn, text: 'Изменённая реплика' }] };
+  const old = { ...ev, id: 'ev_historical', transcriptHash: 'original', total: 50 };
+  const a = { id: 'ap_historical', evaluationId: old.id, conversationId: source.id, criterionId: cl.criteria[0].id,
+    status: 'open', evaluation: old, conversation: original, criterion: cl.criteria[0] };
+  DA.api.bootstrap = async () => screenSnapshot(cl, ev, source, { appeals: { items: [a] } });
+  await DA.data.prepare('card', { id: source.id, evaluationId: old.id });
+  const historical = DA.data.cardContext(source.id, old.id);
+  const job = { id: 'job_preserved', status: 'running', items: [] };
+  DA.state.jobs[job.id] = job;
+  let release;
+  DA.api.bootstrap = () => new Promise((resolve) => { release = resolve; });
+  const loading = DA.data.prepare('registry');
+  DA.api.getEvaluation = async () => ({ ...ev, transcriptHash: 'original', total: 88 });
+  await DA.data.watchEvaluation(ev.id);
+  release(screenSnapshot(cl, { ...ev, status: 'running', total: null, transcriptHash: 'original' }, changed,
+    { appeals: { items: [a] } }));
+  await loading;
+  assert.equal(DA.state.evaluations.fixture.status, 'done');
+  assert.equal(DA.state.evaluations.fixture.total, 88);
+  assert.equal(DA.state.evaluations.fixture.stale, true);
+  assert.equal(DA.state.jobs[job.id], job);
+  assert.equal(DA.data.cardContext(source.id, old.id), historical);
+  assert.equal(DA.data.appealContext(a.id).conv.transcript[0].text, 'Здравствуйте');
+  assert.equal(DA.data.appealContext(a.id).ev.id, old.id);
+  assert.equal(DA.data.appealContext(a.id).ev.stale, true);
+  assert.equal(DA.state.conversations.fixture.transcript[0].text, 'Изменённая реплика');
+});
+
+test('malformed or incomplete appeal snapshots cannot partially replace the loaded screen', async () => {
+  const { DA, cl, ev } = fixtureServer();
+  await DA.data.prepare('registry');
+  const before = json(DA.state);
+  for (const snapshot of [
+    { ...screenSnapshot(cl, ev), schemaVersion: 2 },
+    screenSnapshot(cl, { ...ev, total: 15 }, source, { appeals: { items: [{ id: 'ap_incomplete', evaluationId: 'ev_old' }] } })
+  ]) {
+    DA.api.bootstrap = async () => snapshot;
+    await assert.rejects(DA.data.prepare('registry'), (error) => error.code === 'invalid_response');
+    assert.deepEqual(json(DA.state), before);
+  }
 });
 
 test('API preserves contract errors, encodes identifiers and sends JSON for mutations', async () => {
@@ -292,14 +400,15 @@ test('an earlier evaluation read cannot overwrite a later saved appeal decision'
 });
 
 test('an older poll response keeps the stale flag discovered by a newer registry refresh', async () => {
-  const { DA, context, ev } = fixtureServer();
+  const { DA, context, ev, cl } = fixtureServer();
   await DA.data.prepare('registry', { refresh: true });
   let release, first = true;
   DA.api.getEvaluation = () => first ? (first = false, new Promise((resolve) => { release = resolve; })) : Promise.resolve(ev);
   const watching = DA.data.watchEvaluation(ev.id);
   while (!release) await new Promise((resolve) => setImmediate(resolve));
   const savedFetch = context.fetch;
-  context.fetch = (url, opts) => url === '/api/conversations' ? Promise.resolve(reply({ items: [{ ...source, lastEvaluation: { id: ev.id, status: 'stale' } }] })) : savedFetch(url, opts);
+  context.fetch = (url, opts) => url === '/api/bootstrap' ? Promise.resolve(reply(screenSnapshot(cl, ev, source,
+    { registry: { items: [{ ...source, lastEvaluation: { id: ev.id, status: 'stale' } }] } }))) : savedFetch(url, opts);
   await DA.data.prepare('registry', { refresh: true });
   assert.equal(DA.state.evaluations.fixture.stale, true);
   release(ev);
@@ -313,6 +422,7 @@ test('confirming an appeal keeps its changed-transcript evaluation stale and pre
   const updatedSource = { ...source, transcriptHash: 'updated', transcript: [{ ...turn, text: 'Обновлённая реплика' }] };
   const savedFetch = context.fetch;
   context.fetch = (url, opts) => {
+    if (url === '/api/bootstrap') return Promise.resolve(reply(screenSnapshot(cl, old, updatedSource)));
     if (url === '/api/conversations') return Promise.resolve(reply({ items: [{ ...updatedSource, lastEvaluation: { id: ev.id, status: 'stale' } }] }));
     if (url === '/api/conversations/fixture') return Promise.resolve(reply(updatedSource));
     if (url === '/api/conversations/fixture/evaluations') return Promise.resolve(reply({ items: [old] }));
@@ -342,7 +452,7 @@ test('confirming an appeal keeps its changed-transcript evaluation stale and pre
 });
 
 test('invalidate followed by source refresh cannot be undone by an older poll response', async () => {
-  const { DA, context, ev } = fixtureServer();
+  const { DA, context, ev, cl } = fixtureServer();
   await DA.data.prepare('registry', { refresh: true });
   const old = { ...ev, transcriptHash: 'original' };
   const latest = { ...ev, id: 'ev_after_sync', transcriptHash: 'updated', total: 75 };
@@ -353,6 +463,7 @@ test('invalidate followed by source refresh cannot be undone by an older poll re
   const updatedSource = { ...source, transcriptHash: 'updated', transcript: [{ ...turn, text: 'Новая версия реплики' }] };
   const savedFetch = context.fetch;
   context.fetch = (url, opts) => {
+    if (url === '/api/bootstrap') return Promise.resolve(reply(screenSnapshot(cl, latest, updatedSource)));
     if (url === '/api/conversations') return Promise.resolve(reply({ items: [{ ...updatedSource, lastEvaluation: { id: latest.id, status: 'done' } }] }));
     if (url === '/api/conversations/fixture') return Promise.resolve(reply(updatedSource));
     return savedFetch(url, opts);

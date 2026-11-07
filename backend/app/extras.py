@@ -62,6 +62,22 @@ def get_cached_summary(db, conversation):
     return _cached_result(db, "summary", conversation["id"], _conversation_hash(conversation), identity)
 
 
+def get_cached_summaries(db, conversations, conn=None):
+    """One cache read and one provider fingerprint for an entire screen."""
+    try:
+        identity = _provider_identity('summary')
+    except JudgeError:
+        return {}
+    cached = db.get_caches('summary', conn)
+    result = {}
+    for conversation in conversations:
+        item = cached.get(conversation['id'])
+        if (item and item['body'].get('sourceHash') == _conversation_hash(conversation)
+                and item['body'].get('providerIdentity') == identity):
+            result[conversation['id']] = item['body']['result']
+    return result
+
+
 def visible_appeal(appeal):
     """Old provider opinions remain in history storage, never masquerade as current AI."""
     result = {key: value for key, value in appeal.items() if not key.startswith("_")}

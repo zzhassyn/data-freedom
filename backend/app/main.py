@@ -141,8 +141,8 @@ def create_app(settings=None, *, providers=None, background_guard=None):
         logger.error('Request failed on %s (%s)', request.url.path, type(exc).__name__)
         return error_response('internal_error', 'Не удалось обработать запрос. Повторите попытку', 500)
 
-    from . import conversations, checklists, evaluations, appeals, apply, stats, extras, export, operators, stt
-    for feature in (conversations, checklists, evaluations, appeals, apply, stats, extras, export, operators, stt):
+    from . import conversations, checklists, evaluations, appeals, apply, stats, extras, export, operators, stt, bootstrap
+    for feature in (conversations, checklists, evaluations, appeals, apply, stats, extras, export, operators, stt, bootstrap):
         application.include_router(feature.router)
 
     @application.get('/api/health')
@@ -183,13 +183,14 @@ def create_app(settings=None, *, providers=None, background_guard=None):
             cached = state.health_cache
         db = state.db
         from .evaluations import is_evaluation_visible
-        evaluations_done = [ev for ev in db.all_evaluations() if ev['status'] == 'done' and is_evaluation_visible(ev)]
-        costs = [ev['usage']['costUsd'] for ev in evaluations_done]
-        with db.transaction() as conn:
+        with db.read_connection() as conn:
+            evaluations = db.all_evaluations(conn)
             metrics = conn.execute("SELECT AVG(CASE WHEN kind='evaluation' THEN latency_ms END) AS avg_ms, SUM(cost_usd) AS cost FROM model_calls").fetchone()
+        visible = [ev for ev in evaluations if is_evaluation_visible(ev)]
+        costs = [ev['usage']['costUsd'] for ev in visible if ev['status'] == 'done']
         average_ms = metrics['avg_ms'] or 0
         if not llm_switch.has_provider_overrides():
-            timings = [item['latencyMs'] for ev in db.all_evaluations() if is_evaluation_visible(ev)
+            timings = [item['latencyMs'] for ev in visible
                        for item in ev['items'] if not item.get('reused') and item.get('latencyMs') is not None
                        and (item.get('usage') or {}).get('calls', 0) > 0]
             average_ms = sum(timings) / len(timings) if timings else 0

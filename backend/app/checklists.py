@@ -164,12 +164,14 @@ def seed_checklist(db) -> None:
 def list_checklists(request: Request):
     from .evaluations import is_evaluation_visible
     db = request.app.state.db
-    evaluations = [ev for ev in db.all_evaluations() if is_evaluation_visible(ev)]
+    with db.read_connection() as conn:
+        evaluations = [ev for ev in db.all_evaluations(conn) if is_evaluation_visible(ev)]
+        checklists = db.all_checklists(conn)
     keys = ("id", "version", "name", "isActive", "createdAt", "basedOnVersion")
     return {"items": [{**{key: checklist[key] for key in keys},
                        "criteriaCount": len(checklist["criteria"]),
                        "evaluationsCount": sum(e["checklistId"] == checklist["id"] for e in evaluations)}
-                      for checklist in sorted(db.all_checklists(), key=lambda c: c["version"], reverse=True)]}
+                      for checklist in sorted(checklists, key=lambda c: c["version"], reverse=True)]}
 
 
 @router.get("/checklists/active")
@@ -221,8 +223,9 @@ def activate_checklist(checklist_id: str, request: Request):
 @router.get("/checklists/{checklist_id}/diff")
 def diff_checklists(checklist_id: str, against: str, request: Request):
     db = request.app.state.db
-    current = db.get_checklist(checklist_id)
-    previous = db.get_checklist(against)
+    with db.read_connection() as conn:
+        current = db.get_checklist(checklist_id, conn)
+        previous = db.get_checklist(against, conn)
     before = {criterion["id"]: criterion for criterion in previous["criteria"]}
     after = {criterion["id"]: criterion for criterion in current["criteria"]}
     added, removed, changed, unchanged = [], [], [], []

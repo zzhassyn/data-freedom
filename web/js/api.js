@@ -164,6 +164,7 @@
       return detected;
     },
     health: (options) => request("/health", options),
+    bootstrap: (options) => request("/bootstrap", options),
     listConversations: (filters, options) => get("/conversations", filters, options),
     getConversation: (id, options) => request(`/conversations/${part(id)}`, options),
     getSttJobs: (filters, options) => get("/stt/jobs", filters, options),

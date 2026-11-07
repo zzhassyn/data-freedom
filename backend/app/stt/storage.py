@@ -4,6 +4,14 @@ import json
 from ..db import json_dumps, utcnow
 
 
+_METADATA_COLUMNS = (
+    'conversation_id', 'transcript_hash', 'status', 'step', 'progress', 'error', 'model',
+    'audio_seconds_declared', 'audio_seconds_decoded', 'incomplete', 'seconds_billed',
+    'cost_usd', 'created_at', 'updated_at', 'generation', 'audio_check',
+)
+_STATUSES = {'queued', 'running', 'done', 'failed'}
+
+
 class Store:
     def __init__(self, db, keep_raw=False):
         self.db, self.keep_raw = db, keep_raw
@@ -27,20 +35,32 @@ class Store:
         return value
 
     def get(self, cid, conn=None):
-        with self.db._using(conn) as c:
+        with self.db._reading(conn) as c:
             return self.decode(c.execute(
                 'SELECT t.* FROM transcriptions t JOIN conversations c ON c.id=t.conversation_id '
                 'WHERE c.id=? AND c.transcript_hash=t.transcript_hash', (cid,)).fetchone())
 
-    def all(self, group_id=None):
-        with self.db.transaction() as conn:
-            query = ('SELECT t.* FROM transcriptions t JOIN conversations c ON c.id=t.conversation_id '
+    def all(self, group_id=None, conn=None, *, statuses=None, include_content=True):
+        if statuses is not None:
+            statuses = (statuses,) if isinstance(statuses, str) else tuple(dict.fromkeys(statuses))
+            if not set(statuses) <= _STATUSES:
+                raise ValueError('Unknown transcription status')
+            if not statuses:
+                return []
+        columns = 't.*' if include_content else (
+            ','.join('t.' + name for name in _METADATA_COLUMNS)
+            + ", '[]' AS turns_json, '[]' AS speakers_json")
+        with self.db._reading(conn) as c:
+            query = (f'SELECT {columns} FROM transcriptions t JOIN conversations c ON c.id=t.conversation_id '
                      'WHERE c.transcript_hash=t.transcript_hash')
-            values = ()
+            values = []
             if group_id:
                 query += ' AND c.group_id=?'
-                values = (group_id,)
-            return [self.decode(row) for row in conn.execute(query + ' ORDER BY t.created_at,c.rowid', values)]
+                values.append(group_id)
+            if statuses is not None:
+                query += ' AND t.status IN (' + ','.join('?' for _ in statuses) + ')'
+                values.extend(statuses)
+            return [self.decode(row) for row in c.execute(query + ' ORDER BY t.created_at,c.rowid', values)]
 
     def enqueue(self, ids, model, force=False):
         accepted = []

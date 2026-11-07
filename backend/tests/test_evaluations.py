@@ -5,6 +5,7 @@ import copy
 import threading
 import time
 from collections import Counter
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
@@ -340,7 +341,8 @@ def test_shared_provider_gate_honors_priority_and_times_out():
     from app.evaluations import EvaluationQueue
 
     async def scenario():
-        db = SimpleNamespace(all_jobs=lambda: [], all_evaluations=lambda: [])
+        db = SimpleNamespace(read_connection=lambda: nullcontext(None),
+                             all_jobs=lambda *args: [], all_evaluations=lambda *args, **kwargs: [])
         queue = EvaluationQueue(db, SimpleNamespace(judge_concurrency=1, model_timeout=0.1))
         await queue.start()
         entered = asyncio.Event()
@@ -381,7 +383,8 @@ def test_provider_concurrency_limit_is_shared_between_calls():
     from app.evaluations import EvaluationQueue
 
     async def scenario():
-        db = SimpleNamespace(all_jobs=lambda: [], all_evaluations=lambda: [])
+        db = SimpleNamespace(read_connection=lambda: nullcontext(None),
+                             all_jobs=lambda *args: [], all_evaluations=lambda *args, **kwargs: [])
         queue = EvaluationQueue(db, SimpleNamespace(judge_concurrency=2, model_timeout=1))
         await queue.start()
         active = 0
@@ -409,7 +412,8 @@ def test_cancelled_caller_stops_provider_and_preserves_worker():
     from app.evaluations import EvaluationQueue
 
     async def scenario():
-        db = SimpleNamespace(all_jobs=lambda: [], all_evaluations=lambda: [])
+        db = SimpleNamespace(read_connection=lambda: nullcontext(None),
+                             all_jobs=lambda *args: [], all_evaluations=lambda *args, **kwargs: [])
         queue = EvaluationQueue(db, SimpleNamespace(judge_concurrency=1, model_timeout=30))
         await queue.start()
         worker = queue._workers[0]

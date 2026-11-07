@@ -129,6 +129,22 @@ class Database:
 
     @contextmanager
     def transaction(self):
+        with self._connection(write=True, snapshot=True) as conn:
+            yield conn
+
+    @contextmanager
+    def read_connection(self, *, consistent=True):
+        """Share a read snapshot across getters; never acquire a write lock.
+
+        The internal one-query getters use autocommit because one SELECT is
+        already atomic. Grouped route reads keep the default explicit snapshot.
+        """
+        from .remote_db import ReadConnection
+        with self._connection(write=False, snapshot=consistent) as conn:
+            yield ReadConnection(conn)
+
+    @contextmanager
+    def _connection(self, *, write, snapshot):
         if self.remote_url:
             from .remote_db import TRANSACTION_LOCK, connect_remote
             guard = TRANSACTION_LOCK
@@ -142,21 +158,25 @@ class Database:
                 conn.row_factory = sqlite3.Row
             failed = False
             try:
-                conn.execute('PRAGMA foreign_keys=ON')
-                if not self.remote_url:
-                    conn.execute('PRAGMA journal_mode=WAL')
-                conn.execute('BEGIN IMMEDIATE')
+                if write:
+                    conn.execute('PRAGMA foreign_keys=ON')
+                    if not self.remote_url:
+                        conn.execute('PRAGMA journal_mode=WAL')
+                if snapshot:
+                    conn.execute('BEGIN IMMEDIATE' if write else 'BEGIN')
                 yield conn
-                conn.commit()
+                if snapshot:
+                    conn.commit()
             except BaseException:
                 failed = True
                 # A server timeout can already have rolled back the stream.
                 # Preserve the original failure, including an unknown COMMIT
                 # outcome; never retry a write or hide it with cleanup errors.
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
+                if snapshot:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
                 raise
             finally:
                 try:
@@ -173,15 +193,23 @@ class Database:
             with self.transaction() as owned:
                 yield owned
 
+    @contextmanager
+    def _reading(self, conn=None):
+        if conn is not None:
+            yield conn
+        else:
+            with self.read_connection(consistent=False) as owned:
+                yield owned
+
     def _get(self, table, record_id, noun, conn=None):
-        with self._using(conn) as c:
+        with self._reading(conn) as c:
             row = c.execute(f'SELECT body_json FROM {table} WHERE id=?', (record_id,)).fetchone()
         if row is None:
             raise ApiError('not_found', f'{noun} {record_id} не найден', 404)
         return json.loads(row['body_json'])
 
     def _all(self, table, conn=None):
-        with self._using(conn) as c:
+        with self._reading(conn) as c:
             rows = c.execute(f'SELECT body_json FROM {table} ORDER BY rowid DESC').fetchall()
         return [json.loads(row['body_json']) for row in rows]
 
@@ -197,7 +225,7 @@ class Database:
         return self._get('conversations', id, 'Диалог', conn)
 
     def get_setting(self, key, default=None, conn=None):
-        with self._using(conn) as c:
+        with self._reading(conn) as c:
             row = c.execute('SELECT value_json FROM settings WHERE key=?', (key,)).fetchone()
         return default if row is None else json.loads(row['value_json'])
 
@@ -223,7 +251,7 @@ class Database:
 
     def get_checklist(self, id, conn=None):
         if id == 'active':
-            with self._using(conn) as c:
+            with self._reading(conn) as c:
                 row = c.execute('SELECT body_json FROM checklists WHERE is_active=1').fetchone()
             if row is None:
                 raise ApiError('not_found', 'Активный чек-лист не найден', 404)
@@ -239,8 +267,22 @@ class Database:
     def get_evaluation(self, id, conn=None):
         return self._get('evaluations', id, 'Оценка', conn)
 
-    def all_evaluations(self, conn=None):
-        return self._all('evaluations', conn)
+    def all_evaluations(self, conn=None, *, statuses=None, conversation_id=None, ids=None):
+        clauses, params = [], []
+        for column, values in (('status', statuses), ('id', ids)):
+            if values is not None:
+                values = tuple(values)
+                if not values:
+                    return []
+                clauses.append(column + ' IN (' + ','.join('?' for _ in values) + ')')
+                params.extend(values)
+        if conversation_id is not None:
+            clauses.append('conversation_id=?')
+            params.append(conversation_id)
+        where = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
+        with self._reading(conn) as c:
+            rows = c.execute('SELECT body_json FROM evaluations' + where + ' ORDER BY rowid DESC', params).fetchall()
+        return [json.loads(row['body_json']) for row in rows]
 
     def save_evaluation(self, b, conn=None):
         self._save('evaluations', b, dict(conversation_id=b['conversationId'], checklist_id=b['checklistId'], status=b['status'], model=b.get('model'), started_at=b.get('startedAt'), finished_at=b.get('finishedAt'), duration_ms=b.get('durationMs')), conn)
@@ -270,9 +312,16 @@ class Database:
         return f'{prefix}_{value}'
 
     def get_cache(self, kind, key, conn=None):
-        with self._using(conn) as c:
+        with self._reading(conn) as c:
             row = c.execute('SELECT * FROM ai_cache WHERE kind=? AND key=?', (kind, key)).fetchone()
         return None if row is None else dict(body=json.loads(row['body_json']), usage=json.loads(row['usage_json']), createdAt=row['created_at'])
+
+    def get_caches(self, kind, conn=None):
+        """Fetch one cache kind once for registry/bulk reads."""
+        with self._reading(conn) as c:
+            rows = c.execute('SELECT key,body_json,usage_json,created_at FROM ai_cache WHERE kind=?', (kind,)).fetchall()
+        return {row['key']: dict(body=json.loads(row['body_json']), usage=json.loads(row['usage_json']),
+                                 createdAt=row['created_at']) for row in rows}
 
     def set_cache(self, kind, key, body, usage=None, conn=None):
         with self._using(conn) as c:

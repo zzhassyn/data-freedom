@@ -104,6 +104,11 @@ def require_evaluation_visible(evaluation: dict) -> None:
 def source_conversation(db, evaluation: dict, conn=None) -> dict:
     """Return the transcript used by this evaluation with its durable registry identity."""
     current = db.get_conversation(evaluation["conversationId"], conn)
+    return source_conversation_payload(evaluation, current)
+
+
+def source_conversation_payload(evaluation: dict, current: dict) -> dict:
+    """Build the same snapshot from records already loaded in a shared read."""
     source = {**(evaluation.get("_conversation") or current),
               "number": current["number"], "startedAt": current["startedAt"]}
     from .judge.hints import contextual_na_metadata
@@ -200,12 +205,13 @@ class EvaluationQueue:
         # durable evaluations. A cold API start must never replay paid work.
         if getattr(self.settings, 'worker_mode', 'standalone') == 'api':
             return
-        for job in self.db.all_jobs():
+        with self.db.read_connection() as conn:
+            jobs = self.db.all_jobs(conn)
+            pending = self.db.all_evaluations(conn, statuses=('queued', 'running'))
+        for job in jobs:
             for item in job["items"]:
                 self._jobs_by_evaluation.setdefault(item["evaluationId"], set()).add(job["id"])
-        for evaluation in reversed(self.db.all_evaluations()):
-            if evaluation["status"] not in {"queued", "running"}:
-                continue
+        for evaluation in reversed(pending):
             if not is_evaluation_visible(evaluation):
                 continue
             with self.db.transaction() as conn:
@@ -382,11 +388,14 @@ class EvaluationQueue:
         """Discover API-created rows; called only by the leased daemon."""
         if getattr(self.settings, 'worker_mode', 'standalone') != 'worker' or self._closing:
             return
-        for job in self.db.all_jobs():
+        with self.db.read_connection() as conn:
+            jobs = self.db.all_jobs(conn)
+            pending = self.db.all_evaluations(conn, statuses=('queued',))
+        for job in jobs:
             for item in job['items']:
                 self._jobs_by_evaluation.setdefault(item['evaluationId'], set()).add(job['id'])
-        for evaluation in reversed(self.db.all_evaluations()):
-            if evaluation['status'] == 'queued' and is_evaluation_visible(evaluation):
+        for evaluation in reversed(pending):
+            if is_evaluation_visible(evaluation):
                 self._schedule(evaluation['id'])
 
     async def _run_evaluation(self, evaluation_id: str) -> None:
@@ -609,7 +618,7 @@ async def get_evaluation(evaluation_id: str, request: Request):
 @router.get("/evaluations/{evaluation_id}/conversation")
 async def get_evaluation_conversation(evaluation_id: str, request: Request):
     db = request.app.state.db
-    with db.transaction() as conn:
+    with db.read_connection() as conn:
         evaluation = db.get_evaluation(evaluation_id, conn)
         require_evaluation_visible(evaluation)
         return source_conversation(db, evaluation, conn)
@@ -631,10 +640,15 @@ async def list_jobs(request: Request, status: str = "active"):
         raise ApiError("invalid_filter", "Доступен фильтр status=active", 400)
     db = request.app.state.db
     items = []
-    for job in db.all_jobs():
-        if job["status"] not in {"queued", "running"} or not job["items"]:
-            continue
-        evaluations = [db.get_evaluation(item["evaluationId"]) for item in job["items"]]
+    with db.read_connection() as conn:
+        jobs = [job for job in db.all_jobs(conn) if job['status'] in {'queued', 'running'} and job['items']]
+        ids = {item['evaluationId'] for job in jobs for item in job['items']}
+        records = {row['id']: row for row in db.all_evaluations(conn, ids=ids)}
+    for job in jobs:
+        missing = next((item['evaluationId'] for item in job['items'] if item['evaluationId'] not in records), None)
+        if missing is not None:
+            raise ApiError('not_found', f'Оценка {missing} не найдена', 404)
+        evaluations = [records[item['evaluationId']] for item in job['items']]
         if not all(is_evaluation_visible(evaluation) for evaluation in evaluations):
             continue
         items.append({**job, "checklistId": evaluations[0]["checklistId"],

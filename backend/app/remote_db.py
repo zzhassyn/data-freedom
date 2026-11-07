@@ -5,6 +5,7 @@ the shared Turso primary, so API instances and the worker see committed work.
 """
 import sqlite3
 import threading
+import re
 from urllib.parse import urlsplit
 
 
@@ -13,6 +14,59 @@ from urllib.parse import urlsplit
 # while preventing the first thread from issuing COMMIT. Independent serverless
 # processes still coordinate through the primary's BEGIN IMMEDIATE transaction.
 TRANSACTION_LOCK = threading.RLock()
+
+
+class ReadCursor:
+    """Expose result access without a cursor.execute escape hatch."""
+
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    @property
+    def description(self):
+        return self._cursor.description
+
+    @property
+    def rowcount(self):
+        return self._cursor.rowcount
+
+    def fetchone(self):
+        return self._cursor.fetchone()
+
+    def fetchall(self):
+        return self._cursor.fetchall()
+
+    def __iter__(self):
+        return iter(self._cursor)
+
+
+class ReadConnection:
+    """A SELECT-only view of a connection owned by Database.read_connection.
+
+    This intentionally does not admit WITH, PRAGMA or SQL scripts: application
+    reads use SELECT, and a permissive prefix check could admit a write there.
+    """
+
+    def __init__(self, connection):
+        self._connection = connection
+
+    def execute(self, sql, parameters=()):
+        if not isinstance(sql, str) or not re.match(r'\s*SELECT\b', sql, re.IGNORECASE):
+            raise sqlite3.OperationalError('read-only connection accepts one SELECT statement')
+        statement = ''
+        for index, character in enumerate(sql):
+            statement += character
+            if character == ';' and sqlite3.complete_statement(statement):
+                if sql[index + 1:].strip():
+                    raise sqlite3.OperationalError('read-only connection accepts one SELECT statement')
+                break
+        return ReadCursor(self._connection.execute(sql, parameters))
+
+    def executemany(self, *args, **kwargs):
+        raise sqlite3.OperationalError('read-only connection accepts one SELECT statement')
+
+    def executescript(self, *args, **kwargs):
+        raise sqlite3.OperationalError('read-only connection accepts one SELECT statement')
 
 
 class Row:
@@ -124,8 +178,8 @@ def validate_remote_config(url, auth_token):
 
 def connect_remote(url, auth_token):
     import libsql
-    # isolation_level=None disables implicit BEGIN; Database controls exactly
-    # one BEGIN IMMEDIATE / COMMIT or ROLLBACK for each transaction.
+    # isolation_level=None disables implicit BEGIN. Database owns explicit
+    # read/write transactions; a single-query read remains in autocommit mode.
     connection = libsql.connect(database=url, auth_token=auth_token,
                                 timeout=15, isolation_level=None)
     return Connection(connection)
