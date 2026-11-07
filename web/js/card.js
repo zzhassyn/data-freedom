@@ -38,12 +38,15 @@
     const bracket = h("div", { class: "da-bracket", "aria-hidden": "true" }, h("span", {}, "Проверенный участок"));
     const turnNodes = [];
     const sttNodes = [];
+    const listenButtons = [];
     let transcription = null, transcriptSource = "crm", sttError = "", sttPending = false, sttTimer = null;
     let player = null, speakingNode = null, selectedSttTurn = null, lastManualScroll = 0;
     let lastPlayback = { time: 0, playing: false };
     const sourceHash = conv.transcriptHash || ev?.transcriptHash;
     const currentHash = DA.state.conversations[cid]?.transcriptHash;
-    const historicAudioChanged = historyView && sourceHash && currentHash && sourceHash !== currentHash;
+    const historicAudioChanged = historyView && (!sourceHash || !currentHash || sourceHash !== currentHash);
+    const audioHref = DA.audioHref(conv);
+    const canPlay = isCall && audioHref && DA.mode === "server" && !historicAudioChanged && DA.audioPlayer;
     const gaps = DA.tx.gaps(conv);
     const firstOp = DA.tx.firstOperatorIdx(conv);
     const turnsBox = h("div", { class: "da-turns" });
@@ -68,7 +71,7 @@
           h("div", { class: "da-turn-meta" },
             h("b", {}, DA.speakerLabel[t.speaker]), h("time", {}, DA.tx.clock(t.timestamp)),
             i === firstOp ? h("span", { class: "da-first" }, "Первый ответ оператора") : null,
-            isCall && DA.mode === "server" && !historicAudioChanged ? listenButton(() => seekCrmTurn(i, true)) : null),
+            canPlay ? listenButton(() => seekCrmTurn(i, true), "crm", i) : null),
           bubble,
           long ? h("button", { class: "da-more", type: "button", onclick: (e) => { bubble.classList.toggle("is-clamped"); e.target.textContent = bubble.classList.contains("is-clamped") ? "Показать полностью" : "Свернуть"; } }, "Показать полностью") : null,
           h("div", { class: "da-turn-tags" }));
@@ -78,41 +81,59 @@
       turnNodes[i] = node;
       turnsBox.append(node);
     });
+    const canonicalContent = Array.from(turnsBox.childNodes);
 
-    const audioHref = DA.audioHref(conv);
-    const canPlay = isCall && audioHref && DA.mode === "server" && !historicAudioChanged && DA.audioPlayer;
     if (canPlay) player = DA.audioPlayer({ conversationId: cid, src: audioHref, onTime: playbackTime });
     const localPlayer = isCall && audioHref && DA.mode !== "server" ? h("div", { class: "da-player da-player-external" },
       h("a", { class: "da-play", href: audioHref, target: "_blank", rel: "noopener noreferrer", "aria-label": "Слушать запись звонка" }, DA.icon("play")),
       h("div", {}, h("b", {}, "Запись звонка"), h("div", { class: "da-small da-muted" }, DA.fmt.duration(DA.tx.duration(conv))))) : null;
     const ai = DA.cardAI?.({ conversation: conv, evaluation: ev, historyView, signal: controller.signal,
       onTranscriptChange: () => { if (focused) focusCriterion(ev?.items.find((item) => item.criterionId === focused) || null); } });
-    const sttBox = h("div", { class: "da-turns da-stt-turns", hidden: true });
     const transcriptTools = h("div", { class: "da-transcript-tools" });
-    const sttControls = h("div", { class: "da-transcription-controls", hidden: !(isCall && DA.mode === "server") });
-    const sttChoice = DA.segmented([{ value: "crm", label: "Расшифровка CRM" }, { value: "stt", label: "Наша расшифровка" }], "crm", switchTranscript, "Источник расшифровки");
-    const sttChoiceButton = sttChoice.querySelectorAll("button")[1];
-    sttChoiceButton.disabled = true;
+    const sttControls = h("div", { class: "da-transcription-controls", hidden: !isCall });
     const sttStatus = h("div", { class: "da-transcription-status", role: "status" });
-    const evidenceNotice = h("p", { class: "da-transcription-evidence", hidden: true }, "Цитаты модели относятся к расшифровке CRM");
-    sttControls.append(sttChoice, sttStatus);
+    sttControls.append(h("h2", { class: "da-transcription-title" }, "Расшифровка"), sttStatus);
     transcriptTools.append(sttControls);
     if (ai?.translationControl) transcriptTools.append(ai.translationControl);
     transcript.append(...[bracket, player?.el, localPlayer, ai?.summary,
-      historicAudioChanged ? h("p", { class: "da-transcription-status" }, "Запись относится к обновлённому диалогу. В этой сохранённой оценке доступна расшифровка CRM.") : null,
-      transcriptTools, evidenceNotice, turnsBox, sttBox].filter(Boolean));
+      historicAudioChanged ? h("p", { class: "da-transcription-status" }, "В этой сохранённой оценке доступна только расшифровка.") : null,
+      transcriptTools, turnsBox].filter(Boolean));
 
-    function listenButton(action) {
-      return h("button", { class: "da-turn-listen", type: "button", "aria-label": "Слушать с этого места", title: "Слушать с этого места", onclick: (e) => { e.stopPropagation(); action(); } }, DA.icon("play", 13), h("span", {}, "Слушать"));
+    function listenButton(action, source, index) {
+      const button = h("button", { class: "da-turn-listen", type: "button", "aria-label": "Слушать с этого места", "aria-pressed": "false", title: "Слушать с этого места", onclick: (event) => {
+        event.stopPropagation();
+        lastManualScroll = Date.now();
+        if (button.getAttribute("aria-pressed") === "true") player?.audio.pause();
+        else if (player && !player.audio.ended && source === transcriptSource && playbackIndex(player.audio.currentTime) === index && player.audio.currentTime > 0) player.seek(player.audio.currentTime, { play: true });
+        else action();
+      } }, DA.icon("play", 13), h("span", {}, "Слушать"));
+      listenButtons.push({ button, source, index });
+      return button;
+    }
+    function updateListenButtons(index, playing) {
+      for (const control of listenButtons) {
+        const active = !!playing && control.source === transcriptSource && control.index === index;
+        if (control.button.getAttribute("aria-pressed") === String(active)) continue;
+        const label = active ? "Поставить запись на паузу" : "Слушать с этого места";
+        control.button.setAttribute("aria-pressed", String(active));
+        control.button.setAttribute("aria-label", label); control.button.title = label;
+        control.button.replaceChildren(DA.icon(active ? "pause" : "play", 13), h("span", {}, active ? "Пауза" : "Слушать"));
+      }
     }
     function transcriptionReady() {
-      return transcription?.status === "done" && !historicAudioChanged
-        && (!sourceHash || transcription.transcriptHash === sourceHash) && (!historyView || !!sourceHash);
+      return transcription?.status === "done" && !historyView && !!sourceHash
+        && transcription.transcriptHash === sourceHash && Array.isArray(transcription.turns) && transcription.turns.length > 0;
+    }
+    function mappedSttIndex(idx) {
+      if (!transcriptionReady()) return -1;
+      const orgIdx = conv.transcript[idx]?.idx ?? idx;
+      const reliable = transcription.turns.findIndex((turn) => turn.orgIdx === orgIdx && !turn.doubtful && Number.isFinite(turn.start));
+      return reliable >= 0 ? reliable : transcription.turns.findIndex((turn) => turn.orgIdx === orgIdx && Number.isFinite(turn.start));
     }
     function crmTime(idx) {
       const turn = conv.transcript[idx];
       if (!turn) return 0;
-      const mapped = transcriptionReady() && transcription.turns.find((t) => t.orgIdx === (turn.idx ?? idx) && !t.doubtful && Number.isFinite(t.start));
+      const mapped = transcription?.turns?.[mappedSttIndex(idx)];
       if (mapped) return Math.max(0, mapped.start);
       const seconds = Number.isFinite(turn.tSec) ? turn.tSec : DA.tx.seconds(turn.timestamp, conv.transcript[0].timestamp);
       return Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
@@ -126,7 +147,8 @@
         ? h("span", { class: "da-mask" }, part.slice(1, -1)) : document.createTextNode(part));
     }
     function renderSttTurns() {
-      sttBox.replaceChildren(); sttNodes.length = 0;
+      sttNodes.length = 0;
+      for (let i = listenButtons.length - 1; i >= 0; i--) if (listenButtons[i].source === "stt") listenButtons.splice(i, 1);
       if (!transcriptionReady()) return;
       const speakers = new Map((transcription.speakers || []).map((speaker, index) => [speaker.speakerId, { ...speaker, number: index + 1 }]));
       for (const [i, turn] of transcription.turns.entries()) {
@@ -142,49 +164,52 @@
         const node = h("div", { class: `da-turn r-${role}`, "data-stt-idx": turn.idx ?? i, tabindex: -1 },
           h("div", { class: "da-turn-meta" }, h("b", {}, name), h("time", {}, DA.fmt.duration(turn.start)),
             turn.doubtful ? h("span", { class: "da-turn-doubtful" }, "время неточное") : null,
-            player ? listenButton(() => select(true)) : null), bubble);
-        sttNodes.push(node); sttBox.append(node);
+            player ? listenButton(() => select(true), "stt", i) : null), bubble);
+        sttNodes.push(node);
       }
     }
-    function switchTranscript(source) {
-      if (source === "stt" && !transcriptionReady()) { sttChoice.setValue("crm"); return; }
+    function attachDisplayedTranscript() {
+      const stt = transcriptSource === "stt";
+      ai?.attachTranscript({ turnNodes: stt ? sttNodes : turnNodes, source: transcriptSource,
+        turns: stt ? transcription.turns : conv.transcript, transcriptHash: sourceHash,
+        sourceHash: stt ? transcription.sourceHash : sourceHash });
+    }
+    function presentTranscript(force) {
+      const source = transcriptionReady() ? "stt" : "crm";
+      if (source === transcriptSource && !force) return;
       transcriptSource = source;
-      turnsBox.hidden = source !== "crm"; sttBox.hidden = source !== "stt";
-      sttChoice.setValue(source);
-      transcript.dataset.source = source;
+      turnsBox.classList.toggle("da-stt-turns", source === "stt");
+      turnsBox.replaceChildren(...(source === "stt" ? sttNodes : canonicalContent));
       lastManualScroll = Date.now();
       speakingNode?.classList.remove("is-speaking"); speakingNode = null;
       focusCriterion(ev?.items.find((item) => item.criterionId === focused) || null);
-      ai?.attachTranscript({ turnNodes, source });
+      attachDisplayedTranscript();
       playbackTime(lastPlayback.time, lastPlayback);
     }
     function renderTranscriptionState() {
       const status = transcription?.status;
-      sttControls.hidden = !(isCall && DA.mode === "server") || status === "disabled" || !!historicAudioChanged;
-      sttChoiceButton.disabled = !transcriptionReady();
-      const mismatched = status === "done" && !transcriptionReady();
+      const mismatched = status === "done" && transcription.transcriptHash !== sourceHash;
       const waiting = !status || ["queued", "running"].includes(status);
-      sttChoiceButton.title = transcriptionReady() ? "" : mismatched ? "Расшифровка относится к обновлённому диалогу" : waiting ? "Ещё расшифровывается" : "Расшифровка ещё не готова";
       const copy = sttError || (status === "failed" ? transcription.error || "Не удалось расшифровать звонок" : mismatched ? "Расшифровка относится к обновлённому диалогу. Откройте обращение заново."
-        : status === "not_queued" ? "Своя расшифровка ещё не готова." : status === "queued" ? "Расшифровка звонка в очереди."
+        : status === "not_queued" ? "Расшифровка записи ещё не готова." : status === "queued" ? "Расшифровка звонка в очереди."
         : status === "running" ? ({ download: "Скачиваем запись", transcribe: "Распознаём речь", mask: "Скрываем личные данные", build: "Собираем реплики" }[transcription.step] || "Расшифровываем звонок")
-        : status === "done" ? "" : "Загружаем расшифровку");
-      const action = !historicAudioChanged && (sttError || status === "failed" || status === "not_queued");
+        : status === "done" ? transcription.turns?.length ? "" : "В записи не удалось распознать речь." : "Загружаем расшифровку");
+      const action = !historyView && (sttError || status === "failed" || status === "not_queued");
       sttStatus.replaceChildren(...[copy ? h("span", { class: !sttError && waiting ? "da-thinking" : "" }, copy) : null,
         action ? h("button", { class: "da-btn is-text is-sm", type: "button", disabled: sttPending, onclick: () => loadTranscription(!sttError) },
           sttPending ? "Загружаем" : status === "not_queued" && !sttError ? "Расшифровать звонок" : "Повторить") : null].filter(Boolean));
-      sttStatus.hidden = !copy;
-      if (!transcriptionReady() && transcriptSource === "stt") switchTranscript("crm");
+      sttStatus.hidden = !copy || !isCall || DA.mode !== "server" || historyView || status === "disabled";
+      presentTranscript();
     }
     async function loadTranscription(retry) {
-      if (disposed || sttPending || !isCall || DA.mode !== "server" || historicAudioChanged) return;
+      if (disposed || sttPending || !isCall || DA.mode !== "server" || historyView) return;
       clearTimeout(sttTimer); sttPending = true; sttError = ""; renderTranscriptionState();
       try {
         const next = retry ? await DA.api.retryTranscription(cid, { signal: controller.signal }) : await DA.api.getTranscription(cid, { signal: controller.signal });
         if (disposed) return;
-        const changed = transcription?.status !== "done" || transcription?.transcriptHash !== next.transcriptHash;
+        const changed = transcription?.status !== "done" || transcription?.transcriptHash !== next.transcriptHash || transcription?.sourceHash !== next.sourceHash;
         transcription = next;
-        if (changed && transcriptionReady()) renderSttTurns();
+        if (changed && transcriptionReady()) { renderSttTurns(); presentTranscript(true); }
         if (transcriptionReady()) player?.setMetadata(transcription);
         refreshAudioMarkers();
       } catch (error) {
@@ -212,19 +237,23 @@
       }
       player.setMarkers(markers);
     }
+    function playbackIndex(time) {
+      return transcriptSource === "stt"
+        ? transcription.turns.findIndex((turn) => time >= turn.start && time < turn.end)
+        : conv.transcript.findIndex((turn, i) => turn.speaker !== "system" && time >= crmTime(i) && time < (i + 1 < conv.transcript.length ? crmTime(i + 1) : Infinity));
+    }
     function playbackTime(time, state) {
       lastPlayback = { time, playing: !!state.playing };
-      let node = null;
+      let node = null, activeIndex = -1;
       if (state.playing) {
-        if (transcriptionReady()) {
-          const index = transcription.turns.findIndex((turn) => !turn.doubtful && time >= turn.start && time < turn.end);
-          const turn = transcription.turns[index];
-          node = transcriptSource === "stt" ? sttNodes[index] : turn ? turnNodes[conv.transcript.findIndex((entry, i) => (entry.idx ?? i) === turn.orgIdx)] : null;
+        activeIndex = playbackIndex(time);
+        if (transcriptSource === "stt") {
+          if (!transcription.turns[activeIndex]?.doubtful) node = sttNodes[activeIndex];
         } else {
-          const index = conv.transcript.findIndex((turn, i) => turn.speaker !== "system" && time >= crmTime(i) && time < (i + 1 < conv.transcript.length ? crmTime(i + 1) : Infinity));
-          node = turnNodes[index];
+          node = turnNodes[activeIndex];
         }
       }
+      updateListenButtons(activeIndex, state.playing);
       if (node === speakingNode) return;
       speakingNode?.classList.remove("is-speaking"); speakingNode = node;
       if (!node) return;
@@ -246,7 +275,6 @@
       focused = item ? item.criterionId : null;
       turnNodes.forEach((n) => n && n.classList.remove("is-lit"));
       refreshAudioMarkers(item);
-      evidenceNotice.hidden = transcriptSource !== "stt" || !item;
       if (!item || transcriptSource === "stt") { transcript.classList.remove("is-focusing"); bracket.classList.remove("is-on"); ribbon && ribbon.light(item?.criterionId || null); return; }
       const c = DA.criterionById(CL(), item.criterionId);
       const tone = DA.tone(item.answer, c);
@@ -264,15 +292,33 @@
       ribbon && ribbon.light(item.criterionId);
     }
     function jumpTo(idx, tone) {
-      if (transcriptSource !== "crm") switchTranscript("crm");
-      const n = turnNodes[idx];
-      if (!n) return;
       showCardPart("dialogue");
-      markSelectedTurn(idx);
       seekCrmTurn(idx, true);
-      setTone(n, tone || "yes");
+      let n;
+      if (transcriptSource === "stt") {
+        // orgIdx связывает участки записи; текст цитаты остаётся в панели оценки.
+        let mapped = mappedSttIndex(idx);
+        if (mapped < 0) {
+          const time = crmTime(idx);
+          mapped = transcription.turns.reduce((nearest, turn, index, turns) => nearest < 0 || Math.abs(turn.start - time) < Math.abs(turns[nearest].start - time) ? index : nearest, -1);
+        }
+        selectedSttTurn = mapped;
+        sttNodes.forEach((node, index) => {
+          node.classList.toggle("is-selected", index === mapped);
+          node.querySelector(".da-bubble").setAttribute("aria-pressed", String(index === mapped));
+        });
+        n = sttNodes[mapped];
+      } else {
+        markSelectedTurn(idx);
+        n = turnNodes[idx];
+        if (n) {
+          setTone(n, tone || "yes");
+          n.classList.remove("is-flash"); void n.offsetWidth; n.classList.add("is-flash");
+        }
+      }
+      if (!n) return;
+      lastManualScroll = Date.now();
       n.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" });
-      n.classList.remove("is-flash"); void n.offsetWidth; n.classList.add("is-flash");
       n.focus({ preventScroll: true });
     }
     function markSelectedTurn(idx) {
@@ -696,7 +742,7 @@
       tabs, grid));
 
     renderPanel();
-    ai?.attachTranscript({ turnNodes, source: "crm" });
+    attachDisplayedTranscript();
     renderTranscriptionState();
     refreshAudioMarkers();
     if (isCall && DA.mode === "server") loadTranscription(false);

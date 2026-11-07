@@ -34,7 +34,7 @@
     const issue = h("div", { class: "da-player-error", role: "status", hidden: true }, issueText, retry);
     const el = h("section", { class: "da-player", "aria-label": "Запись звонка", "data-waveform": "loading" },
       h("div", { class: "da-player-controls" }, playButton, times, speeds), wave, hint, missing, issue, audio);
-    let disposed = false, metadata = {}, markers = [], envelope = null, decodedDuration = 0;
+    let disposed = false, metadata = {}, markers = [], envelope = null, decodedDuration = 0, displayEnvelope = null;
     let frame = 0, fetchController = null, audioContext = null, pendingSeek = null, loadGeneration = 0;
     let lastPlaying = null, lastSecond = -1;
 
@@ -51,6 +51,24 @@
     }
     function clearIssue() { issue.hidden = true; issueText.textContent = ""; }
 
+    /* Пересчитываем энергию под ширину панели: столбцы остаются читаемыми и на телефоне. */
+    function signalForWidth(width) {
+      if (!envelope) return null;
+      const count = Math.max(1, Math.min(envelope.power.length - 1, Math.floor(width / 4)));
+      if (displayEnvelope?.count === count) return displayEnvelope.values;
+      const values = [], buckets = envelope.power.length - 1;
+      for (let i = 0; i < count; i++) {
+        const start = Math.floor(i * buckets / count), end = Math.floor((i + 1) * buckets / count);
+        const samples = envelope.samples[end] - envelope.samples[start];
+        values.push(samples ? Math.sqrt(Math.max(0, envelope.power[end] - envelope.power[start]) / samples) : 0);
+      }
+      const nonzero = values.filter((value) => value > 0).sort((a, b) => a - b);
+      const reference = Math.max(nonzero[Math.floor((nonzero.length - 1) * .95)] || 0, .0001);
+      const normalized = values.map((value) => Math.min(1, Math.pow(value / reference, .85)));
+      displayEnvelope = { count, values: normalized };
+      return normalized;
+    }
+
     /* Масштаб всей записи сохраняется и для обрезанного файла. Недоступная часть заштрихована. */
     function draw() {
       if (disposed) return;
@@ -63,15 +81,19 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, width, height);
       const total = duration(), limit = available(), playableWidth = total && metadata.incomplete ? width * Math.min(1, limit / total) : width;
       const played = total ? width * Math.min(1, Math.max(0, audio.currentTime / total)) : 0;
-      const brand = color("--da-brand"), rest = color("--da-surface-3");
+      const brand = color("--da-brand"), rest = color("--da-text-3");
+      const signalWidth = Math.min(playableWidth, total && decodedDuration ? width * Math.min(1, decodedDuration / total) : playableWidth);
+      const values = signalForWidth(signalWidth), signalHeight = height - 14, center = signalHeight / 2;
+      ctx.fillStyle = color("--da-surface-3"); ctx.fillRect(0, Math.round(center), playableWidth, 1);
       const drawSignal = (fill) => {
         ctx.fillStyle = fill;
-        if (!envelope) { ctx.fillRect(0, Math.round(height / 2) - 2, playableWidth, 4); return; }
-        const signalWidth = total && decodedDuration ? width * Math.min(1, decodedDuration / total) : playableWidth;
-        const step = signalWidth / envelope.length, gap = Math.min(1, step * .3), barWidth = Math.max(.25, step - gap);
-        for (let i = 0; i < envelope.length; i++) {
-          const barHeight = Math.max(2, envelope[i] * (height - 20));
-          ctx.fillRect(i * step, (height - barHeight) / 2, barWidth, barHeight);
+        if (!values) { ctx.fillRect(0, Math.round(center) - 2, playableWidth, 4); return; }
+        const step = signalWidth / values.length, barWidth = Math.min(2.5, step * .55);
+        for (let i = 0; i < values.length; i++) {
+          if (!values[i]) continue;
+          const barHeight = Math.max(1, values[i] * (signalHeight - 8));
+          const x = i * step + (step - barWidth) / 2, y = center - barHeight / 2;
+          ctx.beginPath(); ctx.roundRect(x, y, barWidth, barHeight, barWidth / 2); ctx.fill();
         }
       };
       drawSignal(rest);
@@ -88,9 +110,14 @@
         const x = Math.min(width - 1, width * marker.time / total), evidence = marker.kind === "evidence";
         ctx.strokeStyle = evidence ? color({ yes: "--da-yes-ink", no: "--da-no-ink", partial: "--da-partial-ink", flag: "--da-gross", na: "--da-text-2" }[marker.tone] || "--da-brand") : color("--da-text-3");
         ctx.lineWidth = evidence ? 3 : 1;
-        ctx.beginPath(); ctx.moveTo(x, evidence ? 3 : height - 8); ctx.lineTo(x, height - 2); ctx.stroke();
+        ctx.lineCap = "round";
+        ctx.beginPath(); ctx.moveTo(x, evidence ? height - 11 : height - 7); ctx.lineTo(x, height - 4); ctx.stroke();
       }
-      if (total && audio.currentTime > 0) { ctx.fillStyle = brand; ctx.fillRect(Math.min(width - 1, played), 0, 1, height); }
+      if (total) {
+        const x = Math.max(1, Math.min(width - 1, played));
+        ctx.fillStyle = brand; ctx.fillRect(x - .75, 3, 1.5, signalHeight - 4);
+        ctx.beginPath(); ctx.arc(x, 3, 2, 0, Math.PI * 2); ctx.fill();
+      }
     }
 
     function render(notify) {
@@ -157,7 +184,7 @@
       const generation = ++loadGeneration;
       fetchController?.abort();
       const controller = fetchController = new AbortController();
-      envelope = null; el.dataset.waveform = "loading"; draw();
+      envelope = null; displayEnvelope = null; el.dataset.waveform = "loading"; draw();
       try {
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         if (!source || !AudioContext) throw new Error("No audio decoder");
@@ -169,18 +196,18 @@
         const buffer = await context.decodeAudioData(bytes);
         if (disposed || generation !== loadGeneration) { await context.close().catch(() => {}); return; }
         decodedDuration = buffer.duration;
-        const values = [], count = 240, block = Math.max(1, Math.floor(buffer.length / count));
-        for (let bar = 0; bar < count; bar++) {
-          let sum = 0, samples = 0;
-          const start = bar * block, end = Math.min(buffer.length, (bar + 1) * block), stride = Math.max(1, Math.floor(block / 160));
+        const count = Math.min(4096, buffer.length), power = new Float64Array(count + 1), samples = new Float64Array(count + 1);
+        for (let bucket = 0; bucket < count; bucket++) {
+          let sum = 0;
+          const start = Math.floor(bucket * buffer.length / count), end = Math.floor((bucket + 1) * buffer.length / count);
           for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
             const data = buffer.getChannelData(channel);
-            for (let i = start; i < end; i += stride) { sum += data[i] * data[i]; samples++; }
+            for (let i = start; i < end; i++) sum += data[i] * data[i];
           }
-          values.push(samples ? Math.sqrt(sum / samples) : 0);
+          power[bucket + 1] = power[bucket] + sum;
+          samples[bucket + 1] = samples[bucket] + (end - start) * buffer.numberOfChannels;
         }
-        const maximum = Math.max(...values, .0001);
-        envelope = values.map((value) => Math.sqrt(value / maximum));
+        envelope = { power, samples }; displayEnvelope = null;
         el.dataset.waveform = "ready";
         await context.close().catch(() => {});
         if (audioContext === context) audioContext = null;
