@@ -68,6 +68,11 @@
     naCondition: ["Когда он не относится", "Қолданылмайтын жағдай", "When it does not apply"],
     optional: ["по желанию", "міндетті емес", "optional"],
     delete: ["Удалить критерий", "Критерийді жою", "Delete criterion"],
+    replace: ["Заменить", "Ауыстыру", "Replace"],
+    replaceTitle: ["Заменить критерий", "Критерийді ауыстыру", "Replace criterion"],
+    replaceKeeps: ["Новый критерий займёт это же место в разделе. Вес {weight} сохранится, его можно изменить.", "Жаңа критерий бөлімдегі осы орынға қойылады. {weight} салмағы сақталады, оны өзгертуге болады.", "The new criterion will take the same place in this section and keep its weight of {weight}. You can change the weight."],
+    replaceUnweighted: ["У прежнего критерия не было веса. Новый займёт его место; задайте ему вес перед сохранением.", "Бұрынғы критерийдің салмағы болмаған. Жаңасы оның орнын алады; сақтау алдында оған салмақ беріңіз.", "The previous criterion had no weight. The new one will take its place; set its weight before saving."],
+    replaced: ["«{title}» заменён в черновике.", "Жобадағы «{title}» ауыстырылды.", "“{title}” was replaced in the draft."],
     levelScore: ["Баллы ступени {index}", "{index}-деңгейдің ұпайы", "Score for level {index}"],
     levelPlaceholder: ["Что значит эта ступень", "Бұл деңгей нені білдіреді", "What this level means"],
     levelDescription: ["Описание ступени {index}", "{index}-деңгейдің сипаттамасы", "Description of level {index}"],
@@ -242,17 +247,49 @@
       menu.querySelector("button").focus({ preventScroll: true });
     }
 
-    function addCriterion(sectionId, template) {
+    function makeCriterion(sectionId, template, order) {
       const fields = template ? structuredClone(template) : { title: "", description: "", type: "binary", weight: 10, naAllowed: false, naCondition: null, scale: null, flagTypes: null };
       delete fields.key; delete fields.summary;
-      const c = { ...fields, id: "c_" + crypto.randomUUID().replaceAll("-", ""), sectionId, order: Math.max(0, ...draft.criteria.map((item) => item.order)) + 1 };
+      return { ...fields, id: "c_" + crypto.randomUUID().replaceAll("-", ""), sectionId, order };
+    }
+
+    function addCriterion(sectionId, template) {
+      const c = makeCriterion(sectionId, template, Math.max(0, ...draft.criteria.map((item) => item.order)) + 1);
       draft.criteria.push(c); selectedId = c.id; mobileTreeOpen = false; saveError = ""; renderAll();
       form.querySelector("input")?.focus();
     }
 
+    function chooseReplacement(c) {
+      if (saving) return;
+      let modal;
+      const choices = [{ key: null }, ...(window.DA_CRITERION_TEMPLATES || [])];
+      const list = h("div", { class: "ce-option-list ce-replace-options" }, choices.map((item) =>
+        h("button", { class: "ce-option", type: "button", "data-template": item.key || "blank", onclick: () => {
+          modal.close(); replaceCriterion(c, item.key ? item : null);
+        } }, h("span", {}, h("b", {}, m(item.key ? `template.${item.key}.title` : "blank")),
+          h("small", {}, m(item.key ? `template.${item.key}.hint` : "blankHint"))))));
+      modal = DA.modal({ title: m("replaceTitle"), body: h("div", {},
+        h("p", { class: "ce-replace-intro" }, h("strong", {}, c.title || DA.msg("cl.newCriterion")),
+          h("span", {}, c.type === "flag" ? m("replaceUnweighted") : m("replaceKeeps", { weight: Number.isFinite(c.weight) ? c.weight : "—" }))), list), width: 560 });
+    }
+
+    function replaceCriterion(c, template) {
+      const index = draft.criteria.indexOf(c);
+      if (saving || index < 0) return;
+      const next = makeCriterion(c.sectionId, template, c.order);
+      next.weight = next.type === "flag" ? 0 : c.weight;
+      clearTimeout(undoTimer);
+      deleted = { c, index, replacementId: next.id, typeDraft: typeDrafts.get(c.id) };
+      draft.criteria.splice(index, 1, next); typeDrafts.delete(c.id);
+      selectedId = next.id; mobileTreeOpen = false; saveError = ""; renderAll();
+      form.querySelector("input")?.focus();
+      undoTimer = setTimeout(() => { deleted = null; if (!disposed) form.querySelector(".ce-undo")?.remove(); }, 6000);
+    }
+
     function renderForm() {
       form.replaceChildren();
-      if (deleted) form.append(h("div", { class: "ce-undo", role: "status" }, h("span", {}, m("removed")), h("button", { class: "da-btn is-text is-sm", type: "button", onclick: undoDelete }, m("undo"))));
+      const undo = deleted;
+      if (undo) form.append(h("div", { class: "ce-undo", role: "status" }, h("span", {}, undo.replacementId ? m("replaced", () => ({ title: undo.c.title || DA.t("cl.newCriterion") })) : m("removed")), h("button", { class: "da-btn is-text is-sm", type: "button", onclick: undoDelete }, m("undo"))));
       const c = selected();
       if (!c) {
         if (!deleted) form.append(h("div", { class: "ce-empty" }, h("h2", {}, m("addFirst")), h("p", {}, m("empty"))));
@@ -287,9 +324,9 @@
         node.setAttribute("aria-describedby", `ce-error-${key}`);
         return h("label", { class: "da-field" }, h("span", {}, label), node, hint ? h("small", { class: "ce-hint" }, hint) : null, errSlot(key));
       }
-      function step(number, title, content, extra) {
+      function step(number, title, content, extra, action) {
         const node = h("section", { class: "ce-step-block", "data-step": number },
-          h("div", { class: "ce-step-heading" }, h("span", { class: "ce-step-number", "aria-hidden": "true" }, number), h("h2", { tabindex: -1 }, title), extra ? h("span", { class: "ce-optional" }, extra) : null),
+          h("div", { class: "ce-step-heading" }, h("span", { class: "ce-step-number", "aria-hidden": "true" }, number), h("h2", { tabindex: -1 }, title), extra ? h("span", { class: "ce-optional" }, extra) : null, action),
           h("div", { class: "ce-step-body" }, content));
         steps.set(number, node); return node;
       }
@@ -303,7 +340,8 @@
         h("ul", {}, h("li", {}, m("tipOne")), h("li", {}, m("tipWhere")), h("li", {}, m("tipViolation"))));
       const helpButton = h("button", { class: "ce-help-toggle", type: "button", "aria-expanded": String(helpOpen), onclick: () => { helpOpen = !helpOpen; help.hidden = !helpOpen; helpButton.setAttribute("aria-expanded", String(helpOpen)); } }, DA.icon("chevron", 14), m("ruleHelp"));
       const sectionButton = h("button", { class: "ce-section-select", type: "button", onclick: () => chooseSection(c) }, m("section"), draft.sections.find((s) => s.id === c.sectionId)?.title || m("choose"), DA.icon("chevron", 13));
-      form.append(step(1, m("stepOne"), [field(m("title"), title, "title"), field(m("rule"), rule, "description"), helpButton, help, sectionButton]));
+      form.append(step(1, m("stepOne"), [field(m("title"), title, "title"), field(m("rule"), rule, "description"), helpButton, help, sectionButton], null,
+        h("button", { class: "da-btn is-text is-sm ce-replace", type: "button", onclick: () => chooseReplacement(c) }, DA.icon("refresh", 14), m("replace"))));
 
       const typeCards = h("div", { class: "ce-types", role: "group", "aria-label": m("stepTwo") }, TYPES.map((type) => {
         const sample = type.value === "binary" ? h("div", { class: "ce-type-sample" }, h("span", { class: "ce-mini-pill is-yes" }, m("yes")), h("span", { class: "ce-mini-pill is-no" }, m("no")))
@@ -381,7 +419,7 @@
       c.scale = type === "scale" ? structuredClone(remembered.scale || original?.scale || [{ value: 20, description: "" }, { value: 10, description: "" }, { value: 0, description: "" }]) : null;
       c.flagTypes = type === "flag" ? structuredClone(remembered.flagTypes || original?.flagTypes || [{ id: "violation", title: "Нарушение" }]) : null;
       if (type === "flag") { c.weight = 0; c.naAllowed = false; c.naCondition = null; }
-      else if (previous === "flag") { c.weight = remembered.weight || 10; c.naAllowed = !!remembered.naAllowed; c.naCondition = remembered.naCondition || null; }
+      else if (previous === "flag") { c.weight = remembered.weight ?? 10; c.naAllowed = !!remembered.naAllowed; c.naCondition = remembered.naCondition || null; }
       saveError = ""; renderAll(); form.querySelector(`[data-type="${type}"]`)?.focus({ preventScroll: true });
     }
 
@@ -404,7 +442,12 @@
 
     function undoDelete() {
       if (!deleted || saving) return;
-      clearTimeout(undoTimer); draft.criteria.splice(deleted.index, 0, deleted.c); selectedId = deleted.c.id; deleted = null;
+      clearTimeout(undoTimer);
+      const index = deleted.replacementId ? draft.criteria.findIndex((c) => c.id === deleted.replacementId) : -1;
+      if (index >= 0) { draft.criteria.splice(index, 1, deleted.c); typeDrafts.delete(deleted.replacementId); }
+      else draft.criteria.splice(deleted.index, 0, deleted.c);
+      if (deleted.typeDraft) typeDrafts.set(deleted.c.id, deleted.typeDraft);
+      selectedId = deleted.c.id; deleted = null;
       renderAll(); form.querySelector("h2")?.focus({ preventScroll: true });
     }
 

@@ -109,6 +109,10 @@
 .ce-step-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
 .ce-step-heading h2 { margin: 0; font-size: 16px; font-weight: 650; line-height: 1.35; }
 .ce-step-heading h2:focus { outline: none; }
+.ce-step-heading .ce-replace { margin-left: auto; min-height: 36px; }
+.ce-replace-intro { display: grid; gap: 6px; margin: 0 0 16px; color: var(--da-text-2); font-size: 14px; line-height: 1.5; }
+.ce-replace-intro strong { color: var(--da-text); font-size: 15px; font-weight: 600; }
+.ce-replace-options .ce-option b { font-weight: 600; }
 .ce-step-number { display: inline-grid; place-items: center; flex: 0 0 24px; width: 24px; height: 24px; border-radius: 50%; background: var(--da-brand-soft); color: var(--da-brand-press); font-size: 13px; font-weight: 650; transition: color var(--da-fast), background var(--da-fast); }
 .ce-step-number .da-icon { width: 15px; height: 15px; stroke-width: 2; }
 .ce-optional { color: var(--da-text-2); font-size: 13px; font-weight: 400; }
@@ -260,6 +264,7 @@
   .ce-step-block { padding: 18px 16px 20px; }
   .ce-step-heading { gap: 8px; margin-bottom: 16px; }
   .ce-step-heading h2 { font-size: 16px; }
+  .ce-step-heading .ce-replace { min-height: 44px; }
   .ce-optional { margin-left: 32px; }
   .ce-step-body { gap: 14px; }
   .ce-types { grid-template-columns: 1fr; gap: 8px; }
