@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -227,14 +228,16 @@ def test_redactions_are_preserved_per_turn(seeded_client, monkeypatch, dev_paylo
     assert '[Телефон скрыт]' in response.json()['turns'][0]['text']
 
     def remove_mask(payload, result):
-        result['turns'][0]['text'] = result['turns'][0]['text'].replace('[Телефон скрыт]', '[Phone hidden]')
+        result['turns'][0]['text'] = re.sub(r'__DA_MASK_[0-9a-f]+_[0-9]+__', '[Phone hidden]',
+                                           result['turns'][0]['text'], count=1)
         payload['choices'][0]['message']['content'] = json.dumps(result)
         return payload
 
     _provider(seeded_client, monkeypatch, remove_mask)
     response = seeded_client.get(path + '&refresh=true')
     assert response.status_code == 502
-    assert 'скрытых данных' in response.json()['error']['message']
+    assert response.json()['error']['code'] == 'model_failed'
+    assert _cost(seeded_client)[1] == 2
 
 
 def test_provider_failure_is_safe_and_not_automatically_retried(seeded_client, monkeypatch):
@@ -433,3 +436,91 @@ def test_long_response_still_requires_exact_ids_count_and_masks(defect):
         translated[-1]['text'] = translated[-1]['text'].replace('[Код скрыт]', '[Code hidden]')
     with pytest.raises(JudgeError):
         translation_service.validate_turns(translated, source)
+
+
+def test_opaque_tokens_preserve_labels_repeated_masks_and_source_marker_literals(seeded_client, monkeypatch):
+    calls = _provider(seeded_client, monkeypatch)
+    source = translation_service.TranslationSource('RU', [
+        translation_service.SourceTurn(7, 'system', '[автоответчик] Оставьте сообщение после ***.'),
+        translation_service.SourceTurn(29, 'client', 'ИИН [ИИН скрыт], снова [ИИН скрыт], код ****.'),
+        translation_service.SourceTurn(83, 'operator',
+                                       'Символы __DA_MASK_deadbeef_0__, __da_mask, [метка __DA_MASK_].'),
+    ])
+    first = asyncio.run(translation_service.translate(source, 'EN', seeded_client.app.state.settings))
+    second = asyncio.run(translation_service.translate(source, 'EN', seeded_client.app.state.settings))
+    expected = [{'idx': turn.idx, 'text': 'EN: ' + turn.text} for turn in source.transcript]
+    assert translation_service.validate_turns(first.turns, source) == expected
+    assert translation_service.validate_turns(second.turns, source) == expected
+    sent = json.loads(calls[0]['messages'][1]['content'])['turns']
+    all_sent_text = ' '.join(turn['text'] for turn in sent)
+    assert '[автоответчик]' not in all_sent_text
+    assert '[ИИН скрыт]' not in all_sent_text and '***' not in all_sent_text
+    assert '__DA_MASK_deadbeef_0__' not in all_sent_text and '__da_mask' not in all_sent_text
+    tokens = re.findall(r'__DA_MASK_[0-9a-f]+_[0-9]+__', all_sent_text)
+    assert len(tokens) == 8 and len(set(tokens)) == 8
+    assert all(token not in json.dumps(first.turns) for token in tokens)
+    assert calls[0]['messages'][1]['content'] != calls[1]['messages'][1]['content']
+
+
+@pytest.mark.parametrize('defect', ['missing', 'duplicate', 'move', 'copy', 'wrong_nonce', 'unknown_index',
+                                  'malformed', 'raw_label', 'case_change', 'invented_unmasked', 'partial_prefix'])
+def test_damaged_or_moved_tokens_are_rejected_with_billing_and_no_cache(seeded_client, monkeypatch, defect):
+    cid, generation, source, source_hash = _sanitized_call(seeded_client)
+
+    def damage(payload, result):
+        masked, plain = result['turns'][1], result['turns'][0]
+        token, = re.findall(r'__DA_MASK_[0-9a-f]+_[0-9]+__', masked['text'])
+        replacement = token
+        if defect in ('missing', 'move'):
+            replacement = ''
+        elif defect == 'duplicate':
+            replacement = token + token
+        elif defect == 'wrong_nonce':
+            replacement = re.sub(r'(?<=__DA_MASK_)[0-9a-f]', lambda m: '0' if m.group() != '0' else '1',
+                                 token, count=1)
+        elif defect == 'unknown_index':
+            replacement = re.sub(r'_[0-9]+__$', '_999999__', token)
+        elif defect == 'malformed':
+            replacement = token[:-2]
+        elif defect == 'raw_label':
+            replacement = '[Код скрыт]'
+        elif defect == 'case_change':
+            replacement = token.lower()
+        masked['text'] = masked['text'].replace(token, replacement)
+        if defect in ('copy', 'move'):
+            plain['text'] += token
+        elif defect == 'invented_unmasked':
+            plain['text'] += '__DA_MASK_deadbeef_0__'
+        elif defect == 'partial_prefix':
+            plain['text'] += '__DA_MASK_'
+        payload['choices'][0]['message']['content'] = json.dumps(result)
+        return payload
+
+    calls = _provider(seeded_client, monkeypatch, damage)
+    path = f'/api/conversations/{cid}/translation?targetLanguage=KZ&source=transcription&sourceHash={source_hash}'
+    for _ in range(2):
+        response = seeded_client.get(path)
+        assert response.status_code == 502
+        assert response.json()['error']['code'] == 'model_failed'
+        assert '__DA_MASK' not in response.text
+    assert len(calls) == 2
+    cost, count = _cost(seeded_client)
+    assert cost == pytest.approx(.00246) and count == 2
+    with seeded_client.app.state.db.transaction() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM ai_cache WHERE kind='translation'").fetchone()[0] == 0
+
+
+def test_source_token_collision_is_escaped_without_recursive_restoration(seeded_client, monkeypatch):
+    colliding, fresh = 'a' * 24, 'b' * 24
+    nonces = iter([colliding, fresh])
+    monkeypatch.setattr(translation_service.secrets, 'token_hex', lambda length: next(nonces))
+    source = translation_service.TranslationSource('RU', [
+        translation_service.SourceTurn(9, 'client', f'Буквальная запись __DA_MASK_{colliding}_0__ и [ИИН скрыт].'),
+    ])
+    calls = _provider(seeded_client, monkeypatch)
+    result = asyncio.run(translation_service.translate(source, 'EN', seeded_client.app.state.settings))
+    assert translation_service.validate_turns(result.turns, source) == [
+        {'idx': 9, 'text': 'EN: ' + source.transcript[0].text},
+    ]
+    assert f'__DA_MASK_{fresh}_0__' in calls[0]['messages'][1]['content']
+    assert f'__DA_MASK_{fresh}_' not in result.turns[0]['text']
