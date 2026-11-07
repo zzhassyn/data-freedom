@@ -1,6 +1,51 @@
 /* Чек-лист как документ: доли в итоге, правила и история сохранённых версий. */
 (function () {
   const DA = window.DA, h = DA.h;
+  const m = (key, params) => DA.msg(`cl.${key}`, params);
+  DA.i18n.addMessages({
+    "cl.checklist": { ru: "Чек-лист", kk: "Тексеру парағы", en: "Checklist" },
+    "cl.edit": { ru: "Изменить чек-лист", kk: "Тексеру парағын өзгерту", en: "Edit checklist" },
+    "cl.notFound": { ru: "Чек-лист не найден", kk: "Тексеру парағы табылмады", en: "Checklist not found" },
+    "cl.rulesFailed": { ru: "Не удалось получить правила оценки.", kk: "Бағалау ережелерін жүктеу мүмкін болмады.", en: "The evaluation rules could not be loaded." },
+    "cl.retry": { ru: "Повторить", kk: "Қайталау", en: "Retry" },
+    "cl.criteria": { ru: "Критерии", kk: "Критерийлер", en: "Criteria" },
+    "cl.newCriterion": { ru: "Новый критерий", kk: "Жаңа критерий", en: "New criterion" },
+    "cl.share": { ru: "{percent} % итога", kk: "қорытындының {percent} %", en: "{percent}% of total" },
+    "cl.ribbonLabel": { ru: "Доли критериев в итоговых 100 баллах", kk: "Критерийлердің қорытынды 100 ұпайдағы үлесі", en: "Each criterion’s share of the 100-point total" },
+    "cl.ribbonCriterion": { ru: "{criterion}: {percent} % итога", kk: "{criterion}: қорытындының {percent} %", en: "{criterion}: {percent}% of total" },
+    "cl.answerFlag": { ru: "Отмечается как нарушение, на итог не влияет", kk: "Бұзушылық ретінде белгіленеді, қорытынды ұпайға әсер етпейді", en: "Recorded as a violation; does not affect the total" },
+    "cl.answerScale": { ru: "Ответ: баллы от 0 до {max}", kk: "Жауап: 0 мен {max} аралығындағы ұпай", en: "Answer: a score from 0 to {max}" },
+    "cl.answerBinary": { ru: "Ответ: да или нет", kk: "Жауап: иә немесе жоқ", en: "Answer: yes or no" },
+    "cl.naCondition": { ru: ". Не применяется, если {condition}", kk: ". Қолданылмайтын жағдай: {condition}", en: ". Does not apply when: {condition}" },
+    "cl.scaleSteps": { ru: "Ступени шкалы", kk: "Шкала деңгейлері", en: "Scale levels" },
+    "cl.version": { ru: "Версия {version}", kk: "{version}-нұсқа", en: "Version {version}" },
+    "cl.active": { ru: "активна", kk: "белсенді", en: "active" },
+    "cl.initialVersion": { ru: "Исходная из задания", kk: "Тапсырмадағы бастапқы нұсқа", en: "Original version from the brief" },
+    "cl.changedNames": { ru: "Изменено: {names}", kk: "Өзгертілді: {names}", en: "Changed: {names}" },
+    "cl.unchangedRules": { ru: "Правила критериев не изменились", kk: "Критерий ережелері өзгерген жоқ", en: "Criterion rules are unchanged" },
+    "cl.viewVersion": { ru: "Посмотреть", kk: "Қарау", en: "View" },
+    "cl.currentVersion": { ru: "Открыта сейчас", kk: "Қазір ашық", en: "Currently open" },
+    "cl.activate": { ru: "Сделать активной", kk: "Белсенді ету", en: "Make active" },
+    "cl.apply": { ru: "Применить к обращениям", kk: "Өтініштерге қолдану", en: "Apply to requests" },
+    "cl.activationReceipt": { ru: "Версия {version} стала активной. Новые оценки пойдут по её правилам.", kk: "{version}-нұсқа белсенді болды. Жаңа бағалаулар оның ережелерімен орындалады.", en: "Version {version} is now active. New evaluations will use its rules." },
+    "cl.activationFailed": { ru: "Не удалось сделать версию активной. Попробуйте ещё раз", kk: "Нұсқаны белсенді ету мүмкін болмады. Қайталап көріңіз", en: "The version could not be activated. Try again" },
+    "cl.networkError": { ru: "Нет связи с сервером. Изменения сохранены в форме", kk: "Сервермен байланыс жоқ. Өзгерістер пішінде сақталды", en: "The server cannot be reached. Your changes remain in the form" },
+    "cl.separate": { ru: "отдельно от итога", kk: "қорытындыдан бөлек", en: "separate from the total" },
+    "cl.metadata": { ru: "Версия {version}, сохранена {date}. ", kk: "{version}-нұсқа, сақталған уақыты: {date}. ", en: "Version {version}, saved {date}. " },
+    "cl.criterionCount": { ru: { one: "{count} критерий", few: "{count} критерия", many: "{count} критериев", other: "{count} критерия" }, kk: "{count} критерий", en: { one: "{count} criterion", other: "{count} criteria" } },
+    "cl.total100": { ru: ", итог из 100 баллов.", kk: ", қорытынды 100 ұпайдан есептеледі.", en: ", scored out of 100." },
+    "cl.flagsSeparate": { ru: ". Нарушения отмечаются отдельно.", kk: ". Бұзушылықтар бөлек белгіленеді.", en: ". Violations are recorded separately." },
+    "cl.history": { ru: "История версий", kk: "Нұсқалар тарихы", en: "Version history" },
+    "cl.activating": { ru: "Меняем активную версию", kk: "Белсенді нұсқа ауыстырылуда", en: "Changing the active version" },
+    "cl.change.added": { ru: "Добавлен", kk: "Қосылды", en: "Added" },
+    "cl.change.removed": { ru: "Удалён", kk: "Жойылды", en: "Removed" },
+    "cl.change.rule": { ru: "Изменено правило", kk: "Ереже өзгертілді", en: "Rule changed" },
+    "cl.change.weight": { ru: "Изменён вес", kk: "Салмақ өзгертілді", en: "Weight changed" },
+    "cl.change.section": { ru: "Изменён раздел", kk: "Бөлім өзгертілді", en: "Section changed" },
+    "cl.change.order": { ru: "Изменён порядок", kk: "Реті өзгертілді", en: "Order changed" }
+  });
+  DA.checklistChangeLabel = (kind) => DA.t(`cl.change.${kind}`);
+  DA.checklistFailure = (error, key) => DA.msg(() => DA.apiErrorMessage?.(error) || DA.t(`cl.${key}`));
   const byOrder = (a, b) => a.order - b.order;
   const contentFields = ["title", "description", "type", "naAllowed", "naCondition", "scale", "flagTypes"];
   const changed = (a, b, field) => JSON.stringify(a[field] ?? null) !== JSON.stringify(b[field] ?? null);
@@ -20,7 +65,7 @@
       else if (fields.includes("order")) rows.push({ criterionId: c.id, title: c.title, kind: "order", label: "Изменён порядок", fields: ["order"], before: old, after: c });
     }
     for (const c of previous?.criteria || []) if (!after.has(c.id)) rows.push({ criterionId: c.id, title: c.title, kind: "removed", label: "Удалён", fields: [], before: c, after: null });
-    return rows;
+    return rows.map((row) => ({ ...row, label: DA.checklistChangeLabel(row.kind) }));
   };
 
   /* Целые доли в документе в сумме дают 100, даже если исходные веса другие. */
@@ -51,15 +96,16 @@
       onClick: (id) => options.onSelect?.(id)
     });
     ribbon.classList.add("cl-ribbon");
-    ribbon.setAttribute("aria-label", "Доли критериев в итоговых 100 баллах");
+    DA.i18n.bindAttr(ribbon, "aria-label", "cl.ribbonLabel");
     for (const segment of ribbon.children) {
       const c = weighted.find((item) => item.id === segment.dataset.id);
-      const text = `${c.title || "Новый критерий"}: ${shares.criteria[c.id]} % итога`;
+      const text = m("ribbonCriterion", () => ({ criterion: c.title || DA.t("cl.newCriterion"), percent: shares.criteria[c.id] }));
+      DA.i18n.unbindAttr(segment, "title");
       segment.removeAttribute("title");
       if (options.onSelect) {
         segment.setAttribute("tabindex", "0");
         segment.setAttribute("role", "button");
-        segment.setAttribute("aria-label", text);
+        DA.i18n.bindAttr(segment, "aria-label", text);
         segment.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); options.onSelect(c.id); } });
       }
       segment.addEventListener("focus", () => options.onFocus?.(c.id));
@@ -79,16 +125,16 @@
     function card(c, share) {
       const node = h("article", { class: "cl-criterion", "data-criterion": c.id },
         h("div", { class: "cl-criterion-head" }, h("h3", { tabindex: -1 }, c.title),
-          c.type !== "flag" ? h("span", { class: "cl-share" }, `${share || 0} % итога`) : null),
+          c.type !== "flag" ? h("span", { class: "cl-share" }, m("share", { percent: share || 0 })) : null),
         h("p", { class: "cl-rule" }, c.description),
-        h("p", { class: "cl-answer" }, c.type === "flag" ? "Отмечается как нарушение, на итог не влияет" : c.type === "scale" ? `Ответ: баллы от 0 до ${DA.scaleMax(c)}` : "Ответ: да или нет",
-          c.naAllowed ? `. Не применяется, если ${(c.naCondition || "").replace(/^./, (letter) => letter.toLocaleLowerCase("ru-RU"))}` : ""));
+        h("p", { class: "cl-answer" }, c.type === "flag" ? m("answerFlag") : c.type === "scale" ? m("answerScale", { max: DA.scaleMax(c) }) : m("answerBinary"),
+          c.naAllowed ? m("naCondition", { condition: c.naCondition || "" }) : ""));
       if (c.type === "scale") {
         const list = h("ol", { class: "cl-scale", hidden: true }, c.scale.map((step) => h("li", {}, h("b", {}, step.value), h("span", {}, step.description))));
         const button = h("button", { class: "cl-scale-toggle", type: "button", "aria-expanded": "false", onclick: () => {
           list.hidden = !list.hidden;
           button.setAttribute("aria-expanded", String(!list.hidden));
-        } }, DA.icon("chevron", 14), "Ступени шкалы");
+        } }, DA.icon("chevron", 14), m("scaleSteps"));
         node.append(button, list);
       }
       return node;
@@ -100,13 +146,13 @@
       const initial = cl.version === 1 && !cl.basedOnVersion;
       const row = h("li", { class: "cl-version", "data-version": cl.version },
         h("div", { class: "cl-version-copy" },
-          h("div", { class: "cl-version-name" }, h("b", {}, `Версия ${cl.version}`), cl.isActive ? h("span", { class: "cl-active" }, "активна") : null,
-            !initial ? h("span", { class: "cl-version-time" }, DA.fmt.dateTime(cl.createdAt).toLocaleLowerCase("ru-RU")) : null),
-          h("p", {}, initial ? "Исходная из задания" : names.length ? `Изменено: ${names.join(", ")}` : "Правила критериев не изменились")),
+          h("div", { class: "cl-version-name" }, h("b", {}, m("version", { version: cl.version })), cl.isActive ? h("span", { class: "cl-active" }, m("active")) : null,
+            !initial ? h("span", { class: "cl-version-time" }, DA.msg(() => DA.fmt.dateTime(cl.createdAt))) : null),
+          h("p", {}, initial ? m("initialVersion") : names.length ? m("changedNames", { names: names.join(", ") }) : m("unchangedRules"))),
         h("div", { class: "cl-version-actions" },
-          cl.version !== viewing.version ? h("a", { class: "da-btn is-sm", href: `#/checklists?version=${cl.version}` }, "Посмотреть") : h("span", { class: "cl-current" }, "Открыта сейчас"),
-          !cl.isActive ? h("button", { class: "da-btn is-sm", type: "button", disabled: busy, onclick: () => activate(cl) }, "Сделать активной") : null,
-          !cl.isActive || cl.version > 1 ? h("a", { class: "da-btn is-text is-sm", href: `#/checklists/apply/${cl.version}` }, "Применить к обращениям") : null));
+          cl.version !== viewing.version ? h("a", { class: "da-btn is-sm", href: `#/checklists?version=${cl.version}` }, m("viewVersion")) : h("span", { class: "cl-current" }, m("currentVersion")),
+          !cl.isActive ? h("button", { class: "da-btn is-sm", type: "button", disabled: busy, onclick: () => activate(cl) }, m("activate")) : null,
+          !cl.isActive || cl.version > 1 ? h("a", { class: "da-btn is-text is-sm", href: `#/checklists/apply/${cl.version}` }, m("apply")) : null));
       return row;
     }
 
@@ -115,16 +161,16 @@
       busy = true; error = ""; receipt = ""; render();
       try {
         viewing = await DA.data.activateChecklist(cl.version);
-        receipt = `Версия ${viewing.version} стала активной. Новые оценки пойдут по её правилам.`;
+        receipt = m("activationReceipt", { version: viewing.version });
         history.replaceState(null, "", `#/checklists?version=${viewing.version}`);
-      } catch (e) { error = e.message || "Не удалось сделать версию активной. Попробуйте ещё раз"; }
+      } catch (e) { error = DA.checklistFailure(e, "activationFailed"); }
       finally { busy = false; if (!disposed) render(); }
     }
 
     function render() {
       if (!viewing) {
-        page.replaceChildren(h("div", { class: "da-empty" }, h("h1", { class: "da-h1" }, "Чек-лист не найден"), h("p", {}, "Не удалось получить правила оценки."),
-          h("button", { class: "da-btn is-primary", type: "button", onclick: () => DA.route() }, "Повторить")));
+        page.replaceChildren(h("div", { class: "da-empty" }, h("h1", { class: "da-h1" }, m("notFound")), h("p", {}, m("rulesFailed")),
+          h("button", { class: "da-btn is-primary", type: "button", onclick: () => DA.route() }, m("retry"))));
         return;
       }
       const shares = DA.checklistShares(viewing), cards = new Map();
@@ -133,7 +179,7 @@
         if (!criteria.length) return null;
         const weighted = criteria.some((c) => c.type !== "flag");
         return h("section", { class: "cl-section", "aria-label": section.title },
-          h("div", { class: "cl-section-head" }, h("h2", {}, section.title), h("span", {}, weighted ? `${shares.sections[section.id]} % итога` : "отдельно от итога")),
+          h("div", { class: "cl-section-head" }, h("h2", {}, section.title), h("span", {}, weighted ? m("share", { percent: shares.sections[section.id] }) : m("separate"))),
           h("div", { class: "cl-criteria" }, criteria.map((c) => { const node = card(c, shares.criteria[c.id]); cards.set(c.id, node); return node; })));
       });
       const ribbon = DA.checklistRibbon(viewing, {
@@ -141,14 +187,15 @@
         onSelect(id) { const node = cards.get(id); node?.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" }); node?.querySelector("h3").focus({ preventScroll: true }); }
       });
       page.replaceChildren(
-        h("div", { class: "cl-document-head" }, h("h1", { class: "da-h1", tabindex: -1 }, "Чек-лист"),
-          h("a", { class: "da-btn is-primary", href: `#/checklists/edit?version=${viewing.version}` }, "Изменить чек-лист")),
-        h("p", { class: "cl-document-meta" }, `Версия ${viewing.version}, сохранена ${DA.fmt.dateTime(viewing.createdAt).toLocaleLowerCase("ru-RU")}. ${viewing.criteria.length} ${DA.fmt.plural(viewing.criteria.length, ["критерий", "критерия", "критериев"])}${shares.total ? ", итог из 100 баллов." : ". Нарушения отмечаются отдельно."}`),
+        h("div", { class: "cl-document-head" }, h("h1", { class: "da-h1", tabindex: -1 }, m("checklist")),
+          h("a", { class: "da-btn is-primary", href: `#/checklists/edit?version=${viewing.version}` }, m("edit"))),
+        h("p", { class: "cl-document-meta" }, m("metadata", () => ({ version: viewing.version, date: DA.fmt.dateTime(viewing.createdAt) })),
+          m("criterionCount", { count: viewing.criteria.length }), m(shares.total ? "total100" : "flagsSeparate")),
         ribbon, h("div", { class: "cl-sections" }, sections),
-        h("section", { class: "cl-history", "aria-label": "История версий" }, h("h2", {}, "История версий"),
+        h("section", { class: "cl-history", "aria-label": m("history") }, h("h2", {}, m("history")),
           receipt ? h("p", { class: "cl-receipt", role: "status" }, DA.icon("check", 16), receipt) : null,
           error ? h("p", { class: "da-error", role: "alert" }, error) : null,
-          busy ? h("p", { class: "cl-history-pending", role: "status" }, "Меняем активную версию") : null,
+          busy ? h("p", { class: "cl-history-pending", role: "status" }, m("activating")) : null,
           h("ol", { class: "cl-version-list" }, [...DA.state.checklists].sort((a, b) => b.version - a.version).map(historyRow))));
     }
     render();

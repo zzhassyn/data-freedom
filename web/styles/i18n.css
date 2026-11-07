@@ -1,5 +1,7 @@
 /* Компактный выбор языка не меняет ширину при переключении подписи интерфейса. */
 .da-locale-control { display: inline-flex; align-items: center; flex: none; gap: 2px; padding: 3px; border: 1px solid var(--da-line); border-radius: var(--da-r-control); background: var(--da-surface-2); }
+.da-side-bottom .da-locale-control { display: flex; width: 100%; }
+.da-side-bottom .da-locale-option { flex: 1; }
 .da-locale-option { display: grid; place-items: center; min-width: 34px; min-height: 32px; padding: 5px 7px; border: 0; border-radius: 8px; background: transparent; color: var(--da-text-2); font-size: 12px; font-weight: 650; line-height: 1; transition: background var(--da-fast), color var(--da-fast), box-shadow var(--da-fast), transform 90ms var(--da-ease); }
 .da-locale-option:hover { color: var(--da-brand-press); background: var(--da-brand-soft); }
 .da-locale-option:active { transform: scale(.96); }
