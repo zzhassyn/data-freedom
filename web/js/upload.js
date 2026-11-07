@@ -1,30 +1,39 @@
-/* Загрузка обращений: пакет выгрузки из CRM или файл выгрузки. */
+/* Загрузка файла и синхронизация обращений с CRM. */
 (function () {
   const DA = window.DA, h = DA.h;
   const plural = (n, forms) => `${n} ${DA.fmt.plural(n, forms)}`;
   const CONV = ["обращение", "обращения", "обращений"];
   const LANGS = ["RU", "KZ", "EN"];
   const CHANNELS = ["agent chat", "voice call"];
-  const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const CRM_ERROR = "CRM не ответила. Попробуйте ещё раз через минуту";
 
-  /* Состав набора: чаты, звонки, языки. Считается по записям, а не задаётся руками. */
   function stats(records) {
     const calls = records.filter((r) => r.channel === "voice call").length;
     const langs = LANGS.map((l) => [l, records.filter((r) => r.language === l).length]).filter(([, n]) => n);
     return { total: records.length, calls, chats: records.length - calls, langs };
   }
-  const compositionText = (s) => `${plural(s.total, CONV)}: ${plural(s.chats, ["чат", "чата", "чатов"])} и ${plural(s.calls, ["звонок", "звонка", "звонков"])}`;
-  const langsText = (s) => s.langs.map(([l], i) => (i ? DA.langLabel[l].toLowerCase() : DA.langLabel[l])).join(", ");
 
-  /* Новые записи получают следующие номера по порядку. */
-  function addConversations(records) {
-    let next = Math.max(0, ...Object.values(DA.state.numbers)) + 1;
-    return records.map((r) => {
-      const rec = { conversation_id: r.conversation_id, channel: r.channel, language: r.language, transcript: r.transcript, audio_url: r.audio_url || null };
-      DA.state.conversations[rec.conversation_id] = rec;
-      DA.state.numbers[rec.conversation_id] = next++;
-      return rec.conversation_id;
-    });
+  async function request(url, options, timeout = 15000) {
+    const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), timeout);
+    try {
+      const response = await fetch(url, { ...options, signal: ctrl.signal });
+      if (!response.ok) throw new Error("request_failed");
+      return await response.json();
+    } finally { clearTimeout(timer); }
+  }
+  const jsonBody = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const resultText = (r) => `Новых ${r.imported}, обновлено ${r.updated}, без изменений ${r.unchanged}`;
+
+  /* Транскрипт API содержит служебные idx и tSec, для сравнения берём исходные поля. */
+  async function serverRecords(ids, onProgress) {
+    const records = [];
+    for (let i = 0; i < ids.length; i += 8) {
+      const batch = await Promise.all(ids.slice(i, i + 8).map((id) => request(`/api/conversations/${encodeURIComponent(id)}`)));
+      records.push(...batch.map((r) => ({ conversation_id: r.id, channel: r.channel, language: r.language,
+        audio_url: r.audioUrl, transcript: r.transcript.map(({ timestamp, speaker, text }) => ({ timestamp, speaker, text })) })));
+      if (onProgress) onProgress(records.length, ids.length);
+    }
+    return records;
   }
 
   /* ---------- Разбор файла выгрузки ---------- */
@@ -47,23 +56,28 @@
       if (!Array.isArray(r.transcript) || !r.transcript.length) return { error: `У обращения ${n} нет реплик.` };
       for (let j = 0; j < r.transcript.length; j++) {
         const t = r.transcript[j];
-        if (!t || typeof t.text !== "string" || !DA.speakerLabel[t.speaker]) return { error: `В обращении ${n} реплика ${j + 1} без текста или без автора.` };
+        if (!t || typeof t.text !== "string" || !t.text.trim() || !Object.hasOwn(DA.speakerLabel, t.speaker)) return { error: `В обращении ${n} реплика ${j + 1} без текста или без автора.` };
         if (!validTime(t.timestamp)) return { error: `В обращении ${n} у реплики ${j + 1} непонятное время.` };
       }
     }
     const fresh = records.filter((r) => !DA.state.conversations[r.conversation_id]);
-    return { records, fresh, stats: stats(records) };
+    const updated = records.filter((r) => {
+      const old = DA.state.conversations[r.conversation_id];
+      return old && DA.transcriptKey(old.transcript) !== DA.transcriptKey(r.transcript);
+    });
+    return { records, fresh, updated, stats: stats(records) };
   }
 
   /* ---------- Окно загрузки ---------- */
   DA.openUpload = function (onDone) {
     const dev = window.DA_DEV.records;
-    const devStats = stats(dev);
     const pane = h("div", { class: "da-up-pane" });
     const foot = h("div", { class: "da-up-foot" });
-    let tab = "crm", busy = false, closed = false;
+    let tab = "file", busy = false, closed = false, backend = false, ready = false;
+    let source = DA.state.source || { groupId: "DEV", lastSyncAt: null, lastResult: null };
+    let sourceError = "", settingsOpen = false, draftGroup = source.groupId;
 
-    const tabs = DA.segmented([{ value: "crm", label: "Из CRM" }, { value: "file", label: "Из файла" }], tab, (v) => { tab = v; show(); }, "Откуда загрузить");
+    const tabs = DA.segmented([{ value: "file", label: "Из файла" }, { value: "crm", label: "Из CRM" }], tab, (v) => { tab = v; show(); }, "Откуда загрузить");
     tabs.classList.add("da-up-tabs");
 
     const m = DA.modal({
@@ -77,106 +91,146 @@
     document.addEventListener("dragover", block);
     document.addEventListener("drop", block);
 
-    function setBusy(on) { busy = on; tabs.classList.toggle("is-locked", on); }
+    function setBusy(on) {
+      busy = on;
+      tabs.classList.toggle("is-locked", on);
+      tabs.querySelectorAll("button").forEach((b) => { b.disabled = on; });
+    }
     function swap(nodes, actions) {
-      pane.replaceChildren(...[nodes].flat());
+      pane.replaceChildren(...[nodes].flat().filter((node) => node != null && node !== false));
       pane.classList.remove("is-in"); void pane.offsetWidth; pane.classList.add("is-in");
       foot.replaceChildren(...actions);
     }
     const cancelBtn = () => h("button", { class: "da-btn", type: "button", onclick: () => m.close() }, "Отмена");
     function show() { if (!busy) (tab === "crm" ? crmPane : filePane)(); }
 
-    /* ----- Из CRM ----- */
-    let pack = "dev", packNo = "";
-    function crmPane() {
-      const input = h("input", { class: "da-input", value: packNo, placeholder: "Например, 4512", "aria-label": "Номер пакета", autocomplete: "off" });
-      const error = h("p", { class: "da-up-error", role: "alert", hidden: true });
-      const load = h("button", { class: "da-btn is-primary", type: "button" }, DA.icon("upload"), "Загрузить");
-      const numberField = h("label", { class: "da-field da-up-number", hidden: pack !== "other" }, h("span", {}, "Номер пакета"), input);
-
-      const card = (value, title, lines) => {
-        const radio = h("input", { type: "radio", name: "da-pack", value, class: "da-sr" });
-        radio.checked = pack === value;
-        radio.addEventListener("change", () => {
-          pack = value;
-          numberField.hidden = pack !== "other";
-          error.hidden = true;
-          sync();
-          if (pack === "other") input.focus();
-        });
-        return h("label", { class: "da-pack" }, radio,
-          h("span", { class: "da-pack-dot", "aria-hidden": "true" }),
-          h("span", { class: "da-pack-text" }, h("b", {}, title), lines.map((l) => h("span", {}, l))));
-      };
-      function sync() { load.disabled = pack === "other" && !input.value.trim(); }
-      input.addEventListener("input", () => { packNo = input.value; error.hidden = true; sync(); });
-      input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !load.disabled) load.click(); });
-      load.addEventListener("click", () => (pack === "dev" ? importDev() : importOther(packNo.trim(), load, error)));
-      sync();
-
-      swap([
-        h("div", { class: "da-pack-list", role: "radiogroup", "aria-label": "Пакет обращений" },
-          card("dev", "Обращения для разработки", [compositionText(devStats), langsText(devStats)]),
-          card("other", "Другой пакет", ["Пакет выгрузки из CRM по его номеру"])),
-        numberField, error
-      ], [cancelBtn(), load]);
-    }
-
-    /* Пакет разработки уже лежит в приложении: сверяем каждое обращение с реестром и показываем ход сверки. */
-    function importDev() {
-      setBusy(true);
-      const count = h("span", {}, `0 из ${dev.length}`);
-      const bar = h("i");
-      swap(h("div", { class: "da-up-progress", role: "status" },
-        h("div", { class: "da-up-progress-head" }, h("b", {}, "Сверяем обращения с реестром"), count),
-        h("div", { class: "da-up-bar" }, bar)), [cancelBtn()]);
-      const fresh = [], updated = [];
-      let i = 0;
-      const t0 = performance.now(), span = reduced() ? 0 : 1200;
-      (function step(now) {
-        if (closed) return;
-        const target = span ? Math.min(dev.length, Math.floor(((now - t0) / span) * dev.length)) : dev.length;
-        for (; i < target; i++) {
-          const r = dev[i], had = DA.state.conversations[r.conversation_id];
-          if (!had) fresh.push(r);
-          else if (JSON.stringify(had.transcript) !== JSON.stringify(r.transcript)) { updated.push(r); had.transcript = r.transcript; }
-        }
-        count.textContent = `${i} из ${dev.length}`;
-        bar.style.width = (i / dev.length) * 100 + "%";
-        if (i < dev.length) return requestAnimationFrame(step);
-        const added = addConversations(fresh);
-        setBusy(false);
-        doneView(`Загружено ${plural(dev.length, CONV)}`, `Новых ${fresh.length}, обновлено ${updated.length}.`);
-        if (added.length || updated.length) onDone && onDone(added);
-      })(t0);
-    }
-
-    /* Другой пакет запрашивается у сервера (CONTRACTS.md, POST /api/datasets/import). */
-    async function importOther(no, btn, error) {
-      setBusy(true);
-      btn.classList.add("is-busy"); btn.disabled = true;
-      const fail = (msg) => {
-        if (closed) return;
-        setBusy(false);
-        btn.classList.remove("is-busy"); btn.disabled = false;
-        error.replaceChildren(DA.icon("alert", 16), h("span", {}, msg || `Не удалось получить пакет ${no} из CRM. Проверьте номер или попробуйте позже.`));
-        error.hidden = false;
-      };
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 10000);
-      try {
-        const res = await fetch("/api/datasets/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ groupId: no }), signal: ctrl.signal });
-        const data = await res.json().catch(() => null);
-        if (!res.ok || !data || data.error) return fail(data && data.error && data.error.message);
-        if (closed) return;
-        setBusy(false);
-        doneView(`Загружено ${plural(data.total, CONV)}`, `Новых ${data.imported}, обновлено ${data.updated}.`);
-        onDone && onDone([]);
-      } catch (e) {
-        fail();
-      } finally {
-        clearTimeout(timer);
+    /* Наличие сервера проверяется при каждом открытии окна, максимум две секунды. */
+    const initialization = (async () => {
+      try { backend = (await request("/api/health", {}, 2000)).ok === true; }
+      catch (e) { backend = false; }
+      if (backend) {
+        try { source = await request("/api/source"); draftGroup = source.groupId; }
+        catch (e) { sourceError = CRM_ERROR; }
       }
+      ready = true;
+      if (!closed && tab === "crm" && !busy) crmPane();
+    })();
+
+    /* ----- Из CRM ----- */
+    function lastSyncLabel() {
+      if (!source.lastSyncAt) return "Ещё не синхронизировали";
+      const d = new Date(source.lastSyncAt);
+      const day = d.toDateString() === new Date().toDateString() ? "сегодня" : d.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+      return `Последняя синхронизация ${day} в ${d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`;
+    }
+
+    function crmPane() {
+      const error = h("p", { class: "da-up-error", role: "alert", hidden: !sourceError }, sourceError);
+      const input = h("input", { class: "da-input", value: draftGroup, maxlength: 100, autocomplete: "off" });
+      const saved = h("span", { class: "da-small da-muted", role: "status" });
+      const save = h("button", { class: "da-btn", type: "button", disabled: !ready }, "Сохранить");
+      const load = h("button", { class: "da-btn is-primary", type: "button", disabled: !ready }, DA.icon("refresh"), "Синхронизировать");
+      const field = h("div", { class: "da-source-settings", hidden: !settingsOpen },
+        h("label", { class: "da-field" }, h("span", {}, "Набор обращений"), input),
+        h("div", { class: "da-source-save" }, save, saved));
+      const toggle = h("button", { class: "da-btn is-text is-sm", type: "button", "aria-expanded": String(settingsOpen), onclick: () => {
+        settingsOpen = !settingsOpen;
+        field.hidden = !settingsOpen;
+        toggle.setAttribute("aria-expanded", String(settingsOpen));
+        if (settingsOpen) input.focus();
+      } }, "Настройки источника");
+      input.addEventListener("input", () => { draftGroup = input.value; saved.textContent = ""; });
+      const fail = (message) => { sourceError = message; error.textContent = message; error.hidden = false; };
+      async function saveSource() {
+        const groupId = draftGroup.trim();
+        if (!groupId || groupId.length > 100) { fail("Укажите набор обращений, до 100 символов."); input.focus(); return false; }
+        if (backend) await request("/api/source", jsonBody("PUT", { groupId }));
+        if (groupId !== source.groupId) source = { groupId, lastSyncAt: null, lastResult: null };
+        draftGroup = groupId;
+        DA.state.source = source;
+        DA.save();
+        return true;
+      }
+      save.addEventListener("click", async () => {
+        setBusy(true); save.disabled = load.disabled = input.disabled = true;
+        try {
+          if (await saveSource()) {
+            sourceError = ""; error.hidden = true; saved.textContent = "Сохранено";
+            last.textContent = lastSyncLabel();
+          }
+        } catch (e) { fail("Не удалось сохранить источник. Попробуйте ещё раз."); }
+        finally { setBusy(false); save.disabled = load.disabled = input.disabled = false; }
+      });
+      load.addEventListener("click", async () => {
+        setBusy(true); save.disabled = load.disabled = input.disabled = true;
+        try {
+          if (!await saveSource()) return;
+          sourceError = "";
+          await synchronize();
+        } catch (e) {
+          sourceError = CRM_ERROR;
+          if (!closed) crmPane();
+        } finally {
+          setBusy(false); save.disabled = load.disabled = input.disabled = false;
+        }
+      });
+      const last = h("p", { class: "da-up-note", role: "status" }, ready ? lastSyncLabel() : "Проверяем источник обращений");
+      swap(h("div", { class: "da-source" },
+        h("p", { class: "da-source-name" }, "CRM Freedom, обращения отдела поддержки"), last,
+        source.lastResult ? h("p", { class: "da-up-note" }, resultText(source.lastResult)) : null,
+        load, toggle, field, error), []);
+    }
+
+    async function synchronize() {
+      const title = h("b", {}, backend ? "Ждём ответ CRM" : "Сверяем обращения с реестром");
+      const count = h("span");
+      const bar = h("progress", { max: 1, "aria-label": "Ход синхронизации" });
+      swap(h("div", { class: "da-up-progress", role: "status", "aria-live": "polite" },
+        h("div", { class: "da-up-progress-head" }, title, count), bar), []);
+      const progress = (processed, total, label) => {
+        title.textContent = label;
+        count.textContent = `${processed} из ${total}`;
+        bar.max = total || 1; bar.value = processed;
+      };
+      let result, records;
+      if (backend) {
+        const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 135000);
+        try {
+          const res = await fetch("/api/source/sync", { method: "POST", headers: { Accept: "application/x-ndjson" }, signal: ctrl.signal });
+          if (!res.ok || !res.body) throw new Error("sync_failed");
+          const reader = res.body.getReader(), decoder = new TextDecoder();
+          let pending = "";
+          for (;;) {
+            const { done, value } = await reader.read();
+            pending += decoder.decode(value, { stream: !done });
+            const lines = pending.split("\n"); pending = lines.pop();
+            for (const line of lines.filter(Boolean)) {
+              const event = JSON.parse(line);
+              if (event.stage === "error") throw new Error("sync_failed");
+              if (event.stage === "importing") progress(event.processed, event.total, "Сохраняем обращения из CRM");
+              if (event.stage === "done") result = event.result;
+            }
+            if (done) break;
+          }
+          if (!result) throw new Error("sync_incomplete");
+        } finally { clearTimeout(timer); }
+        const list = await request(`/api/conversations?groupId=${encodeURIComponent(source.groupId)}`);
+        records = await serverRecords(list.items.map((r) => r.id), (n, total) => progress(n, total, "Обновляем реестр"));
+        DA.upsertConversations(records);
+      } else {
+        if (source.groupId !== "DEV") throw new Error("source_unavailable");
+        result = DA.upsertConversations(dev);
+        result.total = dev.length;
+        result.lastSyncAt = new Date().toISOString();
+        records = dev;
+        progress(dev.length, dev.length, "Сверка завершена");
+      }
+      source = { groupId: source.groupId, lastSyncAt: result.lastSyncAt,
+        lastResult: { imported: result.imported, updated: result.updated, unchanged: result.unchanged } };
+      DA.state.source = source;
+      DA.save();
+      onDone && onDone(records.map((r) => r.conversation_id));
+      if (!closed) doneView("Синхронизация завершена", resultText(result));
     }
 
     function doneView(title, text) {
@@ -207,7 +261,7 @@
     m.panel.addEventListener("dragenter", (e) => { if (!hasFiles(e) || tab !== "file" || busy || !dropTarget || !dropTarget.isConnected) return; depth++; dropTarget.classList.add("is-over"); });
     m.panel.addEventListener("dragleave", () => { if (depth && --depth === 0) dropTarget.classList.remove("is-over"); });
     m.panel.addEventListener("drop", (e) => {
-      if (!dropTarget || !dropTarget.isConnected) return;
+      if (tab !== "file" || busy || !dropTarget || !dropTarget.isConnected) return;
       depth = 0;
       dropTarget.classList.remove("is-over");
       const f = e.dataTransfer.files[0];
@@ -227,16 +281,26 @@
     }
 
     function previewPane(file, r) {
-      const s = r.stats, n = r.fresh.length, known = s.total - n;
-      const add = h("button", { class: "da-btn is-primary", type: "button", disabled: !n },
-        DA.icon("plus"), n ? `Добавить ${plural(n, CONV)}` : "Добавить обращения");
-      add.addEventListener("click", () => {
-        const ids = addConversations(r.fresh);
-        m.close();
-        onDone && onDone(ids);
-        /* Подтверждение появляется у кнопки, которой открыли окно: фокус уже вернулся на неё. */
-        const anchor = document.activeElement && document.activeElement.closest("button");
-        DA.toast(`В реестр ${DA.fmt.plural(ids.length, ["добавлено", "добавлены", "добавлено"])} ${plural(ids.length, CONV)}`, anchor || undefined);
+      const s = r.stats, n = r.fresh.length, changed = r.updated.length, known = s.total - n - changed;
+      const add = h("button", { class: "da-btn is-primary", type: "button", disabled: !n && !changed },
+        DA.icon(changed ? "refresh" : "plus"), changed ? "Обновить реестр" : n ? `Добавить ${plural(n, CONV)}` : "Добавить обращения");
+      const error = h("p", { class: "da-up-error", role: "alert", hidden: true });
+      add.addEventListener("click", async () => {
+        setBusy(true); add.disabled = true; add.classList.add("is-busy");
+        try {
+          await initialization;
+          let records = r.records;
+          if (backend) {
+            await request("/api/conversations/upload", jsonBody("POST", records));
+            records = await serverRecords(records.map((rec) => rec.conversation_id));
+          }
+          const result = DA.upsertConversations(records);
+          onDone && onDone(result.ids);
+          if (!closed) doneView("Реестр обновлён", resultText(result));
+        } catch (e) {
+          error.textContent = "Не удалось сохранить обращения. Попробуйте ещё раз. Файл можно выбрать повторно.";
+          error.hidden = false;
+        } finally { setBusy(false); add.disabled = false; add.classList.remove("is-busy"); }
       });
       const stat = (label, value) => h("div", { class: "da-up-stat" }, h("span", {}, label), h("b", {}, value));
       swap([
@@ -248,9 +312,11 @@
           stat("Чатов", s.chats), stat("Звонков", s.calls),
           s.langs.map(([l, c]) => stat(DA.langLabel[l], c)),
           stat("Новых", n)),
-        h("p", { class: "da-up-note" }, n
-          ? known ? `${plural(known, CONV)} уже есть в реестре, ${known === 1 ? "его" : "их"} пропустим.` : "Все обращения из файла новые."
-          : "Все обращения из этого файла уже есть в реестре.")
+        changed ? h("p", { class: "da-up-note" }, `${plural(changed, CONV)} ${DA.fmt.plural(changed, ["изменилось", "изменились", "изменились"])}, обновим ${changed === 1 ? "его" : "их"}.`,
+          " Прежние оценки этих обращений станут устаревшими.") : null,
+        known ? h("p", { class: "da-up-note" }, `${plural(known, CONV)} уже есть в реестре без изменений, ${known === 1 ? "его" : "их"} пропустим.`)
+          : !changed ? h("p", { class: "da-up-note" }, "Все обращения из файла новые.") : null,
+        error
       ], [cancelBtn(), add]);
     }
 

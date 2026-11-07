@@ -6,7 +6,7 @@
   /* Меню по роли. Входа в систему нет, роль выбирается переключателем внизу меню. */
   const NAV = {
     analyst: [
-      { href: "#/", match: /^#\/(c\/.*)?$/, label: "Обращения", icon: "list" },
+      { href: "#/", match: /^#\/(c\/.*|\?.*)?$/, label: "Обращения", icon: "list" },
       { href: "#/appeals", match: /^#\/appeals/, label: "Апелляции", icon: "message", count: true },
       { href: "#/checklists", match: /^#\/checklists/, label: "Чек-лист", icon: "scale" },
       { href: "#/insights", match: /^#\/insights/, label: "Сводка", icon: "chart" }
@@ -71,7 +71,7 @@
     DA.save();
     DA.side.setRole(v);
     DA.side.renderNav(true);
-    const target = v === "reviewer" ? "#/review" : /^#\/review/.test(location.hash) ? "#/" : null;
+    const target = location.hash.startsWith("#/lab/accuracy") ? null : v === "reviewer" ? "#/review" : /^#\/review/.test(location.hash) ? "#/" : null;
     if (target && location.hash !== target) location.hash = target;
     else DA.route();
   };
@@ -82,12 +82,13 @@
     [/^\/appeals$/, (m, query) => DA.views.appeals(main(), { query })],
     [/^\/checklists$/, (m, query) => DA.views.checklists(main(), { query })],
     [/^\/insights$/, (m, query) => DA.views.insights(main(), { query })],
+    [/^\/lab\/accuracy$/, () => DA.views.accuracy(main())],
     [/^\/review$/, (m, query) => DA.views.review(main(), { query })],
     [/^\/review\/done$/, (m, query) => DA.views.reviewDone(main(), { query })],
     [/^\/review\/([^/]+)$/, (m, query) => DA.views.review(main(), { id: decodeURIComponent(m[1]), query })]
   ];
-  /* Проверяющему из адресов аналитика открыта только карточка обращения, и та для чтения. */
-  const allowed = (path) => (DA.state.role === "reviewer" ? /^\/(review(\/.*)?|c\/.+)$/.test(path) : !/^\/review(\/|$)/.test(path));
+  /* Карточка для проверяющего доступна только для чтения; внутренний экран точности общий. */
+  const allowed = (path) => path === "/lab/accuracy" || (DA.state.role === "reviewer" ? /^\/(review(\/.*)?|c\/.+)$/.test(path) : !/^\/review(\/|$)/.test(path));
   const main = () => document.getElementById("da-main");
 
   DA.route = function () {

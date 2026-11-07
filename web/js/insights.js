@@ -1,19 +1,17 @@
-/* Сводка: выполнение критериев по языкам, операторы, совпадение модели с ручной разметкой. */
+/* Сводка: выполнение критериев по языкам и операторы. */
 (function () {
   const DA = window.DA, h = DA.h;
 
   const LANGS = ["RU", "KZ", "EN"];
-  const TABS = [{ value: "quality", label: "Качество" }, { value: "operators", label: "Операторы" }, { value: "accuracy", label: "Точность модели" }];
+  const TABS = [{ value: "quality", label: "Качество" }, { value: "operators", label: "Операторы" }];
   const BUCKETS = [[0, 49], [50, 69], [70, 84], [85, 100]];
-  const GOLD_KEY = "da.gold";
-  const one = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 });
   const pct = (x) => `${Math.round(x * 100)} %`;
   const convForms = ["обращение", "обращения", "обращений"];
   const nConv = (n) => `${n} ${DA.fmt.plural(n, convForms)}`;
 
   /* ---------- Данные ---------- */
   const evaluated = () => Object.values(DA.state.evaluations)
-    .filter((ev) => ev && ev.total != null && DA.state.conversations[ev.conversationId])
+    .filter((ev) => ev && !ev.stale && ev.total != null && DA.state.conversations[ev.conversationId])
     .sort((a, b) => DA.state.numbers[a.conversationId] - DA.state.numbers[b.conversationId]);
 
   function doneItem(ev, criterionId) {
@@ -62,6 +60,7 @@
     { re: /(?<!\p{L})[Мм]ен\s+(\p{Lu}\p{Ll}+)/u, kz: true }
   ];
   const NOT_NAMES = new Set(["Вам", "Вас", "Вы", "Сейчас", "Сіз", "Сізге"]);
+  const HIDDEN_NAME = /\[(?:имя скрыто|персональные данные скрыты|аты[\s-]*жөні жасырылған|аты жасырылған|есімі жасырылған|жеке (?:деректер|мәліметтер) жасырылған|name (?:hidden|redacted)|personal (?:data|information) (?:hidden|redacted))\]/iu;
   function operatorName(conv) {
     const first = conv.transcript.find((t) => t.speaker === "operator");
     if (!first) return null;
@@ -76,10 +75,14 @@
 
   function operators() {
     const byName = new Map();
+    let botOnly = 0;
     for (const conv of Object.values(DA.state.conversations)) {
+      const turns = conv.transcript.filter((t) => t.speaker === "operator");
+      if (!turns.length) { botOnly++; continue; }
       const name = operatorName(conv);
-      const key = name || "";
-      if (!byName.has(key)) byName.set(key, { name, convs: [] });
+      const kind = name ? "named" : turns.some((t) => HIDDEN_NAME.test(t.text)) ? "hidden" : "missing";
+      const key = kind === "named" ? "name:" + name : kind;
+      if (!byName.has(key)) byName.set(key, { name: name || (kind === "hidden" ? "Имя скрыто в записи" : "Оператор не представился"), kind, convs: [] });
       byName.get(key).convs.push(conv.conversation_id);
     }
     const evs = evaluated(), cl = DA.activeChecklist();
@@ -91,10 +94,11 @@
       op.gross = op.evs.filter((ev) => ev.grossFlagged).length;
       return op;
     });
-    const shown = rows.filter((op) => op.evs.length)
-      .sort((a, b) => (!a.name) - (!b.name) || b.avg - a.avg || b.evs.length - a.evs.length);
-    const hiddenConvs = rows.filter((op) => !op.evs.length).reduce((s, op) => s + op.convs.length, 0);
-    return { shown, hiddenConvs };
+    const order = { named: 0, missing: 1, hidden: 2 };
+    const shown = rows.filter((op) => op.evs.length || op.kind !== "named")
+      .sort((a, b) => order[a.kind] - order[b.kind] || b.avg - a.avg || b.evs.length - a.evs.length);
+    const hiddenConvs = rows.filter((op) => !op.evs.length && op.kind === "named").reduce((s, op) => s + op.convs.length, 0);
+    return { shown, hiddenConvs, botOnly };
   }
 
   /* ---------- Мелкие элементы ---------- */
@@ -152,7 +156,7 @@
   function matrixCell(c, col, i) {
     const s = cellStats(col.evs, c.id);
     if (!s.n) return h("span", { class: "da-ins-dash", "aria-label": "Нет оценок" }, "—");
-    const href = col.key ? `#/?lang=${col.key}` : "#/?state=done";
+    const href = col.key ? `#/?lang=${col.key}&state=done` : "#/?state=done";
     const cell = h("a", { class: "da-ins-cell", href, style: { "--i": i },
       "aria-label": `${c.title}, ${col.label.toLowerCase()}: ${s.rate == null ? "везде N/A" : "выполнено " + pct(s.rate)}` },
       h("span", { class: "da-ins-rate" + (s.rate == null ? " is-na" : "") }, s.rate == null ? "N/A" : pct(s.rate)),
@@ -216,18 +220,17 @@
 
   /* ---------- Операторы ---------- */
   function operatorsView() {
-    const { shown, hiddenConvs } = operators();
-    if (!shown.length) return emptyQuality();
+    const { shown, hiddenConvs, botOnly } = operators();
     const list = h("div", { class: "da-ins-ops", role: "list" },
       h("div", { class: "da-ins-op-head", "aria-hidden": "true" },
         h("span", {}, "Оператор"), h("span", {}, "Обращений"), h("span", {}, "Средний итог"), h("span", {}, "Слабое место"), h("span", {}, "Грубые ошибки")),
       shown.map((op, i) => operatorRow(op, i)));
-    return h("div", {}, list,
+    return h("div", {}, shown.length ? list : emptyQuality(),
+      botOnly ? h("p", { class: "da-ins-after" }, `${nConv(botOnly)} закрыл бот без оператора`) : null,
       hiddenConvs ? h("p", { class: "da-ins-after" }, `и ещё ${hiddenConvs} ${DA.fmt.plural(hiddenConvs, convForms)} без оценки: операторы появятся здесь, когда их обращения оценят`) : null);
   }
 
   function operatorRow(op, i) {
-    const rest = op.convs.length - op.evs.length;
     const weakText = !op.weak ? null : op.weak.stats.possible >= 5
       ? `выполняет в ${pct(op.weak.stats.yes / op.weak.stats.possible)} обращений`
       : `выполняет в ${op.weak.stats.yes} из ${op.weak.stats.possible} ${DA.fmt.plural(op.weak.stats.possible, ["обращения", "обращений", "обращений"])}`;
@@ -239,19 +242,21 @@
           return h("a", { class: "da-ins-op-conv", href: `#/c/${encodeURIComponent(cid)}` },
             h("b", { class: "da-num" }, `№ ${DA.convNumber(cid)}`),
             h("span", { class: "da-ins-op-preview" }, DA.tx.preview(conv)),
-            ev && ev.total != null
+            ev && !ev.stale && ev.total != null
               ? h("span", { class: "da-ins-op-total" }, ev.grossFlagged ? h("span", { class: "da-flag", title: "Грубая ошибка" }, DA.icon("flag", 14)) : null, DA.fmt.score(ev.total))
               : h("span", { class: "da-quiet" }, "Не оценено"));
         })));
     const row = h("button", { class: "da-ins-op", type: "button", "aria-expanded": "false", "aria-controls": `da-op-${i}` },
       h("span", { class: "da-ins-op-name" },
         h("span", { class: "da-ins-chev" }, DA.icon("chevron", 16)),
-        h("span", {}, h("b", { class: op.name ? "" : "is-unnamed" }, op.name || "Имя не названо"),
-          rest ? h("small", {}, `и ещё ${rest} без оценки`) : null)),
-      h("span", { class: "da-ins-op-n" }, h("i", { class: "da-ins-m" }, "Обращений "), op.evs.length),
-      h("span", { class: "da-ins-op-avg" }, h("b", {}, DA.fmt.score(op.avg)), h("span", { class: "da-ins-meter" }, h("i", { style: { width: op.avg + "%", "--i": i } }))),
-      h("span", { class: "da-ins-op-weak" }, op.weak ? [h("b", {}, op.weak.c.title), h("small", {}, weakText)] : h("span", { class: "da-quiet" }, "Слабых мест нет")),
-      h("span", { class: "da-ins-op-gross" }, op.gross ? h("span", { class: "da-ins-flag" }, DA.icon("flag", 14), op.gross) : h("span", { class: "da-quiet" }, "Нет")));
+        h("span", {}, h("b", { class: op.kind === "named" ? "" : "is-unnamed" },
+          op.kind === "missing" ? h("span", { class: "da-review", title: "В этих обращениях оператор не назвал имя в первом ответе" }, DA.icon("alert", 16)) : null, op.name),
+          h("small", {}, `Оценено ${op.evs.length} из ${op.convs.length}`))),
+      h("span", { class: "da-ins-op-n" }, h("i", { class: "da-ins-m" }, "Обращений "), op.convs.length),
+      h("span", { class: "da-ins-op-avg" }, h("b", {}, DA.fmt.score(op.avg)), op.avg != null ? h("span", { class: "da-ins-meter" }, h("i", { style: { width: op.avg + "%", "--i": i } })) : null),
+      h("span", { class: "da-ins-op-weak" }, op.kind === "missing" ? [h("b", {}, "Установление контакта"), h("small", {}, "Не названо имя в первом ответе")] : op.weak ? [h("b", {}, op.weak.c.title), h("small", {}, weakText)] : h("span", { class: "da-quiet" }, op.evs.length ? "Слабых мест нет" : "Нет оценок")),
+      h("span", { class: "da-ins-op-gross" }, op.gross ? h("span", { class: "da-ins-flag" }, DA.icon("flag", 14), op.gross) : h("span", { class: "da-quiet" }, op.evs.length ? "Нет" : "Нет оценок")));
+    if (op.kind === "missing") DA.hoverCard(row, () => "В этих обращениях оператор не назвал имя в первом ответе");
     row.addEventListener("click", () => {
       const open = row.getAttribute("aria-expanded") !== "true";
       row.setAttribute("aria-expanded", String(open));
@@ -259,184 +264,6 @@
     });
     const wrap = h("div", { class: "da-ins-op-wrap", role: "listitem" }, row, panel);
     return wrap;
-  }
-
-  /* ---------- Точность модели ---------- */
-  function loadGold() { try { return JSON.parse(localStorage.getItem(GOLD_KEY)) || null; } catch (e) { return null; } }
-  function saveGold(gold) { try { localStorage.setItem(GOLD_KEY, JSON.stringify(gold)); } catch (e) { /* без сохранения */ } }
-
-  function parseCsv(text) {
-    text = text.replace(/^﻿/, "");
-    const firstLine = text.slice(0, text.indexOf("\n") + 1 || undefined);
-    const sep = firstLine.includes(";") && !firstLine.includes(",") ? ";" : ",";
-    const rows = [];
-    let row = [], cell = "", quoted = false;
-    for (let i = 0; i < text.length; i++) {
-      const ch = text[i];
-      if (quoted) {
-        if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; }
-        else if (ch === '"') quoted = false;
-        else cell += ch;
-      } else if (ch === '"') quoted = true;
-      else if (ch === sep) { row.push(cell); cell = ""; }
-      else if (ch === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
-      else if (ch !== "\r") cell += ch;
-    }
-    row.push(cell);
-    rows.push(row);
-    return rows.map((r, i) => ({ line: i + 1, cells: r.map((c) => c.trim()) })).filter((r) => r.cells.some(Boolean));
-  }
-
-  /* Разбор файла разметки. Ошибка формата бросается с понятным текстом. */
-  function readGold(text, fileName) {
-    const rows = parseCsv(text);
-    if (!rows.length) throw new Error("Файл пустой.");
-    const header = rows[0].cells.map((c) => c.toLowerCase());
-    const col = Object.fromEntries(["conversation_id", "criterion_id", "answer", "note"].map((k) => [k, header.indexOf(k)]));
-    if (col.conversation_id < 0 || col.criterion_id < 0 || col.answer < 0) throw new Error("В первой строке нужны столбцы conversation_id, criterion_id и answer.");
-    const out = [];
-    let skipped = 0;
-    for (const r of rows.slice(1)) {
-      const cid = r.cells[col.conversation_id], crit = r.cells[col.criterion_id], raw = (r.cells[col.answer] || "").toLowerCase();
-      const ev = DA.state.evaluations[cid];
-      const cl = ev ? DA.checklist(ev.checklistVersion) : DA.activeChecklist();
-      const c = DA.state.conversations[cid] && DA.criterionById(cl, crit);
-      if (!c) { skipped++; continue; }
-      const answer = /^\d+$/.test(raw) ? Number(raw) : raw;
-      if (!DA.allowedAnswers(c).includes(answer)) {
-        throw new Error(`В строке ${r.line} ответ «${r.cells[col.answer]}» не подходит к критерию «${c.title}». Допустимо: ${DA.allowedAnswers(c).join(", ")}.`);
-      }
-      out.push({ conversationId: cid, criterionId: crit, answer, note: col.note >= 0 ? r.cells[col.note] || "" : "" });
-    }
-    if (!out.length) throw new Error("В файле нет строк с обращениями и критериями из этого набора.");
-    return { fileName, loadedAt: Date.now(), rows: out, skipped };
-  }
-
-  /* Сравниваем с исходным ответом модели: решение по апелляции не должно влиять на её точность. */
-  const modelAnswer = (item) => (item.original ? item.original.answer : item.answer);
-
-  function compare(gold) {
-    const pairs = [];
-    let noEval = 0;
-    for (const r of gold.rows) {
-      const ev = DA.state.evaluations[r.conversationId];
-      const hit = ev && ev.total != null && doneItem(ev, r.criterionId);
-      if (!hit) { noEval++; continue; }
-      pairs.push({ ev, cid: r.conversationId, c: hit.c, gold: r.answer, model: modelAnswer(hit.item), note: r.note });
-    }
-    const match = pairs.filter((p) => p.gold === p.model).length;
-
-    const diffs = [...new Set(pairs.map((p) => p.ev))].map((ev) => {
-      const cl = DA.checklist(ev.checklistVersion);
-      const model = Object.fromEntries(ev.items.map((i) => [i.criterionId, modelAnswer(i)]));
-      const golden = { ...model };
-      pairs.filter((p) => p.ev === ev).forEach((p) => (golden[p.c.id] = p.gold));
-      return Math.abs(DA.computeScores(cl, golden).total - DA.computeScores(cl, model).total);
-    });
-
-    const byCrit = new Map();
-    for (const p of pairs) {
-      if (!byCrit.has(p.c.id)) byCrit.set(p.c.id, { c: p.c, total: 0, match: 0, confusions: new Map() });
-      const row = byCrit.get(p.c.id);
-      row.total++;
-      if (p.gold === p.model) { row.match++; continue; }
-      const key = `${short(p.model, p.c)} вместо ${short(p.gold, p.c)}` + (p.c.type === "scale" && p.gold !== "na" ? " " + DA.fmt.plural(p.gold, ["балла", "баллов", "баллов"]) : "");
-      row.confusions.set(key, (row.confusions.get(key) || 0) + 1);
-    }
-    const crits = [...byCrit.values()].sort((a, b) => a.c.order - b.c.order);
-    const misses = pairs.filter((p) => p.gold !== p.model)
-      .sort((a, b) => DA.state.numbers[a.cid] - DA.state.numbers[b.cid] || a.c.order - b.c.order);
-    return { pairs, match, noEval, meanDiff: diffs.length ? diffs.reduce((s, d) => s + d, 0) / diffs.length : null, crits, misses };
-  }
-  /* «4,1 балла», но «4 балла» и «5 баллов». */
-  const points = (x) => (Math.round(x * 10) % 10 ? "балла" : DA.fmt.plural(Math.round(x), ["балл", "балла", "баллов"]));
-  const short = (answer, c) => (c.type === "scale" && answer !== "na" ? String(answer) : DA.answerLabel(answer, c));
-
-  function accuracyView(rerender) {
-    const gold = loadGold();
-    const input = h("input", { type: "file", accept: ".csv,text/csv", class: "da-sr" });
-    const error = h("p", { class: "da-error", role: "alert", hidden: true });
-    function take(file) {
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          const next = readGold(String(reader.result), file.name);
-          saveGold(next);
-          rerender();
-          DA.toast(`Разметка загружена: ${next.rows.length} ${DA.fmt.plural(next.rows.length, ["ответ", "ответа", "ответов"])}` + (next.skipped ? `, пропущено строк: ${next.skipped}` : ""));
-        } catch (e) {
-          error.textContent = e.message;
-          error.hidden = false;
-          drop.classList.remove("is-shake"); void drop.offsetWidth; drop.classList.add("is-shake");
-        }
-      };
-      reader.onerror = () => { error.textContent = "Не получилось прочитать файл. Попробуйте выбрать его ещё раз."; error.hidden = false; };
-      reader.readAsText(file, "utf-8");
-    }
-    input.addEventListener("change", () => { take(input.files[0]); input.value = ""; });
-    const drop = h("label", { class: "da-drop da-ins-drop" }, input, DA.icon("upload"),
-      h("b", {}, "Перетащите файл разметки"), h("span", { class: "da-small da-muted" }, "или нажмите, чтобы выбрать CSV"));
-    drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("is-over"); });
-    drop.addEventListener("dragleave", () => drop.classList.remove("is-over"));
-    drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("is-over"); take(e.dataTransfer.files[0]); });
-
-    if (!gold) {
-      return h("div", { class: "da-ins-gold-empty" },
-        h("div", { class: "da-ins-gold-intro" },
-          h("h2", {}, "Загрузите ручную разметку, чтобы сравнить с ней ответы модели"),
-          h("p", { class: "da-muted" }, "Нужен файл CSV: одна строка на ответ по одному критерию. В ответе yes, no, na или число баллов по шкале."),
-          sampleTable(),
-          h("a", { class: "da-btn is-sm da-ins-download", href: "data/gold-sample.csv", download: "gold-sample.csv" }, DA.icon("upload", 16), "Скачать пример файла")),
-        h("div", { class: "da-ins-gold-drop" }, drop, error));
-    }
-
-    const r = compare(gold);
-    const replace = h("button", { class: "da-btn is-sm", type: "button", onclick: () => input.click() }, DA.icon("refresh", 16), "Заменить разметку");
-    drop.hidden = true;
-    if (!r.pairs.length) {
-      return h("div", { class: "da-empty" }, drop, h("h2", {}, "Сравнить пока не с чем"),
-        h("p", {}, "В разметке нет обращений, которые уже оценила модель."), replace, error);
-    }
-    const rate = r.match / r.pairs.length;
-    return h("div", { class: "da-ins-acc" }, drop,
-      h("div", { class: "da-ins-acc-head" },
-        h("div", { class: "da-ins-kpi" }, h("span", {}, "Совпадение с разметкой"), h("b", {}, pct(rate)),
-          h("small", {}, `${r.match} из ${r.pairs.length} ${DA.fmt.plural(r.pairs.length, ["ответа", "ответов", "ответов"])}`)),
-        h("div", { class: "da-ins-kpi" }, h("span", {}, "Средняя разница итога"),
-          h("b", {}, one.format(r.meanDiff), h("em", {}, points(r.meanDiff))),
-          h("small", {}, `по ${nConv(new Set(r.pairs.map((p) => p.cid)).size)}`)),
-        h("div", { class: "da-ins-acc-file" },
-          h("span", { class: "da-small da-muted" }, `Разметка из файла ${gold.fileName}`,
-            r.noEval ? `. Без оценки модели: ${r.noEval} ${DA.fmt.plural(r.noEval, ["строка", "строки", "строк"])}` : ""),
-          replace, error)),
-      h("section", { class: "da-ins-block is-flat" },
-        h("h2", {}, "По критериям"),
-        h("div", { class: "da-ins-acc-rows" }, r.crits.map((row, i) => {
-          const top = [...row.confusions.entries()].sort((a, b) => b[1] - a[1])[0];
-          return h("div", { class: "da-ins-acc-row" },
-            h("span", { class: "da-ins-acc-title" }, row.c.title),
-            h("span", { class: "da-ins-meter is-wide" + (row.match < row.total ? " is-miss" : "") }, h("i", { style: { width: (row.match / row.total) * 100 + "%", "--i": i } })),
-            h("b", { class: "da-ins-acc-n" }, `${row.match} из ${row.total}`),
-            h("span", { class: "da-ins-acc-conf" }, top ? `${top[0]}: ${top[1]}` : h("span", { class: "da-quiet" }, "без расхождений")));
-        }))),
-      h("section", { class: "da-ins-block is-flat" },
-        h("h2", {}, r.misses.length ? `Расхождения: ${r.misses.length}` : "Расхождений нет"),
-        r.misses.length ? h("div", { class: "da-ins-misses" }, r.misses.map((p) =>
-          h("a", { class: "da-ins-miss", href: `#/c/${encodeURIComponent(p.cid)}?criterion=${encodeURIComponent(p.c.id)}` },
-            h("b", { class: "da-num" }, `№ ${DA.convNumber(p.cid)}`),
-            h("span", { class: "da-ins-miss-main" }, h("b", {}, p.c.title), p.note ? h("span", { class: "da-muted" }, p.note) : null),
-            h("span", { class: "da-ins-miss-ans" },
-              h("span", {}, h("span", { class: "da-small da-muted" }, "разметка"), DA.answerPill(p.gold, p.c)),
-              h("span", {}, h("span", { class: "da-small da-muted" }, "модель"), DA.answerPill(p.model, p.c))),
-            DA.icon("chevron", 16)))) : h("p", { class: "da-muted" }, "Модель ответила так же, как в разметке, по всем критериям.")));
-  }
-
-  function sampleTable() {
-    const rows = [["p1-ru-007", "contact", "yes", ""], ["p1-ru-007", "identification", "na", ""], ["p1-ru-007", "consultation", "5", "Не ответил, когда снова подавать на вывод"]];
-    return h("div", { class: "da-ins-sample" }, h("table", {},
-      h("thead", {}, h("tr", {}, ["conversation_id", "criterion_id", "answer", "note"].map((c) => h("th", {}, c)))),
-      h("tbody", {}, rows.map((r) => h("tr", {}, r.map((c) => h("td", {}, c)))))));
   }
 
   /* ---------- Экран ---------- */
@@ -460,7 +287,7 @@
 
     function render() {
       const evs = evaluated();
-      const view = tab === "quality" ? quality(evs) : tab === "operators" ? operatorsView() : accuracyView(render);
+      const view = tab === "quality" ? quality(evs) : operatorsView();
       body.replaceChildren(coverage(evs), h("div", { class: "da-ins-tab", "data-tab": tab }, view));
     }
 

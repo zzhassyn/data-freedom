@@ -117,6 +117,7 @@
 .da-ins-op-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .da-ins-op-name b { display: block; font-size: 15px; font-weight: 600; }
 .da-ins-op-name b.is-unnamed { color: var(--da-text-2); font-weight: 550; }
+.da-ins-op-name .da-review { margin-right: 6px; vertical-align: -2px; }
 .da-ins-op-name small, .da-ins-op-weak small { display: block; font-size: 13px; color: var(--da-text-3); margin-top: 1px; }
 .da-ins-chev { display: inline-flex; color: var(--da-text-3); transition: transform var(--da-dur) var(--da-ease); }
 .da-ins-op[aria-expanded="true"] .da-ins-chev { transform: rotate(90deg); color: var(--da-brand); }
@@ -216,9 +217,10 @@
   .da-ins-head .da-seg { margin-left: 0; width: 100%; }
   .da-ins-head .da-seg button { flex: 1 1 auto; padding: 0 8px; white-space: nowrap; font-size: 13px; }
   .da-ins-cover { flex-wrap: wrap; margin-top: -4px; }
-  .da-ins-matrix-wrap { margin: 0 -24px; border-radius: 0; }
-  .da-ins-matrix { min-width: 600px; }
-  .da-ins-matrix tbody th[scope="row"] { width: 150px; min-width: 150px; font-size: 14px; }
+  .da-ins-matrix-wrap { margin: 0 -16px; border-radius: 0; }
+  .da-ins-matrix { min-width: 600px; table-layout: fixed; }
+  .da-ins-matrix thead th:first-child { width: 150px; }
+  .da-ins-matrix tbody th[scope="row"] { width: 150px; min-width: 150px; font-size: 14px; overflow-wrap: anywhere; hyphens: auto; }
   .da-ins-matrix tbody th[scope="row"] > span:first-child { display: block; margin: 0 0 4px; }
   .da-ins-matrix th:first-child { box-shadow: 1px 0 0 var(--da-line); }
   .da-ins-rate { font-size: 17px; }

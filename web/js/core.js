@@ -152,15 +152,43 @@
 
   /* ---------- Хранилище прототипа (в браузере, до бэкенда) ---------- */
   const KEY = "da.proto.v2";
-  const PERSIST = ["evaluations", "appeals", "role", "checklists", "importedAt", "sidebar"];
+  const PERSIST = ["evaluations", "appeals", "role", "checklists", "importedAt", "sidebar", "conversations", "numbers", "source"];
+  const builtins = new Map(window.DA_DEV.records.map((r) => [r.conversation_id, r]));
+  DA.transcriptKey = (turns) => JSON.stringify(turns.map(({ timestamp, speaker, text }) => [timestamp, speaker, text]));
+  const recordKey = (r) => JSON.stringify([r.channel, r.language, r.audio_url || null, DA.transcriptKey(r.transcript)]);
   function load() { try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch (e) { return null; } }
   function save() {
-    try { localStorage.setItem(KEY, JSON.stringify(Object.fromEntries(PERSIST.map((k) => [k, DA.state[k]])))); } catch (e) { /* без сохранения */ }
+    try {
+      const stored = Object.fromEntries(PERSIST.map((k) => [k, DA.state[k]]));
+      /* Встроенный DEV восстанавливаем из файла; сохраняем лишь добавления и изменённые записи. */
+      stored.conversations = Object.fromEntries(Object.entries(DA.state.conversations).filter(([id]) => !builtins.has(id)));
+      stored.numbers = Object.fromEntries(Object.entries(DA.state.numbers).filter(([id]) => !builtins.has(id)));
+      stored.devOverrides = Object.fromEntries(Object.entries(DA.state.conversations).filter(([id, r]) => builtins.has(id) && recordKey(r) !== recordKey(builtins.get(id))));
+      localStorage.setItem(KEY, JSON.stringify(stored));
+    } catch (e) { /* без сохранения */ }
   }
+
+  DA.upsertConversations = function (records) {
+    let next = Math.max(0, ...Object.values(DA.state.numbers)) + 1;
+    const result = { imported: 0, updated: 0, unchanged: 0, ids: [] };
+    for (const r of records) {
+      const id = r.conversation_id, old = DA.state.conversations[id];
+      const changed = old && DA.transcriptKey(old.transcript) !== DA.transcriptKey(r.transcript);
+      result[!old ? "imported" : changed ? "updated" : "unchanged"]++;
+      if (!old) DA.state.numbers[id] = next++;
+      if (!old || changed) result.ids.push(id);
+      if (changed && DA.state.evaluations[id]) DA.state.evaluations[id].stale = true;
+      DA.state.conversations[id] = structuredClone({ conversation_id: id, channel: r.channel, language: r.language,
+        transcript: r.transcript.map(({ timestamp, speaker, text }) => ({ timestamp, speaker, text })), audio_url: r.audio_url || null });
+    }
+    save();
+    return result;
+  };
 
   function buildEvaluation(cid) {
     const src = window.DA_MOCK_ANSWERS[cid];
     if (!src) return null;
+    if (builtins.has(cid) && DA.transcriptKey(DA.state.conversations[cid].transcript) !== DA.transcriptKey(builtins.get(cid).transcript)) return null;
     const items = DA.checklist(1).criteria.map((c) => {
       const m = src[c.id];
       return {
@@ -192,11 +220,16 @@
   DA.state = { evaluations: {}, appeals: [], role: "analyst", conversations: {}, numbers: {}, checklists: [], importedAt: Date.now(), sidebar: "open" };
   DA.initState = function () {
     window.DA_DEV.records.forEach((r, i) => {
-      DA.state.conversations[r.conversation_id] = r;
+      DA.state.conversations[r.conversation_id] = structuredClone(r);
       DA.state.numbers[r.conversation_id] = i + 1;
     });
     const saved = load();
-    if (saved) Object.assign(DA.state, saved);
+    if (saved) {
+      const { conversations, numbers, devOverrides, ...rest } = saved;
+      Object.assign(DA.state, rest);
+      Object.assign(DA.state.conversations, conversations || {}, devOverrides || {});
+      Object.assign(DA.state.numbers, numbers || {});
+    }
     else {
       DA.state.checklists = [{ ...structuredClone(window.DA_CHECKLIST), createdAt: Date.now() }];
       for (const cid of Object.keys(window.DA_MOCK_ANSWERS)) DA.state.evaluations[cid] = buildEvaluation(cid);

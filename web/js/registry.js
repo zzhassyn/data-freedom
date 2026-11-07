@@ -30,10 +30,10 @@
     if (!filter.state.size) return true;
     const ev = DA.state.evaluations[cid];
     const checks = {
-      done: () => !!ev,
+      done: () => !!ev && !ev.stale,
       new: () => !ev,
       appeal: () => DA.state.appeals.some((a) => a.conversationId === cid),
-      review: () => !!ev && ev.items.some((i) => i.needsReview),
+      review: () => !!ev && (ev.stale || ev.items.some((i) => i.needsReview)),
       gross: () => !!ev && ev.grossFlagged
     };
     return [...filter.state].some((k) => checks[k]());
@@ -76,6 +76,7 @@
   function scoreCell(cid) {
     const ev = DA.state.evaluations[cid];
     if (!ev) return h("span", { class: "da-quiet" }, "Не оценено");
+    if (ev.stale) return h("span", { class: "da-muted da-small" }, "Оценка устарела");
     const cl = DA.checklist(ev.checklistVersion);
     const cell = h("div", { class: "da-score-cell", tabindex: 0, onclick: (e) => e.stopPropagation() },
       h("span", { class: "da-score-num" }, DA.fmt.score(ev.total),
@@ -96,7 +97,18 @@
   }
 
   DA.views = DA.views || {};
-  DA.views.registry = function mount(root) {
+  DA.views.registry = function mount(root, params) {
+    const query = params && params.query || {};
+    if (GROUPS.some((g) => Object.hasOwn(query, g.key))) {
+      GROUPS.forEach((g) => {
+        filter[g.key].clear();
+        String(query[g.key] || "").split(",").forEach((v) => {
+          if (g.options.some((o) => o.value === v)) filter[g.key].add(v);
+        });
+      });
+      filter.q = "";
+      view.page = 1;
+    }
     const tbody = h("tbody");
     const counter = h("span", { class: "da-muted" });
     const chips = h("div", { class: "da-active-filters" });
@@ -114,6 +126,9 @@
     let fresh = new Set(), animate = false;
 
     function renderChips() {
+      const query = new URLSearchParams();
+      GROUPS.forEach((g) => { if (filter[g.key].size) query.set(g.key, [...filter[g.key]].join(",")); });
+      history.replaceState(null, "", "#/" + (query.size ? "?" + query : ""));
       chips.replaceChildren();
       for (const g of GROUPS) for (const v of filter[g.key]) {
         const o = g.options.find((x) => x.value === v);
@@ -173,7 +188,7 @@
       const pages = Math.max(1, Math.ceil(list.length / size));
       view.page = Math.min(Math.max(1, view.page), pages);
 
-      const evaluated = records.filter((r) => DA.state.evaluations[r.conversation_id]).length;
+      const evaluated = records.filter((r) => DA.state.evaluations[r.conversation_id] && !DA.state.evaluations[r.conversation_id].stale).length;
       counter.textContent = `${records.length} ${DA.fmt.plural(records.length, ["обращение", "обращения", "обращений"])}, оценено ${evaluated}`;
       renderChips();
       tbody.replaceChildren();

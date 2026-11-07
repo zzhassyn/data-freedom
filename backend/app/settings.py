@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(BASE_DIR / '.env', encoding='utf-8-sig')
 AUDIO_ALLOWED_HOSTS = ('.environment.api.powerplatform.com', '.dynamics.com')
+DEFAULT_SOURCE_GROUP_ID = 'DEV'
 DEFAULT_ORG_API_URL = ('https://ec88f21f1accecf38e20095a9fe175.a5.environment.api.powerplatform.com:443'
     '/powerautomate/automations/direct/cu/11/workflows/b3d2a68006a24662be2b721454cb4e00'
     '/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0'

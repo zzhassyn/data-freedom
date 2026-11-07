@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS ai_cache (
  kind TEXT NOT NULL, key TEXT NOT NULL, body_json TEXT NOT NULL, usage_json TEXT NOT NULL,
  created_at TEXT NOT NULL, PRIMARY KEY(kind,key));
 CREATE TABLE IF NOT EXISTS sequences (prefix TEXT PRIMARY KEY, value INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS model_calls (
  id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, input_tokens INTEGER NOT NULL,
  output_tokens INTEGER NOT NULL, cost_usd REAL NOT NULL, calls INTEGER NOT NULL,
@@ -109,6 +110,16 @@ class Database:
 
     def get_conversation(self, id, conn=None):
         return self._get('conversations', id, 'Диалог', conn)
+
+    def get_setting(self, key, default=None, conn=None):
+        with self._using(conn) as c:
+            row = c.execute('SELECT value_json FROM settings WHERE key=?', (key,)).fetchone()
+        return default if row is None else json.loads(row['value_json'])
+
+    def set_setting(self, key, value, conn=None):
+        with self._using(conn) as c:
+            c.execute('INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json',
+                      (key, json_dumps(value)))
 
     def all_conversations(self, conn=None):
         return self._all('conversations', conn)

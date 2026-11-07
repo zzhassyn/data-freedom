@@ -14,7 +14,7 @@ from starlette.responses import StreamingResponse
 from .db import json_dumps, utcnow
 from .errors import ApiError
 from .models import Conversation
-from .settings import AUDIO_ALLOWED_HOSTS
+from .settings import AUDIO_ALLOWED_HOSTS, DEFAULT_SOURCE_GROUP_ID
 from .audio_security import audio_destination, audio_get
 
 router = APIRouter(prefix='/api')
@@ -94,13 +94,15 @@ def normalize_records(payload, group_id, audio_allowed_hosts=AUDIO_ALLOWED_HOSTS
     return normalized
 
 
-def import_records(db, payload, group_id, audio_allowed_hosts=AUDIO_ALLOWED_HOSTS):
+def import_steps(db, payload, group_id, audio_allowed_hosts=AUDIO_ALLOWED_HOSTS, source=False):
+    """Yield measured progress; records and sync receipt commit in one transaction."""
     rejected_audio = []
     records = normalize_records(payload, group_id, audio_allowed_hosts, rejected_audio)
     imported, updated = 0, 0
+    yield dict(stage='importing', processed=0, total=len(records))
     with db.transaction() as conn:
         existing = {c['id']: c for c in db.all_conversations(conn)}
-        for record in records:
+        for index, record in enumerate(records, 1):
             old = existing.get(record['id'])
             if old is None:
                 imported += 1
@@ -112,8 +114,21 @@ def import_records(db, payload, group_id, audio_allowed_hosts=AUDIO_ALLOWED_HOST
                 db.invalidate_cache('summary', record['id'], conn)
                 db.invalidate_cache('translation', record['id'], conn)
             db.save_conversation(record, conn)
+            yield dict(stage='importing', processed=index, total=len(records))
         total = conn.execute('SELECT COUNT(*) FROM conversations WHERE group_id=?', (group_id,)).fetchone()[0]
-    return dict(groupId=group_id, imported=imported, updated=updated, total=total, audioRejected=len(rejected_audio)), [r['id'] for r in records]
+        result = dict(groupId=group_id, imported=imported, updated=updated, total=total, audioRejected=len(rejected_audio))
+        if source:
+            result = dict(imported=imported, updated=updated, unchanged=len(records)-imported-updated,
+                          total=len(records), lastSyncAt=utcnow())
+            db.set_setting('lastSyncAt', result['lastSyncAt'], conn)
+            db.set_setting('lastResult', {k: result[k] for k in ('imported', 'updated', 'unchanged')}, conn)
+    yield dict(stage='done', result=result, ids=[r['id'] for r in records])
+
+
+def import_records(db, payload, group_id, audio_allowed_hosts=AUDIO_ALLOWED_HOSTS):
+    for step in import_steps(db, payload, group_id, audio_allowed_hosts):
+        if step['stage'] == 'done':
+            return step['result'], step['ids']
 
 
 def schedule_summaries(request, ids):
@@ -129,12 +144,14 @@ def schedule_summaries(request, ids):
     task.add_done_callback(finished)
 
 
-@router.post('/datasets/import')
-async def import_dataset(request: Request):
-    body = await request.json()
+def source_group(body):
     group_id = body.get('groupId') if isinstance(body, dict) else None
     if not isinstance(group_id, str) or not group_id.strip() or len(group_id) > 100:
         raise ApiError('bad_group', 'Укажите непустой groupId длиной до 100 символов')
+    return group_id.strip()
+
+
+async def fetch_dataset(request, group_id):
     url = httpx.URL(request.app.state.settings.org_api_url).copy_add_param('group_id', group_id)
     async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
         for attempt in range(2):
@@ -151,9 +168,90 @@ async def import_dataset(request: Request):
         raise ApiError('upstream_failed', 'Организаторы вернули неверный формат набора', 502)
     if payload.get('isSuccess') is False:
         raise ApiError('bad_group', str(payload.get('error') or 'Организаторы не нашли указанный набор'))
+    return payload
+
+
+@router.post('/datasets/import')
+async def import_dataset(request: Request):
+    group_id = source_group(await request.json())
+    payload = await fetch_dataset(request, group_id)
     result, ids = import_records(request.app.state.db, payload, group_id, request.app.state.settings.audio_allowed_hosts)
     schedule_summaries(request, ids)
     return result
+
+
+@router.get('/source')
+async def get_source(request: Request):
+    db = request.app.state.db
+    with db.transaction() as conn:
+        return dict(groupId=db.get_setting('sourceGroupId', DEFAULT_SOURCE_GROUP_ID, conn),
+                    lastSyncAt=db.get_setting('lastSyncAt', conn=conn),
+                    lastResult=db.get_setting('lastResult', conn=conn))
+
+
+@router.put('/source')
+async def put_source(request: Request):
+    group_id = source_group(await request.json())
+    async with request.app.state.source_lock:
+        db = request.app.state.db
+        with db.transaction() as conn:
+            if group_id != db.get_setting('sourceGroupId', DEFAULT_SOURCE_GROUP_ID, conn):
+                db.set_setting('lastSyncAt', None, conn)
+                db.set_setting('lastResult', None, conn)
+            db.set_setting('sourceGroupId', group_id, conn)
+    return dict(groupId=group_id)
+
+
+@router.post('/source/sync')
+async def sync_source(request: Request):
+    async def steps():
+        async with request.app.state.source_lock:
+            db = request.app.state.db
+            group_id = db.get_setting('sourceGroupId', DEFAULT_SOURCE_GROUP_ID)
+            yield dict(stage='fetching')
+            payload = await fetch_dataset(request, group_id)
+            queue = asyncio.Queue()
+            loop = asyncio.get_running_loop()
+            def import_in_thread():
+                try:
+                    for step in import_steps(db, payload, group_id, request.app.state.settings.audio_allowed_hosts, source=True):
+                        loop.call_soon_threadsafe(queue.put_nowait, step)
+                except Exception as exc:
+                    loop.call_soon_threadsafe(queue.put_nowait, exc)
+            task = asyncio.create_task(asyncio.to_thread(import_in_thread))
+            try:
+                while True:
+                    step = await queue.get()
+                    if isinstance(step, Exception):
+                        raise step
+                    if step['stage'] == 'done':
+                        schedule_summaries(request, step.pop('ids'))
+                    yield step
+                    if step['stage'] == 'done':
+                        break
+            finally:
+                await asyncio.shield(task)
+
+    if 'application/x-ndjson' in request.headers.get('accept', ''):
+        async def stream():
+            iterator = steps()
+            try:
+                async for step in iterator:
+                    yield json_dumps(step) + '\n'
+            except ApiError as exc:
+                yield json_dumps(dict(stage='error', error=dict(code=exc.code,
+                    message='CRM не ответила. Попробуйте ещё раз через минуту'))) + '\n'
+            finally:
+                await iterator.aclose()
+        return StreamingResponse(stream(), media_type='application/x-ndjson',
+                                 headers={'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no'})
+    try:
+        async for step in steps():
+            if step['stage'] == 'done':
+                result = step['result']
+        return result
+    except ApiError as exc:
+        raise ApiError(exc.code, 'CRM не ответила. Попробуйте ещё раз через минуту', exc.status)
 
 
 @router.post('/conversations/upload')

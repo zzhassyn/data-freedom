@@ -61,27 +61,6 @@
 @keyframes da-up-in { from { opacity: 0; transform: translateY(4px); } }
 .da-up-foot { display: flex; justify-content: flex-end; gap: 8px; }
 
-.da-pack-list { display: grid; gap: 8px; }
-.da-pack {
-  display: grid; grid-template-columns: 20px 1fr; gap: 12px; align-items: start;
-  padding: 14px 16px; border-radius: var(--da-r-card); cursor: pointer;
-  box-shadow: inset 0 0 0 1px var(--da-line);
-  transition: box-shadow var(--da-fast), background var(--da-fast), transform 90ms var(--da-ease);
-}
-.da-pack:hover { background: var(--da-surface-2); }
-.da-pack:active { transform: scale(0.99); }
-.da-pack:has(input:checked) { background: var(--da-brand-soft); box-shadow: inset 0 0 0 1.5px var(--da-brand); }
-.da-pack:has(input:focus-visible) { outline: 2px solid var(--da-brand); outline-offset: 2px; }
-.da-pack-dot {
-  width: 20px; height: 20px; margin-top: 1px; border-radius: 50%; border: 1.5px solid #c3cad4; background: var(--da-surface);
-  display: grid; place-items: center; transition: border-color var(--da-fast);
-}
-.da-pack-dot::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--da-brand); transform: scale(0); transition: transform var(--da-dur) var(--da-spring); }
-.da-pack input:checked + .da-pack-dot { border-color: var(--da-brand); }
-.da-pack input:checked + .da-pack-dot::after { transform: scale(1); }
-.da-pack-text { display: grid; gap: 2px; font-size: 14px; color: var(--da-text-2); }
-.da-pack-text b { font-size: 15px; font-weight: 600; color: var(--da-text); }
-.da-up-number { animation: da-up-in 200ms var(--da-ease); }
 .da-up-error {
   display: flex; gap: 8px; align-items: flex-start; margin: 0; padding: 10px 12px;
   border-radius: var(--da-r-control); background: var(--da-no-soft); color: var(--da-no-ink); font-size: 14px;
@@ -92,8 +71,6 @@
 .da-up-progress { display: grid; gap: 12px; padding: 40px 4px 0; }
 .da-up-progress-head { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; color: var(--da-text-2); }
 .da-up-progress-head b { font-weight: 600; color: var(--da-text); }
-.da-up-bar { height: 6px; border-radius: 3px; background: var(--da-surface-3); overflow: hidden; }
-.da-up-bar i { display: block; width: 0; height: 100%; border-radius: 3px; background: var(--da-brand); }
 
 .da-up-done { display: grid; justify-items: center; gap: 6px; padding: 24px 0 8px; text-align: center; }
 .da-up-done-icon {
@@ -123,6 +100,17 @@
 .da-up-stat b { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; line-height: 1.2; }
 .da-up-stat:last-child b { color: var(--da-brand-press); }
 .da-up-note { margin: 0; font-size: 14px; color: var(--da-text-2); }
+
+.da-source { display: grid; gap: 12px; justify-items: start; }
+.da-source-name { margin: 4px 0 0; font-weight: 550; }
+.da-source > .is-primary { margin-top: 8px; min-height: 44px; }
+.da-source > .is-text { margin-left: -8px; }
+.da-source-settings { display: grid; gap: 12px; width: 100%; padding-top: 8px; }
+.da-source-save { display: flex; align-items: center; gap: 12px; }
+.da-up-progress progress { width: 100%; height: 8px; border: 0; border-radius: 4px; overflow: hidden; accent-color: var(--da-brand); }
+.da-up-progress progress::-webkit-progress-bar { background: var(--da-surface-3); border-radius: 4px; }
+.da-up-progress progress::-webkit-progress-value { background: var(--da-brand); border-radius: 4px; }
+.da-modal-foot:has(.da-up-foot:empty) { display: none; }
 
 /* ---------- Узкий экран ---------- */
 @media (max-width: 760px) {
@@ -155,6 +143,9 @@
   .da-pager-gap { min-width: 16px; }
 }
 @media (max-width: 600px) {
+  .da-up-file { grid-template-columns: 40px minmax(0, 1fr); }
+  .da-up-file b { white-space: normal; overflow-wrap: anywhere; }
+  .da-up-file > .da-btn { grid-column: 2; justify-self: start; margin-left: -12px; }
   .da-modal-wrap { padding: 0; place-items: end stretch; }
   .da-modal { width: 100% !important; max-height: calc(100dvh - 24px); border-radius: var(--da-r-panel) var(--da-r-panel) 0 0; transform: translateY(32px); }
   .da-modal-head { padding: 16px 12px 6px 20px; }

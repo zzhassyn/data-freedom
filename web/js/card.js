@@ -135,6 +135,12 @@
       opts = opts || {};
       panel.replaceChildren();
       critNodes.clear();
+      if (ev && ev.stale) {
+        panel.append(h("div", { class: "da-empty" },
+          h("h2", {}, "Оценка устарела"),
+          h("p", {}, `Транскрипт изменился. Прежний итог ${DA.fmt.score(ev.total)} больше не участвует в сводке.`)));
+        return;
+      }
       if (!ev) {
         panel.append(h("div", { class: "da-empty" },
           h("div", { class: "da-empty-ribbon", "aria-hidden": "true" }, CL().criteria.filter((c) => c.weight).map((c) => h("i", { style: { "--w": c.weight } }))),
@@ -317,7 +323,7 @@
     function evaluate(btn) {
       const fresh = DA.freshEvaluation(cid);
       if (!fresh) {
-        DA.toast("Оценка этого диалога появится чуть позже", btn);
+        DA.toast("Оценка для этого транскрипта пока недоступна", btn);
         return;
       }
       const prevTotal = ev && ev.total;

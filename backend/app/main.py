@@ -40,6 +40,7 @@ def create_app(settings=None):
         application.state.background_tasks = set()
         application.state.health_cache = None
         application.state.health_lock = asyncio.Lock()
+        application.state.source_lock = asyncio.Lock()
         await application.state.queue.start()
         try:
             yield
