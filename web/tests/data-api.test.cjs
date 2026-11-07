@@ -138,6 +138,31 @@ test('locale switching updates formatting and labels without changing evaluation
   assert.deepEqual(json({ evaluations: DA.state.evaluations, conversations: DA.state.conversations }), before);
 });
 
+test('API error copy follows the current locale while preserving original and authored validation details', () => {
+  const { DA } = environment();
+  const network = new DA.ApiError('network', 'Нет связи с сервером', 0);
+  const validation = new DA.ApiError('invalid_checklist', 'Критерий «Моя проверка Q3»: вес должен быть больше нуля', 400);
+  const answer = new DA.ApiError('invalid_answer', 'Недопустимый ответ для критерия «Моя проверка Q3»', 400);
+  assert.match(DA.apiErrorMessage(network), /Нет связи с сервером/);
+  DA.i18n.setLocale('en');
+  assert.equal(DA.apiErrorMessage(network), 'Cannot reach the server. Check your connection and try again.');
+  assert.equal(DA.apiErrorMessage(validation), 'Check the data and try again. ' + validation.message);
+  assert.equal(DA.apiErrorMessage(answer), 'The answer is not valid for “Моя проверка Q3”. Check the selected answer.');
+  assert.equal(DA.apiErrorMessage(new Error('internal implementation detail')), 'Could not complete the action. Try again.');
+  assert.equal(DA.apiErrorMessage(new DA.ApiError('future_contract_code', 'User field: original custom value', 400)),
+    'Could not complete the action. Check the message: User field: original custom value');
+  DA.i18n.setLocale('kk');
+  assert.match(DA.apiErrorMessage(network), /Сервермен байланыс жоқ/);
+  assert.ok(DA.apiErrorMessage(validation).endsWith(validation.message));
+  assert.ok(DA.apiErrorMessage(answer).includes('Моя проверка Q3'));
+  DA.i18n.setLocale('ru');
+  assert.equal(DA.apiErrorMessage(validation), validation.message);
+  assert.equal(network.message, 'Нет связи с сервером');
+  assert.equal(network.code, 'network');
+  assert.equal(DA.i18n.audit().missingUsed.length, 0);
+  assert.equal(DA.i18n.audit().missingLocales.length, 0);
+});
+
 test('second opinion and reviewer decision preserve each other in either response order', async () => {
   for (const opinionFirst of [false, true]) {
     const { DA, ev, cl } = fixtureServer();
