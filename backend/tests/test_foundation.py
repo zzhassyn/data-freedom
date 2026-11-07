@@ -175,6 +175,7 @@ def test_stale_evaluation_is_retained_but_not_listed_as_current_done(seeded_clie
 
 def test_live_import_adapter_encodes_group_and_retries_once(client, dev_payload, monkeypatch):
     requests = []
+    dev_payload['data']['dataset_group_id'] = 'DEV & контроль'
     client.app.state.settings.org_api_url = 'https://organizer.test/data?sig=test-signature&sp=%2Ftriggers%2Fmanual%2Frun'
 
     def upstream(request):
