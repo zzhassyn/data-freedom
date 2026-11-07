@@ -177,7 +177,7 @@
 
   /* ---------- Хранилище прототипа (в браузере, до бэкенда) ---------- */
   const KEY = "da.proto.v2";
-  const PERSIST = ["evaluations", "evaluationHistory", "appeals", "role", "checklists", "importedAt", "sidebar", "conversations", "numbers", "source"];
+  const PERSIST = ["evaluations", "evaluationHistory", "jobs", "appeals", "role", "checklists", "importedAt", "sidebar", "conversations", "numbers", "source"];
   const builtins = new Map(window.DA_DEV.records.map((r) => [r.conversation_id, r]));
   DA.transcriptKey = (turns) => JSON.stringify(turns.map(({ timestamp, speaker, text }) => [timestamp, speaker, text]));
   const recordKey = (r) => JSON.stringify([r.channel, r.language, r.audio_url || null, DA.transcriptKey(r.transcript)]);
@@ -217,10 +217,11 @@
     return result;
   };
 
-  function buildEvaluation(cid) {
+  function buildEvaluation(cid, source) {
     const src = window.DA_MOCK_ANSWERS[cid];
     if (!src) return null;
-    if (builtins.has(cid) && DA.transcriptKey(DA.state.conversations[cid].transcript) !== DA.transcriptKey(builtins.get(cid).transcript)) return null;
+    const record = source || DA.state.conversations[cid];
+    if (builtins.has(cid) && DA.transcriptKey(record.transcript) !== DA.transcriptKey(builtins.get(cid).transcript)) return null;
     const items = DA.checklist(1).criteria.map((c) => {
       const m = src[c.id];
       return {
@@ -232,7 +233,7 @@
       };
     });
     const ev = { id: "ev_" + cid, conversationId: cid, checklistVersion: 1, status: "done", minutesAgo: 25, durationSec: 11 + (cid.length % 7),
-      sourceConversation: structuredClone(DA.state.conversations[cid]), transcriptKey: DA.transcriptKey(DA.state.conversations[cid].transcript), items };
+      sourceConversation: structuredClone(record), transcriptKey: DA.transcriptKey(record.transcript), items };
     DA.rescore(ev);
     ev.originalTotal = ev.total;
     return ev;
@@ -250,11 +251,11 @@
     return ev;
   };
 
-  DA.state = { evaluations: {}, evaluationHistory: {}, appeals: [], role: "analyst", conversations: {}, numbers: {}, checklists: [], importedAt: Date.now(), sidebar: "open" };
+  DA.state = { evaluations: {}, evaluationHistory: {}, jobs: {}, appeals: [], role: "analyst", conversations: {}, numbers: {}, checklists: [], importedAt: Date.now(), sidebar: "open" };
   DA.initState = function () {
     const saved = load();
     DA.stateMode = DA.mode || "local";
-    DA.state = { evaluations: {}, evaluationHistory: {}, appeals: [], role: saved?.role || "analyst", conversations: {}, numbers: {}, checklists: [], importedAt: Date.now(), sidebar: saved?.sidebar || "open" };
+    DA.state = { evaluations: {}, evaluationHistory: {}, jobs: {}, appeals: [], role: saved?.role || "analyst", conversations: {}, numbers: {}, checklists: [], importedAt: Date.now(), sidebar: saved?.sidebar || "open" };
     if (DA.mode === "server") return;
     window.DA_DEV.records.forEach((r, i) => {
       DA.state.conversations[r.conversation_id] = structuredClone(r);
@@ -274,9 +275,11 @@
       save();
     }
     DA.state.evaluationHistory = DA.state.evaluationHistory || {};
+    DA.state.jobs = DA.state.jobs || {};
     Object.values(DA.state.evaluations).forEach((ev) => {
       if (!ev) return;
       if (["queued", "running"].includes(ev.status)) {
+        ev.interrupted = true;
         ev.status = "failed";
         ev.total = null;
         ev.items.forEach((item) => {
@@ -335,6 +338,8 @@
   const historyContexts = new Map(), evaluationReads = new Map();
   let evaluationsRead = 0, appealsRead = 0;
   const polls = new Map();
+  const localWorkers = new Map(), jobMetadata = new Map();
+  let localSequence = 0;
   const time = (value) => typeof value === "number" ? value : value ? Date.parse(value) : null;
   const emit = (name) => window.dispatchEvent(new CustomEvent(name));
   const failure = (code, message) => new DA.ApiError(code, message, 0);
@@ -450,6 +455,19 @@
     DA.state.evaluations[ev.conversationId] = ev;
     return ev;
   }
+  /* Два экрана могут одновременно опрашивать одну оценку. Старый ответ чтения
+     не откатывает готовые шаги; явный retry отдельно сбрасывает состояние. */
+  function retainEvaluationProgress(incoming) {
+    const latest = DA.state.evaluations[incoming.conversationId];
+    const current = latest?.id === incoming.id ? latest : DA.state.evaluationHistory[incoming.id];
+    if (!current) return incoming;
+    const terminal = (ev) => ev.status === "done" || ev.status === "failed";
+    const completed = (ev) => ev.items.filter((item) => item.status === "done" || item.status === "failed").length;
+    if ((terminal(current) && !terminal(incoming)) || (current.status === "done" && incoming.status === "failed")
+      || (current.status === "running" && incoming.status === "queued")
+      || (current.status === "running" && incoming.status === "running" && completed(current) > completed(incoming))) return current;
+    return incoming;
+  }
   function updateEvaluationContexts(ev) {
     DA.state.evaluationHistory[ev.id] = ev;
     const latest = DA.state.evaluations[ev.conversationId];
@@ -472,7 +490,9 @@
     const raw = history.items?.[0];
     if (epoch.value !== revision || evaluationReads.get(cid) !== sequence || options?.signal?.aborted) return DA.state.evaluations[cid] || null;
     if (!raw) { delete DA.state.evaluations[cid]; return null; }
-    return saveEvaluation(raw, summaries.get(cid)?.lastEvaluation?.status === "stale");
+    const ev = retainEvaluationProgress(evaluation(raw, summaries.get(cid)?.lastEvaluation?.status === "stale"));
+    DA.state.evaluations[cid] = ev;
+    return ev;
   }
   async function evaluations(options) {
     if (!server()) return Object.values(DA.state.evaluations);
@@ -481,7 +501,7 @@
     const revision = epoch.value;
     const sequence = ++evaluationsRead;
     const latest = [...summaries.values()].filter((row) => row.lastEvaluation);
-    const loaded = await mapLimit(latest, async (row) => evaluation(await DA.api.getEvaluation(row.lastEvaluation.id, options), row.lastEvaluation.status === "stale"));
+    const loaded = (await mapLimit(latest, async (row) => evaluation(await DA.api.getEvaluation(row.lastEvaluation.id, options), row.lastEvaluation.status === "stale"))).map(retainEvaluationProgress);
     if (epoch.value === revision && sequence === evaluationsRead && !options?.signal?.aborted) DA.state.evaluations = Object.fromEntries(loaded.map((ev) => [ev.conversationId, ev]));
     return Object.values(DA.state.evaluations);
   }
@@ -625,7 +645,7 @@
       const raw = await DA.api.getEvaluation(id, { signal: opts.signal });
       const current = DA.state.evaluations[raw.conversationId];
       const latest = summaries.get(raw.conversationId)?.lastEvaluation;
-      const ev = revision !== epoch.value && current?.id === id ? current : evaluation(raw);
+      const ev = revision !== epoch.value && current?.id === id ? current : retainEvaluationProgress(evaluation(raw));
       if (revision === epoch.value && (!current || current.id === id || latest?.id === id)) {
         DA.state.evaluations[raw.conversationId] = ev;
         updateEvaluationContexts(ev);
@@ -638,10 +658,13 @@
   async function evaluate(cid, options) {
     ensureMode();
     const opts = options || {};
-    if (polls.has(cid)) return polls.get(cid);
+    const operationId = opts.evaluationId || cid;
+    if (polls.has(operationId)) return polls.get(operationId);
     const task = (async () => {
       await checklists();
-      const cl = DA.checklist(opts.checklistVersion) || DA.activeChecklist();
+      const requested = opts.checklistId ?? opts.checklistVersion;
+      const cl = requested == null ? DA.activeChecklist() : versionBy(requested);
+      if (!cl) throw failure("not_found", "Версия чек-листа не найдена");
       if (server()) {
         const started = await DA.api.startEvaluation({ conversationIds: [cid], checklistId: cl.id, reuse: opts.reuse ?? false }, { signal: opts.signal });
         epoch.value++;
@@ -650,41 +673,223 @@
         if (row) row.lastEvaluation = { id, status: "running" };
         return watchEvaluation(id, opts);
       }
-      const fresh = DA.freshEvaluation(cid);
-      if (!fresh) throw failure("evaluation_unavailable", "Оценка для этого транскрипта пока недоступна");
-      const answers = new Map(fresh.items.map((item) => [item.criterionId, item]));
+      const existing = opts.evaluationId && DA.state.evaluationHistory[opts.evaluationId];
+      const record = existing?.sourceConversation || DA.state.conversations[cid];
+      if (!record) throw failure("not_found", "Обращение не найдено");
+      const sample = DA.freshEvaluation(cid, record);
+      const answers = new Map((sample?.items || []).map((item) => [item.criterionId, item]));
       const previous = DA.state.evaluations[cid];
       if (previous) DA.state.evaluationHistory[previous.id] = structuredClone(previous);
-      fresh.id = "ev_local_" + Date.now() + "_" + cid;
-      fresh.checklistVersion = cl.version;
-      fresh.checklistId = cl.id;
+      const id = opts.evaluationId || "ev_local_" + Date.now() + "_" + ++localSequence;
+      const fresh = emptyEvaluation(id, cid, cl, record);
       fresh.status = "running";
-      fresh.items = cl.criteria.map((c) => ({ criterionId: c.id, evidence: [], ...answers.get(c.id), status: "pending", answer: null, appealId: null, original: null }));
-      fresh.total = null;
-      DA.state.evaluations[cid] = fresh;
+      fresh.startedAt = opts.resume && existing?.startedAt || new Date().toISOString();
+      if (opts.resume && existing) fresh.items = fresh.items.map((item) => {
+        const done = existing.items.find((entry) => entry.criterionId === item.criterionId && entry.status === "done");
+        return done ? structuredClone(done) : item;
+      });
+      if (!opts.evaluationId || !previous || previous.id === id) DA.state.evaluations[cid] = fresh;
       DA.rescore(fresh);
       const notify = () => { DA.state.evaluationHistory[fresh.id] = fresh; DA.save(); if (!opts.signal?.aborted) opts.onProgress?.(fresh); };
       notify();
       for (const item of fresh.items) {
+        if (item.status === "done") continue;
+        const criterion = DA.criterionById(cl, item.criterionId);
+        const reused = opts.reuse && reusableItem(cid, criterion, record, fresh.id);
+        if (reused) {
+          Object.assign(item, reused, { status: "done", reused: true, original: null, appealId: null, usage: zeroUsage() });
+          DA.rescore(fresh); notify(); continue;
+        }
+        const answer = answers.get(item.criterionId);
+        if (!answer || !DA.allowedAnswers(criterion).includes(answer.answer)) {
+          Object.assign(item, { status: "failed", explanation: sample ? "Оценка этого критерия сейчас недоступна. Попробуйте ещё раз позже" : "Оценка этого обращения сейчас недоступна" });
+          continue;
+        }
         item.status = "running";
         notify();
         await wait(450);
-        const answer = answers.get(item.criterionId), criterion = DA.criterionById(cl, item.criterionId);
-        if (!answer || !DA.allowedAnswers(criterion).includes(answer.answer)) Object.assign(item, { status: "failed", explanation: "Оценка этого критерия сейчас недоступна. Попробуйте ещё раз позже" });
-        else Object.assign(item, structuredClone(answer), { status: "done", appealId: null, original: null });
+        Object.assign(item, structuredClone(answer), { status: "done", reused: false, appealId: null, original: null });
         DA.rescore(fresh);
         notify();
       }
+      DA.rescore(fresh);
       fresh.status = fresh.items.some((item) => item.status === "failed") ? "failed" : "done";
       fresh.minutesAgo = 0;
       fresh.originalTotal = fresh.total;
+      fresh.finishedAt = new Date().toISOString();
+      fresh.durationMs = Date.now() - time(fresh.startedAt);
+      fresh.durationSec = fresh.durationMs / 1000;
+      fresh.stale = DA.transcriptKey(record.transcript) !== DA.transcriptKey(DA.state.conversations[cid].transcript);
       notify();
       emit("da:evaluations-changed");
       return fresh;
     })();
-    polls.set(cid, task);
+    polls.set(operationId, task);
     try { return await task; }
-    finally { if (polls.get(cid) === task) polls.delete(cid); }
+    finally { if (polls.get(operationId) === task) polls.delete(operationId); }
+  }
+  function zeroUsage() { return { inputTokens: 0, outputTokens: 0, costUsd: 0, calls: 0 }; }
+  function criterionContent(c) {
+    return JSON.stringify([c.title, c.description, c.type, c.naAllowed, c.naCondition || null, c.scale || null, c.flagTypes || null]);
+  }
+  function reusableItem(cid, criterion, record, excludedId) {
+    const key = DA.transcriptKey(record.transcript);
+    for (const ev of Object.values(DA.state.evaluationHistory).reverse()) {
+      if (ev.id === excludedId || ev.conversationId !== cid || ev.transcriptKey !== key) continue;
+      const previousCriterion = DA.checklist(ev.checklistVersion)?.criteria.find((c) => c.id === criterion.id);
+      const item = ev.items.find((entry) => entry.criterionId === criterion.id && entry.status === "done");
+      if (!item || !previousCriterion || criterionContent(previousCriterion) !== criterionContent(criterion)) continue;
+      const answer = item.original?.answer ?? item.answer;
+      if (DA.allowedAnswers(criterion).includes(answer)) return { ...structuredClone(item), answer };
+    }
+    return null;
+  }
+  function emptyEvaluation(id, cid, cl, record) {
+    return { id, conversationId: cid, checklistId: cl.id, checklistVersion: cl.version,
+      status: "queued", total: null, originalTotal: null, sections: [], grossFlagged: false,
+      minutesAgo: 0, durationSec: null, startedAt: null, finishedAt: null, durationMs: null, usage: zeroUsage(),
+      transcriptHash: record?.transcriptHash, transcriptKey: record ? DA.transcriptKey(record.transcript) : null,
+      sourceConversation: !server() && record ? structuredClone(record) : undefined,
+      items: cl.criteria.map((c) => ({ criterionId: c.id, status: "pending", answer: null, explanation: null,
+        naReason: null, evidence: [], checkedRange: null, needsReview: false, original: null, appealId: null,
+        effectiveWeight: 0, points: 0, fraction: null, reused: false, usage: null })) };
+  }
+  function jobSnapshot(job, evaluationsById) {
+    const items = job.items.map((item) => {
+      const ev = evaluationsById?.get(item.evaluationId) || DA.state.evaluationHistory[item.evaluationId]
+        || (DA.state.evaluations[item.conversationId]?.id === item.evaluationId ? DA.state.evaluations[item.conversationId] : null);
+      return { ...item, total: item.status === "done" ? ev?.total ?? null : null, evaluation: ev || null,
+        error: item.status === "failed" ? ev?.items.find((entry) => entry.status === "failed")?.explanation || "Оценка этого обращения сейчас недоступна" : null };
+    });
+    const finished = items.map((item) => time(item.evaluation?.finishedAt)).filter((value) => value != null);
+    const finishedAt = job.status === "running" ? null : job.finishedAt || (finished.length ? new Date(Math.max(...finished)).toISOString() : null);
+    const elapsed = Math.max(0, ((time(finishedAt) || Date.now()) - time(job.startedAt)) / 1000);
+    return { ...job, items, finishedAt, durationSec: elapsed,
+      checklistVersion: job.checklistVersion || items.find((item) => item.evaluation)?.evaluation.checklistVersion,
+      usage: job.usage || zeroUsage() };
+  }
+  function syncLocalJob(job) {
+    job.items.forEach((item) => {
+      const ev = DA.state.evaluationHistory[item.evaluationId];
+      if (ev && !ev.interrupted) item.status = ev.status;
+    });
+    job.done = job.items.filter((item) => item.status === "done").length;
+    job.failed = job.items.filter((item) => item.status === "failed").length;
+    if (job.done + job.failed === job.total) {
+      job.status = job.failed ? "failed" : "done";
+      job.finishedAt = job.finishedAt || new Date().toISOString();
+    }
+    DA.save();
+  }
+  function runLocalBatch(job) {
+    if (localWorkers.has(job.id) || job.status !== "running") return;
+    syncLocalJob(job);
+    if (job.status !== "running") return;
+    const waiting = job.items.filter((item) => ["queued", "running"].includes(item.status));
+    let next = 0;
+    const work = Promise.all(Array.from({ length: Math.min(2, waiting.length) }, async () => {
+      while (next < waiting.length) {
+        const item = waiting[next++];
+        item.status = "running";
+        try {
+          await evaluate(item.conversationId, { checklistVersion: job.checklistVersion, reuse: job.reuse,
+            evaluationId: item.evaluationId, resume: true, onProgress: () => syncLocalJob(job) });
+        } catch (error) {
+          const ev = DA.state.evaluationHistory[item.evaluationId];
+          if (ev) {
+            ev.status = "failed"; ev.total = null; ev.interrupted = false;
+            ev.finishedAt = new Date().toISOString();
+            ev.items.forEach((entry) => { if (entry.status !== "done") { entry.status = "failed"; entry.explanation = error.message || "Оценка этого обращения сейчас недоступна"; } });
+          }
+          item.status = "failed";
+        }
+        syncLocalJob(job);
+        emit("da:evaluations-changed");
+      }
+    })).finally(() => { localWorkers.delete(job.id); syncLocalJob(job); });
+    localWorkers.set(job.id, work);
+  }
+  async function startBatch(conversationIds, options) {
+    ensureMode();
+    const opts = options || {}, ids = [...new Set(conversationIds)];
+    if (!ids.length) throw failure("invalid_request", "Выберите хотя бы одно обращение");
+    await checklists();
+    const requested = opts.checklistId ?? opts.checklistVersion;
+    const cl = requested == null ? DA.activeChecklist() : versionBy(requested);
+    if (!cl) throw failure("not_found", "Версия чек-листа не найдена");
+    let started;
+    if (server()) started = await DA.api.startEvaluation({ conversationIds: ids, checklistId: cl.id, reuse: opts.reuse ?? false }, { signal: opts.signal });
+    else {
+      if (ids.some((id) => !DA.state.conversations[id])) throw failure("not_found", "Одно из выбранных обращений не найдено");
+      const suffix = Date.now() + "_" + ++localSequence;
+      started = { jobId: "job_local_" + suffix, evaluationIds: Object.fromEntries(ids.map((id, index) => [id, "ev_local_" + suffix + "_" + index])) };
+    }
+    epoch.value++;
+    ids.forEach((cid) => {
+      const current = DA.state.evaluations[cid];
+      if (current) DA.state.evaluationHistory[current.id] = current;
+      const ev = emptyEvaluation(started.evaluationIds[cid], cid, cl, DA.state.conversations[cid]);
+      DA.state.evaluations[cid] = ev;
+      DA.state.evaluationHistory[ev.id] = ev;
+      const row = summaries.get(cid);
+      if (row) row.lastEvaluation = { id: ev.id, status: "queued" };
+    });
+    const job = { id: started.jobId, status: "running", total: ids.length, done: 0, failed: 0,
+      startedAt: new Date().toISOString(), finishedAt: null, checklistVersion: cl.version, reuse: opts.reuse ?? false,
+      usage: zeroUsage(), items: ids.map((cid) => ({ conversationId: cid, evaluationId: started.evaluationIds[cid], status: "queued" })) };
+    jobMetadata.set(job.id, { checklistVersion: cl.version, reuse: job.reuse });
+    if (!server()) {
+      DA.state.jobs[job.id] = job;
+      DA.save();
+      runLocalBatch(job);
+    }
+    emit("da:evaluations-changed");
+    return { ...started, job: jobSnapshot(job) };
+  }
+  async function getJob(id, options) {
+    ensureMode();
+    if (options?.signal?.aborted) throw new DOMException("Действие прервано", "AbortError");
+    if (!server()) {
+      const job = DA.state.jobs[id];
+      if (!job) throw failure("not_found", "Пакет оценок не найден");
+      runLocalBatch(job);
+      syncLocalJob(job);
+      return jobSnapshot(job);
+    }
+    await checklists();
+    const revision = epoch.value;
+    const raw = await DA.api.getJob(id, options);
+    const loaded = (await mapLimit(raw.items, async (item) => {
+      const current = DA.state.evaluations[item.conversationId];
+      const cached = current?.id === item.evaluationId ? current : DA.state.evaluationHistory[item.evaluationId];
+      const ev = cached && item.status !== "running" && cached.status === item.status ? evaluation(cached) : evaluation(await DA.api.getEvaluation(item.evaluationId, options));
+      return [item.evaluationId, ev];
+    })).map(([evaluationId, ev]) => [evaluationId, retainEvaluationProgress(ev)]);
+    if (epoch.value === revision && !options?.signal?.aborted) loaded.forEach(([, ev]) => {
+      DA.state.evaluationHistory[ev.id] = ev;
+      const current = DA.state.evaluations[ev.conversationId];
+      const latest = summaries.get(ev.conversationId)?.lastEvaluation;
+      if (!current || current.id === ev.id || latest?.id === ev.id) {
+        DA.state.evaluations[ev.conversationId] = ev;
+        updateEvaluationContexts(ev);
+      }
+    });
+    return jobSnapshot({ ...jobMetadata.get(id), ...raw }, new Map(loaded));
+  }
+  async function watchJob(id, options) {
+    const opts = options || {};
+    while (true) {
+      const job = await getJob(id, { signal: opts.signal });
+      opts.onProgress?.(job);
+      if (job.status === "done" || job.status === "failed") return job;
+      await wait(1000, opts.signal);
+    }
+  }
+  async function retryBatch(id, options) {
+    const job = await getJob(id, { signal: options?.signal });
+    const ids = job.items.filter((item) => item.status === "failed").map((item) => item.conversationId);
+    if (!ids.length) throw failure("nothing_to_retry", "В этом пакете нет обращений с ошибкой");
+    return startBatch(ids, { checklistVersion: job.checklistVersion, ...options, reuse: options?.reuse ?? true });
   }
   async function retryCriterion(id, criterionId, options) {
     if (!server()) {
@@ -719,19 +924,59 @@
   async function evaluationById(id, options) {
     return server() ? evaluation(await DA.api.getEvaluation(id, options)) : DA.state.evaluationHistory[id] || null;
   }
+  function versionBy(value) { return DA.state.checklists.find((cl) => cl.id === value || cl.version === value); }
+  async function latestEvaluations(options) {
+    const opts = options || {};
+    await checklists();
+    const records = await conversations();
+    const version = opts.checklistId || opts.checklistVersion;
+    const cl = version != null ? versionBy(version) : null;
+    if (version != null && !cl) throw failure("not_found", "Версия чек-листа не найдена");
+    const candidates = records.filter((conv) => !opts.groupId || (conv.datasetGroupId || conv.groupId || (window.DA_DEV.records.some((r) => r.conversation_id === conv.conversation_id) ? "DEV" : "UPLOAD")) === opts.groupId);
+    const loaded = await mapLimit(candidates, async (conv) => {
+      const all = await history(conv.conversation_id, { signal: opts.signal });
+      return all.find((ev) => {
+        if (ev.status !== "done" || (cl && ev.checklistVersion !== cl.version)) return false;
+        if (ev.transcriptHash && conv.transcriptHash) return ev.transcriptHash === conv.transcriptHash;
+        if (ev.transcriptKey) return ev.transcriptKey === DA.transcriptKey(conv.transcript);
+        return !ev.stale;
+      });
+    });
+    return loaded.filter(Boolean);
+  }
+  async function diffChecklists(value, against) {
+    const target = versionBy(value), previous = versionBy(against);
+    if (!target || !previous) throw failure("not_found", "Версия чек-листа не найдена");
+    if (server()) return DA.api.diffChecklists(target.id, previous.id);
+    const before = new Map(previous.criteria.map((c) => [c.id, c]));
+    const fields = ["title", "description", "type", "weight", "naAllowed", "naCondition", "scale", "flagTypes", "sectionId", "order"];
+    const result = { added: [], removed: previous.criteria.filter((c) => !target.criteria.some((item) => item.id === c.id)).map((c) => c.id), changed: [], unchanged: [] };
+    target.criteria.forEach((c) => {
+      const old = before.get(c.id);
+      if (!old) { result.added.push(c.id); return; }
+      const changed = fields.filter((field) => JSON.stringify(c[field] ?? null) !== JSON.stringify(old[field] ?? null));
+      if (changed.length) result.changed.push({ criterionId: c.id, fields: changed });
+      else result.unchanged.push(c.id);
+    });
+    return result;
+  }
   async function compareChecklists(value, against, filters) {
-    const target = DA.state.checklists.find((cl) => cl.id === value || cl.version === value);
-    const previous = DA.state.checklists.find((cl) => cl.id === against || cl.version === against);
+    const target = versionBy(value), previous = versionBy(against);
     if (!target || !previous) throw failure("not_found", "Версия чек-листа не найдена");
     if (server()) return DA.api.compareChecklists(target.id, previous.id, filters);
-    const items = Object.values(DA.state.conversations).map((conv) => {
-      const all = Object.values(DA.state.evaluationHistory).filter((ev) => ev.conversationId === conv.conversation_id && ev.status === "done" && !ev.stale && (!ev.transcriptKey || ev.transcriptKey === DA.transcriptKey(conv.transcript))).reverse();
-      const before = all.find((ev) => ev.checklistVersion === previous.version), after = all.find((ev) => ev.checklistVersion === target.version);
-      return { conversationId: conv.conversation_id, before: before?.total ?? null, after: after?.total ?? null,
-        changed: before && after ? after.items.filter((item) => before.items.find((old) => old.criterionId === item.criterionId)?.answer !== item.answer).map((item) => ({ criterionId: item.criterionId, before: before.items.find((old) => old.criterionId === item.criterionId)?.answer ?? null, after: item.answer })) : [] };
+    const [oldEvals, newEvals] = await Promise.all([latestEvaluations({ ...filters, checklistVersion: previous.version }), latestEvaluations({ ...filters, checklistVersion: target.version })]);
+    const oldById = new Map(oldEvals.map((ev) => [ev.conversationId, ev])), newById = new Map(newEvals.map((ev) => [ev.conversationId, ev]));
+    const items = [...new Set([...oldById.keys(), ...newById.keys()])].sort().map((cid) => {
+      const before = oldById.get(cid), after = newById.get(cid);
+      const oldAnswers = new Map((before?.items || []).map((item) => [item.criterionId, item.answer]));
+      const newAnswers = new Map((after?.items || []).map((item) => [item.criterionId, item.answer]));
+      const ids = [...new Set([...newAnswers.keys(), ...oldAnswers.keys()])];
+      return { conversationId: cid, before: before?.total ?? null, after: after?.total ?? null,
+        changed: before && after ? ids.filter((id) => (oldAnswers.get(id) ?? null) !== (newAnswers.get(id) ?? null)).map((id) => ({ criterionId: id, before: oldAnswers.get(id) ?? null, after: newAnswers.get(id) ?? null })) : [] };
     });
     const paired = items.filter((item) => item.before != null && item.after != null);
-    return { items, summary: { total: items.length, changedCount: paired.filter((item) => item.before !== item.after).length, avgDelta: paired.length ? paired.reduce((sum, item) => sum + item.after - item.before, 0) / paired.length : null } };
+    const mean = paired.length ? paired.reduce((sum, item) => sum + item.after - item.before, 0) / paired.length : null;
+    return { items, summary: { total: items.length, changedCount: paired.filter((item) => item.before !== item.after).length, avgDelta: mean == null ? null : Math.sign(mean) * Math.round((Math.abs(mean) + Number.EPSILON) * 100) / 100 } };
   }
   async function stats(filters) {
     if (server()) return DA.api.getStats(filters);
@@ -771,7 +1016,8 @@
     return DA.state;
   }
   DA.data = { prepare, conversations, checklists, evaluation: getEvaluation, evaluations, appeals, appealContext, cardContext,
-    evaluate, watchEvaluation, retryCriterion, history, evaluationById, compareChecklists, createAppeal, decideAppeal, saveChecklist, activateChecklist, stats,
+    evaluate, watchEvaluation, retryCriterion, startBatch, getJob, watchJob, retryBatch,
+    history, evaluationById, latestEvaluations, diffChecklists, compareChecklists, createAppeal, decideAppeal, saveChecklist, activateChecklist, stats,
     invalidate, refresh: () => prepare("registry", { refresh: true }),
     normalizeConversation: conversation, normalizeEvaluation: evaluation };
 })();

@@ -80,7 +80,9 @@
     [/^\/?$/, "registry", (m, query) => DA.views.registry(main(), { query })],
     [/^\/c\/([^/]+)$/, "card", (m, query) => DA.views.card(main(), { id: decodeURIComponent(m[1]), query })],
     [/^\/appeals$/, "appeals", (m, query) => DA.views.appeals(main(), { query })],
-    [/^\/checklists$/, "checklists", (m, query) => DA.views.checklists(main(), { query })],
+    [/^\/checklists$/, "checklists", (m, query) => DA.views.checklistView(main(), { query })],
+    [/^\/checklists\/edit$/, "checklists", (m, query) => DA.views.checklistEdit(main(), { query })],
+    [/^\/checklists\/apply\/(\d+)$/, "checklists", (m, query) => DA.views.apply(main(), { version: Number(m[1]), query })],
     [/^\/insights$/, "insights", (m, query) => DA.views.insights(main(), { query })],
     [/^\/lab\/accuracy$/, "accuracy", () => DA.views.accuracy(main())],
     [/^\/review$/, "review", (m, query) => DA.views.review(main(), { query })],
@@ -161,6 +163,7 @@
     DA.initState();
     DA.side = sidebar();
     document.body.prepend(DA.side.mobileBar, DA.side.el, DA.side.scrim);
+    DA.bulk?.restore();
     ready = true;
     window.addEventListener("hashchange", DA.route);
     await DA.route();

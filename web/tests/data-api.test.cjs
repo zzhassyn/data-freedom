@@ -9,11 +9,12 @@ const reply = (body, status = 200) => new Response(JSON.stringify(body), { statu
 const turn = { idx: 0, timestamp: '00:01', tSec: 0, speaker: 'operator', text: 'Здравствуйте' };
 const source = { id: 'fixture', number: 12, transcriptHash: 'original', startedAt: '2026-11-01T10:00:00Z', importedAt: '2026-11-01T10:00:00Z', channel: 'agent chat', language: 'RU', audioUrl: null, transcript: [turn] };
 
-function environment(fetcher) {
+function environment(fetcher, savedState) {
   const storage = new Map(), events = new EventTarget();
+  if (savedState) storage.set('da.proto.v2', savedState);
   const context = { console, fetch: fetcher || (() => Promise.resolve(reply({ ok: false }))),
     URL, URLSearchParams, AbortController, DOMException, TextDecoder, structuredClone, Intl,
-    setTimeout: (fn, ms) => setTimeout(fn, [450, 700].includes(ms) ? 0 : ms), clearTimeout,
+    setTimeout: (fn, ms) => setTimeout(fn, [450, 700, 1000].includes(ms) ? 0 : ms), clearTimeout,
     CustomEvent: class extends Event { constructor(type, opts) { super(type); this.detail = opts?.detail; } },
     dispatchEvent: events.dispatchEvent.bind(events), addEventListener: events.addEventListener.bind(events),
     removeEventListener: events.removeEventListener.bind(events),
@@ -299,4 +300,183 @@ test('invalidate followed by source refresh cannot be undone by an older poll re
   assert.equal(DA.state.evaluations.fixture.id, latest.id);
   assert.equal(DA.state.evaluations.fixture.total, 75);
   assert.equal(DA.state.conversations.fixture.transcript[0].text, 'Новая версия реплики');
+});
+
+test('server batch sends one POST and returns its accepted identity before any polling request', async () => {
+  const { DA, context, ev } = fixtureServer();
+  let posts = 0, jobGets = 0, submitted;
+  const savedFetch = context.fetch;
+  context.fetch = (url, opts) => {
+    if (url === '/api/evaluations') {
+      posts++; submitted = JSON.parse(opts.body);
+      return Promise.resolve(reply({ jobId: 'job_many', evaluationIds: { fixture: 'ev_many_1', extra: 'ev_many_2' } }, 202));
+    }
+    if (url === '/api/jobs/job_many') { jobGets++; return Promise.reject(new TypeError('offline')); }
+    return savedFetch(url, opts);
+  };
+  const started = await DA.data.startBatch(['fixture', 'extra', 'fixture'], { checklistVersion: 1, reuse: true });
+  assert.equal(posts, 1);
+  assert.equal(jobGets, 0);
+  assert.equal(started.jobId, 'job_many');
+  assert.deepEqual(submitted.conversationIds, ['fixture', 'extra']);
+  assert.equal(submitted.reuse, true);
+  assert.equal(started.job.items[0].status, 'queued');
+  await assert.rejects(DA.data.getJob(started.jobId), (e) => e.code === 'network');
+  const done = { ...ev, id: 'ev_many_1', usage: { inputTokens: 0, outputTokens: 0, calls: 0, costUsd: 0 }, finishedAt: '2026-11-01T10:02:00Z' };
+  const failed = { ...ev, id: 'ev_many_2', conversationId: 'extra', status: 'failed', total: null, finishedAt: '2026-11-01T10:02:02Z', items: [{ criterionId: 'contact', status: 'failed', explanation: 'Оценка этого обращения сейчас недоступна' }] };
+  context.fetch = (url, opts) => {
+    if (url === '/api/jobs/job_many') return Promise.resolve(reply({ id: 'job_many', status: 'failed', total: 2, done: 1, failed: 1, startedAt: '2026-11-01T10:02:00Z', usage: done.usage,
+      items: [{ conversationId: 'fixture', evaluationId: done.id, status: 'done' }, { conversationId: 'extra', evaluationId: failed.id, status: 'failed' }] }));
+    if (url === '/api/evaluations/' + done.id) return Promise.resolve(reply(done));
+    if (url === '/api/evaluations/' + failed.id) return Promise.resolve(reply(failed));
+    return savedFetch(url, opts);
+  };
+  const job = await DA.data.watchJob(started.jobId);
+  assert.equal(job.done, 1); assert.equal(job.failed, 1);
+  assert.equal(job.durationSec, 2);
+  assert.equal(job.items[1].total, null);
+  assert.equal(job.items[1].error, 'Оценка этого обращения сейчас недоступна');
+  assert.equal(job.usage.calls, 0);
+  assert.equal(DA.state.evaluations.fixture.id, done.id);
+  assert.equal(posts, 1);
+});
+
+test('local batch evaluates only known fixtures, reports unknown records and retries only failures', async () => {
+  let requests = 0;
+  const { DA } = environment(async () => { requests++; throw new TypeError('unexpected network'); });
+  DA.upsertConversations([{ conversation_id: 'unknown', channel: source.channel, language: source.language, transcript: [turn], audio_url: null }]);
+  const started = await DA.data.startBatch(['fixture', 'unknown'], { checklistVersion: 1 });
+  const finished = await DA.data.watchJob(started.jobId);
+  assert.equal(finished.done, 1);
+  assert.equal(finished.failed, 1);
+  assert.equal(finished.status, 'failed');
+  assert.equal(finished.items.find((item) => item.conversationId === 'fixture').total, 100);
+  assert.equal(finished.items.find((item) => item.conversationId === 'unknown').error, 'Оценка этого обращения сейчас недоступна');
+  const completedId = DA.state.evaluations.fixture.id;
+  const retried = await DA.data.retryBatch(started.jobId);
+  assert.deepEqual(Object.keys(retried.evaluationIds), ['unknown']);
+  const final = await DA.data.watchJob(retried.jobId);
+  assert.equal(final.failed, 1);
+  assert.equal(DA.state.evaluations.fixture.id, completedId);
+  assert.equal(requests, 0);
+});
+
+test('local weight-only batch reuses model answers rather than reviewer overrides', async () => {
+  const { DA } = environment();
+  const appeal = await DA.data.createAppeal('fixture', 'contact', 'Проверьте приветствие', 'no');
+  await DA.data.decideAppeal(appeal, 'change', 'no', 'Приветствие отсутствует');
+  const draft = structuredClone(DA.activeChecklist());
+  draft.criteria.find((c) => c.id === 'contact').weight = 20;
+  const saved = await DA.data.saveChecklist(draft);
+  const diff = await DA.data.diffChecklists(saved.version, 1);
+  assert.deepEqual(json(diff.changed), [{ criterionId: 'contact', fields: ['weight'] }]);
+  const started = await DA.data.startBatch(['fixture'], { checklistVersion: saved.version, reuse: true });
+  const job = await DA.data.watchJob(started.jobId);
+  const ev = job.items[0].evaluation;
+  assert.equal(ev.status, 'done');
+  assert.ok(ev.items.every((item) => item.reused));
+  assert.equal(ev.items.find((item) => item.criterionId === 'contact').answer, 'yes');
+  assert.equal(ev.items.find((item) => item.criterionId === 'contact').original, null);
+  assert.equal(job.usage.calls, 0);
+});
+
+test('local batch resumes the same evaluation after reload and keeps already completed criteria', async () => {
+  const first = environment();
+  const ev = structuredClone(first.DA.state.evaluations.fixture);
+  ev.id = 'ev_resumable'; ev.status = 'running'; ev.startedAt = new Date().toISOString(); ev.total = null;
+  ev.items[0].explanation = 'Сохранённый ответ до перезагрузки';
+  ev.items.slice(1).forEach((item) => { item.status = 'pending'; item.answer = null; });
+  first.DA.state.evaluations.fixture = ev;
+  first.DA.state.evaluationHistory[ev.id] = ev;
+  first.DA.state.jobs.job_resumable = { id: 'job_resumable', status: 'running', total: 1, done: 0, failed: 0,
+    startedAt: ev.startedAt, checklistVersion: 1, reuse: false, items: [{ conversationId: 'fixture', evaluationId: ev.id, status: 'running' }] };
+  first.DA.save();
+  const restored = environment(undefined, first.storage.get('da.proto.v2'));
+  const job = await restored.DA.data.watchJob('job_resumable');
+  assert.equal(job.status, 'done');
+  assert.equal(job.items[0].evaluationId, ev.id);
+  assert.equal(job.items[0].evaluation.items[0].explanation, 'Сохранённый ответ до перезагрузки');
+  assert.ok(job.items[0].evaluation.items.every((item) => item.status === 'done'));
+});
+
+test('local compare uses completed current-transcript union, keeps zero scores and includes removed answers', async () => {
+  const { DA } = environment();
+  for (const cid of ['before-only', 'after-only', 'never-evaluated']) DA.upsertConversations([{ conversation_id: cid, channel: source.channel, language: source.language, transcript: [turn], audio_url: null }]);
+  const original = structuredClone(DA.state.evaluations.fixture);
+  const draft = structuredClone(DA.activeChecklist());
+  draft.criteria = draft.criteria.filter((c) => c.id !== 'closing');
+  const saved = await DA.data.saveChecklist(draft);
+  await DA.data.evaluate('fixture', { checklistVersion: saved.version, reuse: true });
+  DA.state.evaluationHistory.ev_before_only = { ...structuredClone(original), id: 'ev_before_only', conversationId: 'before-only', total: 0 };
+  DA.state.evaluationHistory.ev_after_only = { ...structuredClone(original), id: 'ev_after_only', conversationId: 'after-only', checklistVersion: saved.version, total: 0 };
+  DA.state.evaluationHistory.ev_later_failure = { ...structuredClone(original), id: 'ev_later_failure', checklistVersion: saved.version, status: 'failed', total: null };
+  const compared = await DA.data.compareChecklists(saved.version, 1);
+  assert.equal(compared.items.length, 3);
+  assert.equal(compared.items.find((item) => item.conversationId === 'before-only').before, 0);
+  assert.equal(compared.items.find((item) => item.conversationId === 'before-only').after, null);
+  assert.equal(compared.items.find((item) => item.conversationId === 'after-only').before, null);
+  assert.equal(compared.items.find((item) => item.conversationId === 'after-only').after, 0);
+  assert.deepEqual(json(compared.items.find((item) => item.conversationId === 'fixture').changed), [{ criterionId: 'closing', before: 'yes', after: null }]);
+  assert.equal(compared.summary.avgDelta, 0);
+  DA.state.conversations.fixture.transcript = [{ ...turn, text: 'Изменённый разговор' }];
+  const current = await DA.data.compareChecklists(saved.version, 1);
+  assert.equal(current.items.length, 2);
+  assert.equal(current.summary.avgDelta, null);
+});
+
+test('aborting a batch watcher leaves the local job running and allows reconnecting', async () => {
+  const { DA } = environment();
+  const started = await DA.data.startBatch(['fixture']);
+  const controller = new AbortController();
+  await assert.rejects(DA.data.watchJob(started.jobId, { signal: controller.signal, onProgress: () => controller.abort() }), (e) => e.name === 'AbortError');
+  const finished = await DA.data.watchJob(started.jobId);
+  assert.equal(finished.status, 'done');
+  assert.equal(finished.items[0].evaluationId, started.evaluationIds.fixture);
+});
+
+test('an older batch read cannot regress a completed card watcher for the same evaluation', async () => {
+  const { DA, ev } = fixtureServer();
+  await DA.data.prepare('registry', { refresh: true });
+  const running = { ...ev, status: 'running', total: null, finishedAt: null };
+  DA.state.evaluations.fixture = DA.data.normalizeEvaluation(running);
+  let release, first = true;
+  DA.api.getJob = async () => ({ id: 'job_race', status: 'running', total: 1, done: 0, failed: 0,
+    startedAt: '2026-11-01T10:00:00Z', items: [{ conversationId: 'fixture', evaluationId: ev.id, status: 'running' }] });
+  DA.api.getEvaluation = () => first ? (first = false, new Promise((resolve) => { release = resolve; })) : Promise.resolve(ev);
+  const loading = DA.data.getJob('job_race');
+  while (!release) await new Promise((resolve) => setImmediate(resolve));
+  await DA.data.watchEvaluation(ev.id);
+  release(running);
+  await loading;
+  assert.equal(DA.state.evaluations.fixture.status, 'done');
+  assert.equal(DA.state.evaluations.fixture.total, 93.75);
+  DA.api.retryCriterion = async () => running;
+  DA.api.getEvaluation = async () => { assert.equal(DA.state.evaluations.fixture.status, 'running'); return ev; };
+  const retried = await DA.data.retryCriterion(ev.id, 'contact');
+  assert.equal(retried.status, 'done');
+  assert.equal(DA.state.evaluations.fixture.total, 93.75);
+});
+
+test('a multi-item job keeps newer card progress while another evaluation read is pending', async () => {
+  const { DA, ev } = fixtureServer();
+  await DA.data.prepare('registry', { refresh: true });
+  const running = { ...ev, status: 'running', total: null, finishedAt: null };
+  const other = { ...running, id: 'ev_other', conversationId: 'other' };
+  DA.state.evaluations.fixture = DA.data.normalizeEvaluation(running);
+  let release, first = true;
+  DA.api.getJob = async () => ({ id: 'job_race_many', status: 'running', total: 2, done: 0, failed: 0,
+    startedAt: '2026-11-01T10:00:00Z', items: [
+      { conversationId: 'fixture', evaluationId: ev.id, status: 'running' },
+      { conversationId: 'other', evaluationId: other.id, status: 'running' }
+    ] });
+  DA.api.getEvaluation = async (id) => id === other.id ? new Promise((resolve) => { release = resolve; })
+    : first ? (first = false, running) : ev;
+  const loading = DA.data.getJob('job_race_many');
+  while (!release) await new Promise((resolve) => setImmediate(resolve));
+  await DA.data.watchEvaluation(ev.id);
+  release(other);
+  const job = await loading;
+  assert.equal(DA.state.evaluations.fixture.status, 'done');
+  assert.equal(DA.state.evaluations.fixture.total, 93.75);
+  assert.equal(job.items[0].evaluation.status, 'done');
 });
