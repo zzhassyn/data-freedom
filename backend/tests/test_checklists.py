@@ -58,14 +58,14 @@ def test_new_version_activation_diff_and_original_immutable(client):
     assert diff["added"] == diff["removed"] == []
     assert diff["changed"] == [{"criterionId": "closing", "fields": ["description", "weight"]}]
     assert len(diff["unchanged"]) == 7
-    assert client.post("/api/checklists/cl_2/activate").json()["isActive"] is True
+    assert client.post("/api/checklists/cl_2/activate", json={}).json()["isActive"] is True
     assert client.get("/api/checklists/active").json()["id"] == "cl_2"
     listing = client.get("/api/checklists").json()["items"]
     assert len(listing) == 2 and sum(c["isActive"] for c in listing) == 1
     assert all(c["criteriaCount"] == 8 and c["evaluationsCount"] == 0 for c in listing)
-    assert client.post("/api/checklists/cl_1/activate").status_code == 200
+    assert client.post("/api/checklists/cl_1/activate", json={}).status_code == 200
     assert client.get("/api/checklists/active").json()["id"] == "cl_1"
-    assert client.post("/api/checklists/cl_2/activate").status_code == 200
+    assert client.post("/api/checklists/cl_2/activate", json={}).status_code == 200
     assert client.get("/api/checklists/active").json()["id"] == "cl_2"
 
 

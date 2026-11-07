@@ -4,6 +4,7 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import FastAPI, Request
@@ -23,6 +24,33 @@ logger = logging.getLogger(__name__)
 
 def error_response(code, message, status):
     return JSONResponse({'error': {'code': code, 'message': message}}, status_code=status)
+
+
+def origin_parts(value):
+    try:
+        if not value or any(c.isspace() or ord(c) < 32 for c in value):
+            return None
+        url = urlsplit(value)
+        if (url.scheme not in {'http', 'https'} or not url.hostname or url.username is not None
+                or url.password is not None or url.path or url.query or url.fragment):
+            return None
+        return url.scheme, url.hostname.lower(), url.port or (443 if url.scheme == 'https' else 80)
+    except ValueError:
+        return None
+
+
+def trusted_request_origin(request):
+    origins = request.headers.getlist('origin')
+    sites = request.headers.getlist('sec-fetch-site')
+    if len(origins) > 1 or len(sites) > 1:
+        return False
+    if sites and sites[0] not in {'same-origin', 'same-site', 'cross-site', 'none'}:
+        return False
+    if origins:
+        origin = origin_parts(origins[0])
+        own = origin_parts(str(request.base_url).rstrip('/'))
+        return origin is not None and (origin == own or (origin[0] == 'http' and origin[1] in {'localhost', '127.0.0.1'}))
+    return not sites or sites[0] == 'same-origin'
 
 
 def create_app(settings=None):
@@ -64,6 +92,18 @@ def create_app(settings=None):
                     return error_response('too_large', 'Файл превышает 20 МБ. Разделите набор на несколько файлов', 413)
                 parts.append(part)
             request._body = b''.join(parts)
+        return await call_next(request)
+
+    # Registered after the size limiter so rejected requests never reach body parsing.
+    @application.middleware('http')
+    async def protect_mutations(request, call_next):
+        if request.method not in {'GET', 'HEAD', 'OPTIONS'}:
+            if not trusted_request_origin(request):
+                return error_response('forbidden_origin', 'Запрос отклонён: чужой источник', 403)
+            expected = 'text/csv' if request.method == 'POST' and request.url.path.rstrip('/') == '/api/gold' else 'application/json'
+            types = request.headers.getlist('content-type')
+            if len(types) != 1 or types[0].split(';', 1)[0].strip().lower() != expected:
+                return error_response('unsupported_media_type', f'Требуется Content-Type: {expected}', 415)
         return await call_next(request)
 
     @application.exception_handler(ApiError)

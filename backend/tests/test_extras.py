@@ -107,7 +107,7 @@ def test_coaching_second_opinion_and_appeal_invalidation(seeded_client, monkeypa
         "evaluationId": evaluation["id"], "criterionId": "closing",
         "comment": "Клиент подтвердил решение вопроса, прощание присутствует.", "proposedAnswer": "yes",
     }).json()
-    opinion = client.post(f"/api/appeals/{appeal['id']}/second-opinion")
+    opinion = client.post(f"/api/appeals/{appeal['id']}/second-opinion", json={})
     assert opinion.status_code == 200
     assert set(opinion.json()) == {"answer", "agreesWithAppeal", "explanation", "evidence"}
     assert client.get(f"/api/appeals/{appeal['id']}").json()["secondOpinion"] == opinion.json()

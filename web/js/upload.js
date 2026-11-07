@@ -106,8 +106,7 @@
 
     /* Наличие сервера проверяется при каждом открытии окна, максимум две секунды. */
     const initialization = (async () => {
-      try { backend = (await request("/api/health", {}, 2000)).ok === true; }
-      catch (e) { backend = false; }
+      backend = await DA.checkBackend();
       if (backend) {
         try { source = await request("/api/source"); draftGroup = source.groupId; }
         catch (e) { sourceError = CRM_ERROR; }
@@ -196,7 +195,7 @@
       if (backend) {
         const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 135000);
         try {
-          const res = await fetch("/api/source/sync", { method: "POST", headers: { Accept: "application/x-ndjson" }, signal: ctrl.signal });
+          const res = await fetch("/api/source/sync", { method: "POST", headers: { Accept: "application/x-ndjson", "Content-Type": "application/json" }, body: "{}", signal: ctrl.signal });
           if (!res.ok || !res.body) throw new Error("sync_failed");
           const reader = res.body.getReader(), decoder = new TextDecoder();
           let pending = "";

@@ -12,7 +12,7 @@
     const target = open ? a.proposedAnswer : a.status === "changed" ? a.decision.newAnswer : null;
     const status = open ? `На рассмотрении, подана ${DA.fmt.ago(Math.round((Date.now() - a.createdAt) / 60000))}`
       : `${a.status === "changed" ? "Оценка изменена" : "Оценка подтверждена"}, ${DA.fmt.dateTime(a.decision.decidedAt).toLowerCase()}`;
-    return h("a", { class: "da-list-row ap-row", href: `#/c/${a.conversationId}?criterion=${a.criterionId}` },
+    return h("a", { class: "da-list-row ap-row", href: `#/c/${encodeURIComponent(a.conversationId)}?criterion=${encodeURIComponent(a.criterionId)}` },
       h("div", {}, h("div", { class: "da-num" }, `№ ${DA.convNumber(a.conversationId)}`), h("div", { class: "da-small da-muted" }, `${DA.langLabel[conv.language]}, ${DA.channelLabel(conv).toLowerCase()}`)),
       h("div", { class: "ap-main" },
         h("b", {}, c.title),

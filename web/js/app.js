@@ -111,5 +111,5 @@
   DA.side = sidebar();
   document.body.prepend(DA.side.mobileBar, DA.side.el, DA.side.scrim);
   window.addEventListener("hashchange", DA.route);
-  DA.route();
+  DA.checkBackend().then(() => DA.route());
 })();

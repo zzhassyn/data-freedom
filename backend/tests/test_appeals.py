@@ -160,7 +160,7 @@ def test_appeal_uses_evaluated_checklist_not_active(seeded_client, example_evalu
     closing["title"] = "Изменённое правило завершения"
     created = seeded_client.post("/api/checklists", json=draft)
     assert created.status_code == 201, created.text
-    seeded_client.post(f"/api/checklists/{created.json()['id']}/activate")
+    seeded_client.post(f"/api/checklists/{created.json()['id']}/activate", json={})
     details = seeded_client.get(f"/api/appeals/{appeal['id']}").json()
     assert details["criterion"]["title"] == "Завершение"
     assert details["evaluation"]["checklistVersion"] == 1

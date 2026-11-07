@@ -35,6 +35,34 @@
   DA.langLabel = { RU: "Русский", KZ: "Казахский", EN: "Английский" };
   DA.channelLabel = (conv) => (conv.channel === "voice call" ? "Звонок" : "Чат");
 
+  /* Доступность сервера не сохраняется между сессиями. Ссылки проверяем при каждом показе. */
+  DA.backendAvailable = false;
+  let backendCheck = null;
+  DA.checkBackend = function () {
+    if (backendCheck) return backendCheck;
+    backendCheck = (async () => {
+      const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 2000);
+      try {
+        const res = await fetch("/api/health", { signal: ctrl.signal, cache: "no-store" });
+        DA.backendAvailable = res.ok && (await res.json()).ok === true;
+      } catch (e) { DA.backendAvailable = false; }
+      finally { clearTimeout(timer); backendCheck = null; }
+      return DA.backendAvailable;
+    })();
+    return backendCheck;
+  };
+  DA.audioHref = function (conv) {
+    if (!conv || typeof conv.audio_url !== "string" || !conv.audio_url.trim()) return null;
+    if (DA.backendAvailable) return `/api/conversations/${encodeURIComponent(conv.conversation_id)}/audio`;
+    try {
+      const url = new URL(conv.audio_url);
+      const host = url.hostname.toLowerCase().replace(/\.+$/, "");
+      const allowed = ["environment.api.powerplatform.com", "dynamics.com"];
+      if (url.protocol !== "https:" || url.username || url.password || !allowed.some((h) => host === h || host.endsWith("." + h))) return null;
+      return url.href;
+    } catch (e) { return null; }
+  };
+
   /* ---------- Транскрипт ---------- */
   DA.tx = {
     seconds(ts, first) {

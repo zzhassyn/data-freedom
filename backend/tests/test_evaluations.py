@@ -206,7 +206,7 @@ def test_one_failed_criterion_has_null_total_and_retry_preserves_finished_work(s
     assert closing["status"] == "failed"
     assert "Тестовый сбой" in closing["explanation"]
     failure["enabled"] = False
-    retried = seeded_client.post(f"/api/evaluations/{failed['id']}/criteria/closing/retry")
+    retried = seeded_client.post(f"/api/evaluations/{failed['id']}/criteria/closing/retry", json={})
     assert retried.status_code == 202, retried.text
     repaired = wait_for(seeded_client, f"/api/evaluations/{failed['id']}",
                         lambda body: body["status"] in {"done", "failed"})

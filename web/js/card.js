@@ -64,8 +64,9 @@
       turnsBox.append(node);
     });
 
-    const player = isCall ? h("div", { class: "da-player" },
-      h("a", { class: "da-play", href: conv.audio_url, target: "_blank", rel: "noopener", "aria-label": "Слушать запись звонка" }, DA.icon("play")),
+    const audioHref = DA.audioHref(conv);
+    const player = isCall && audioHref ? h("div", { class: "da-player" },
+      h("a", { class: "da-play", href: audioHref, target: "_blank", rel: "noopener noreferrer", "aria-label": "Слушать запись звонка" }, DA.icon("play")),
       h("div", {}, h("b", {}, "Запись звонка"), h("div", { class: "da-small da-muted" }, DA.fmt.duration(DA.tx.duration(conv))))) : null;
 
     transcript.append(...[bracket, player, turnsBox].filter(Boolean));

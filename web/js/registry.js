@@ -203,7 +203,7 @@
       pager.hidden = false;
       list.slice((view.page - 1) * size, view.page * size).forEach((r, i) => {
         const cid = r.conversation_id;
-        const open = () => (location.hash = `#/c/${cid}`);
+        const open = () => (location.hash = `#/c/${encodeURIComponent(cid)}`);
         tbody.append(h("tr", { class: fresh.has(cid) ? "is-fresh" : null, style: `--i: ${Math.min(i, 14)}`, tabindex: 0, onclick: open, onkeydown: (e) => e.key === "Enter" && open() },
           h("td", { class: "da-num c-num", title: cid }, DA.convNumber(cid)),
           h("td", { class: "da-muted da-nowrap c-date" }, when(DA.tx.startedAt(r))),

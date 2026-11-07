@@ -51,7 +51,8 @@
     const box = h("div", { class: "da-turns rv-turns" });
     const toggle = h("button", { class: "da-btn is-sm", type: "button", onclick: () => { full = !full; render(true); } });
     const isCall = conv.channel === "voice call";
-    const listen = isCall ? h("a", { class: "da-btn is-sm is-text", href: conv.audio_url, target: "_blank", rel: "noopener" }, DA.icon("play", 16), "Слушать запись") : null;
+    const audioHref = DA.audioHref(conv);
+    const listen = isCall && audioHref ? h("a", { class: "da-btn is-sm is-text", href: audioHref, target: "_blank", rel: "noopener noreferrer" }, DA.icon("play", 16), "Слушать запись") : null;
 
     function bubbleText(text, quote) {
       const k = quote ? text.indexOf(quote) : -1;
@@ -283,7 +284,7 @@
     const pillBox = h("div", { class: "rv-pills", "aria-label": "Ответ модели" }, DA.answerPill(appeal.originalAnswer, c));
     const head = h("header", { class: "rv-head" },
       h("div", { class: "rv-head-meta" },
-        h("a", { class: "rv-conv", href: `#/c/${conv.conversation_id}?criterion=${c.id}`, title: "Открыть карточку обращения" }, `Обращение № ${DA.convNumber(conv.conversation_id)}`),
+        h("a", { class: "rv-conv", href: `#/c/${encodeURIComponent(conv.conversation_id)}?criterion=${encodeURIComponent(c.id)}`, title: "Открыть карточку обращения" }, `Обращение № ${DA.convNumber(conv.conversation_id)}`),
         h("span", { class: "da-chip" }, DA.langLabel[conv.language]),
         h("span", { class: "da-chip" }, DA.icon(conv.channel === "voice call" ? "phone" : "message"), DA.channelLabel(conv)),
         h("span", { class: "da-small da-muted" }, isOpen ? `Ждёт решения ${waited(appeal)}` : "Апелляция разобрана")),
