@@ -1,7 +1,44 @@
 /* Сводка: матрица критериев по языкам, операторы, точность модели. */
 .da-ins { font-variant-numeric: tabular-nums; }
 .da-ins-head { align-items: center; flex-wrap: wrap; }
-.da-ins-head .da-seg { margin-left: auto; }
+.da-ins-head .da-seg { margin-left: auto; max-width: 100%; overflow-x: auto; }
+.da-ins-head .da-seg button { white-space: nowrap; }
+.da-ins-dashboard, .da-ins-topic-dashboard { background: var(--da-surface); color: var(--da-text); box-shadow: var(--da-shadow-rest); border-radius: var(--da-r-panel); padding: 28px; }
+.da-ins-dashboard h2, .da-ins-chart h2 { margin: 0; font-size: 18px; font-weight: 650; }
+.da-ins-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 36px; row-gap: 36px; margin: 32px 12px 12px; }
+.da-ins-stat h3, .da-ins-stat p { margin: 0; color: var(--da-text-2); font-size: 14px; font-weight: 400; }
+.da-ins-stat-value { margin: 8px 0; font-size: 28px; line-height: 1.2; font-weight: 650; }
+.da-ins-stat-value a { color: inherit; text-decoration: none; }
+.da-ins-stat-value a:hover { text-decoration: underline; }
+.da-ins-progress { height: 5px; background: var(--da-surface-3); border-radius: 4px; overflow: hidden; margin-bottom: 8px; }
+.da-ins-progress i { display: block; height: 100%; background: var(--da-brand); border-radius: inherit; }
+.da-ins-topic-coverage { margin: 0 0 28px; color: var(--da-text-2); font-size: 14px; }
+.da-ins-chart + .da-ins-chart { margin-top: 32px; padding-top: 28px; border-top: 1px solid var(--da-line); }
+.da-ins-chart-plot { margin-top: 32px; }
+.da-ins-chart-row { margin-bottom: 14px; }
+.da-ins-chart-row summary { display: grid; grid-template-columns: 145px minmax(0, 1fr); gap: 12px; align-items: center; cursor: pointer; list-style: none; }
+.da-ins-chart-row summary::-webkit-details-marker { display: none; }
+.da-ins-chart-label { color: var(--da-text-2); text-align: right; font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+.da-ins-chart-track { position: relative; display: flex; align-items: center; min-height: 50px; background: repeating-linear-gradient(to right, var(--da-line) 0 1px, transparent 1px 25%); }
+.da-ins-chart-bar { position: absolute; left: 0; top: 0; bottom: 0; border-radius: var(--da-r-tag); background: var(--da-brand); transition: background var(--da-fast); }
+.da-ins-chart-value { position: relative; z-index: 1; margin-left: 10px; padding: 2px 6px; border-radius: var(--da-r-tag); background: var(--da-brand-soft); color: var(--da-yes-ink); font-size: 13px; font-weight: 600; }
+.da-ins-chart-row summary:hover .da-ins-chart-bar { background: var(--da-brand-press); }
+.da-ins-chart-detail { margin: 12px 0 20px 157px; font-size: 14px; color: var(--da-text-2); }
+.da-ins-chart-axis { margin-left: 157px; display: flex; justify-content: space-between; color: var(--da-text-3); font-size: 13px; }
+.da-ins-chart-caption { margin: 28px 0 0; color: var(--da-text-2); font-size: 13px; line-height: 1.5; }
+.da-ins-chart-caption + .da-ins-chart-caption { margin-top: 8px; }
+.da-ins-topic-controls { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.da-ins-topic-status { margin: 20px 0; color: var(--da-text-2); font-size: 14px; }
+.da-ins-topic-status p { margin: 6px 0; }
+@media (max-width: 600px) {
+  .da-ins-dashboard, .da-ins-topic-dashboard { padding: 20px 16px; }
+  .da-ins-stats { margin: 24px 0 4px; gap: 28px 16px; }
+  .da-ins-stat-value { font-size: 25px; }
+  .da-ins-chart-row summary { grid-template-columns: 92px minmax(0, 1fr); gap: 10px; }
+  .da-ins-chart-label { font-size: 12px; }
+  .da-ins-chart-axis, .da-ins-chart-detail { margin-left: 102px; }
+  .da-ins-chart-track { min-height: 42px; }
+}
 
 .da-ins-cover { display: flex; align-items: center; gap: 12px; margin: -8px 0 20px; font-size: 14px; color: var(--da-text-2); }
 .da-ins-cover-bar { width: 160px; height: 4px; border-radius: 2px; background: var(--da-surface-3); overflow: hidden; }

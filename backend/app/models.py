@@ -114,6 +114,14 @@ class Summary(ApiModel):
     request: str
     outcome: str
     operator_name: Optional[str] = None
+    resolution_status: Literal['resolved', 'unresolved', 'unknown'] = 'unknown'
+    usage: Usage = Field(default_factory=Usage)
+
+
+class TopicAssignment(ApiModel):
+    topic_id: Optional[str] = Field(default=None, max_length=100)
+    new_title: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    resolution_status: Literal['resolved', 'unresolved', 'unknown'] = 'unknown'
     usage: Usage = Field(default_factory=Usage)
 
 

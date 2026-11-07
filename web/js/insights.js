@@ -4,7 +4,17 @@
   const m = (key, params) => DA.msg("insights." + key, params);
   const t = (key, params) => DA.t("insights." + key, params);
   DA.i18n.addMessages({
-    "insights.quality": { ru: "Качество", kk: "Сапа", en: "Quality" },
+    "insights.quality": { ru: "Оценка качества по критериям", kk: "Критерийлер бойынша сапа", en: "Quality by criterion" },
+    "insights.overview": { ru: "Общая сводка", kk: "Жалпы жиынтық", en: "Overview" },
+    "insights.topics": { ru: "Анализ тем обращений", kk: "Өтініш тақырыптарын талдау", en: "Conversation topics" },
+    "insights.total": { ru: "Всего обращений", kk: "Барлық өтініштер", en: "Total conversations" },
+    "insights.calls": { ru: "Звонки", kk: "Қоңыраулар", en: "Calls" },
+    "insights.chats": { ru: "Чаты", kk: "Чаттар", en: "Chats" },
+    "insights.topicMissing": { ru: "Тема ещё не определена", kk: "Тақырып әлі анықталмаған", en: "Topic not yet identified" },
+    "insights.topicHelp": { ru: "Звонки сгруппированы по сохранённым темам резюме. Доля рассчитана от всех звонков. Раскройте тему, чтобы открыть записи.", kk: "Қоңыраулар сақталған түйіндеме тақырыптары бойынша топталған. Үлес барлық қоңыраулардан есептеледі. Жазбаларды көру үшін тақырыпты ашыңыз.", en: "Calls are grouped by saved summary topics. Shares use all calls. Expand a topic to open its conversations." },
+    "insights.noCalls": { ru: "Звонков пока нет", kk: "Қоңыраулар әлі жоқ", en: "No calls yet" },
+    "insights.noCallsHelp": { ru: "Загрузите звонки, чтобы увидеть распределение тем.", kk: "Тақырыптардың үлестірімін көру үшін қоңырауларды жүктеңіз.", en: "Import calls to see their topic distribution." },
+    "insights.topicCoverage": { ru: "Тема определена у {count} из {total} звонков", kk: "{total} қоңыраудың {count} тақырыбы анықталған", en: "Topic identified for {count} of {total} calls" },
     "insights.operators": { ru: "Операторы", kk: "Операторлар", en: "Agents" },
     "insights.conversations": { ru: { one: "{count} обращение", few: "{count} обращения", many: "{count} обращений", other: "{count} обращения" }, kk: "{count} өтініш", en: { one: "{count} conversation", other: "{count} conversations" } },
     "insights.nameHidden": { ru: "Имя скрыто в записи", kk: "Жазбада аты жасырылған", en: "Name hidden in the record" },
@@ -58,8 +68,38 @@
     "insights.title": { ru: "Сводка", kk: "Жиынтық", en: "Insights" }
   });
 
+  DA.i18n.addMessages(Object.fromEntries(Object.entries({
+    overviewTitle: ["Сводка качества обслуживания", "Қызмет көрсету сапасының жиынтығы", "Service quality summary"],
+    evaluatedLabel: ["Оценено обращений", "Бағаланған өтініштер", "Evaluated conversations"],
+    averageLabel: ["Средняя оценка", "Орташа баға", "Average score"],
+    ofTotal: ["{rate} от общего количества", "Жалпы санның {rate}", "{rate} of all conversations"],
+    callDuration: ["Средняя длительность звонка", "Қоңыраудың орташа ұзақтығы", "Average call duration"],
+    durationHelp: ["По аудио и временным меткам · {count} звонков", "Аудио және уақыт белгілері бойынша · {count} қоңырау", "From audio and timestamps · {count} calls"],
+    noData: ["Нет данных", "Деректер жоқ", "No data"],
+    pendingAppeals: ["Апелляции на рассмотрении", "Қаралудағы апелляциялар", "Pending appeals"],
+    decisionRequired: ["Требуется решение", "Шешім қажет", "Decision required"],
+    noPending: ["Нет ожидающих решения", "Шешім күтіп тұрған жоқ", "No decisions pending"],
+    popularity: ["Популярность тем", "Тақырыптардың танымалдығы", "Topic popularity"],
+    resolvedShare: ["Доля решённых обращений по темам", "Тақырып бойынша шешілген өтініштердің үлесі", "Resolution rate by topic"],
+    popularityHelp: ["Количество обращений по основной теме", "Негізгі тақырып бойынша өтініштер саны", "Number of conversations by primary topic"],
+    resolvedHelp: ["Процент подтверждённо решённых обращений от всех обращений темы. Неизвестный результат не считается решённым.", "Тақырыптың барлық өтініштерінен расталған шешімдердің пайызы. Белгісіз нәтиже шешілді деп есептелмейді.", "Confirmed resolved conversations as a percentage of all conversations in each topic. Unknown outcomes do not count as resolved."],
+    unknownResults: ["Без подтверждённого результата: {count} из {total}", "Расталған нәтижесіз: {count} / {total}", "Without a confirmed outcome: {count} of {total}"],
+    resolvedCount: ["Решено {count} из {total}", "Шешілгені: {count} / {total}", "Resolved {count} of {total}"]
+  }).map(([key, values]) => ["insights." + key, { ru: values[0], kk: values[1], en: values[2] }])));
+
   const LANGS = ["RU", "KZ", "EN"];
-  const TABS = [{ value: "quality", label: m("quality") }, { value: "operators", label: m("operators") }];
+  DA.i18n.addMessages(Object.fromEntries(Object.entries({
+    analyzeTopics: ["Определить темы", "Тақырыптарды анықтау", "Identify topics"],
+    analyzingTopics: ["Определяем темы…", "Тақырыптар анықталуда…", "Identifying topics…"],
+    topicsRule: ["Показаны темы с 3 и более обращениями. Похожие запросы объединяются по смыслу.", "3 және одан көп өтініші бар тақырыптар көрсетіледі. Ұқсас сұраулар мағынасы бойынша біріктіріледі.", "Only topics with at least 3 conversations are shown. Similar requests are grouped by meaning."],
+    analysisCoverage: ["Проанализировано {count} из {total} обращений", "Талданған өтініштер: {count} / {total}", "Analyzed {count} of {total} conversations"],
+    rareTopics: ["В темах с частотой менее 3: {count} обращений", "3-тен аз кездесетін тақырыптарда: {count} өтініш", "Conversations in topics occurring fewer than 3 times: {count}"],
+    noFrequentTopics: ["Пока нет тем с тремя обращениями", "Үш өтініші бар тақырыптар әлі жоқ", "No topic has three conversations yet"],
+    startTopicsHelp: ["Запустите анализ транскриптов. Сохранённые результаты используются повторно; запросы к модели расходуют баланс OpenRouter.", "Транскрипттерді талдауды іске қосыңыз. Сақталған нәтижелер қайта қолданылады; модель сұраулары OpenRouter теңгерімін жұмсайды.", "Analyze the transcripts. Saved results are reused; model requests use your OpenRouter balance."],
+    topicsLoading: ["Загружаем темы…", "Тақырыптар жүктелуде…", "Loading topics…"],
+    unclearTopics: ["Запрос не определён: {count}", "Сұрау анықталмаған: {count}", "Unclear requests: {count}"]
+  }).map(([key, v]) => ["insights." + key, { ru: v[0], kk: v[1], en: v[2] }])));
+  const TABS = ["overview", "topics", "quality"].map((value) => ({ value, label: m(value) }));
   const BUCKETS = [[0, 49], [50, 69], [70, 84], [85, 100]];
   const pct = (x) => new Intl.NumberFormat(DA.fmt.locale(), { style: "percent", maximumFractionDigits: 0 }).format(x);
   const nConv = (count) => t("conversations", { count });
@@ -204,8 +244,7 @@
       }))) : null;
 
     return h("div", { class: "da-ins-quality" },
-      h("div", { class: "da-ins-matrix-wrap" }, h("table", { class: "da-ins-matrix" }, h("thead", {}, head), h("tbody", {}, body), grossRow)),
-      h("div", { class: "da-ins-trio" }, totalsBlock(evs), grossBlock(evs), appealsBlock()));
+      h("div", { class: "da-ins-matrix-wrap" }, h("table", { class: "da-ins-matrix" }, h("thead", {}, head), h("tbody", {}, body), grossRow)));
   }
 
   function matrixCell(c, col, i) {
@@ -321,15 +360,114 @@
     return wrap;
   }
 
+  function overview(evs) {
+    const convs = Object.values(DA.state.conversations);
+    const durations = convs.filter((c) => c.channel === "voice call").map((conv) => {
+      const audio = DA.stt?.item(conv.conversation_id);
+      const positive = (n) => typeof n === "number" && Number.isFinite(n) && n > 0;
+      if (positive(audio?.audioSecondsDeclared)) return audio.audioSecondsDeclared;
+      if (positive(audio?.audioSecondsDecoded)) return audio.audioSecondsDecoded;
+      const seconds = DA.tx.duration(conv);
+      return positive(seconds) ? seconds : null;
+    }).filter((n) => n != null);
+    const duration = durations.length ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : null;
+    const pending = DA.state.appeals.filter((a) => a.status === "open").length;
+    const rate = convs.length ? evs.length / convs.length : 0;
+    const metric = (label, value, help, extra) => h("section", { class: "da-ins-stat" },
+      h("h3", {}, m(label)), h("div", { class: "da-ins-stat-value" }, value), extra || null, h("p", {}, help));
+    return h("section", { class: "da-ins-dashboard" }, h("h2", {}, m("overviewTitle")),
+      h("div", { class: "da-ins-stats" },
+        metric("evaluatedLabel", `${evs.length} / ${convs.length}`, m("ofTotal", () => ({ rate: new Intl.NumberFormat(DA.fmt.locale(), { style: "percent", maximumFractionDigits: 1 }).format(rate) })),
+          h("div", { class: "da-ins-progress", role: "progressbar", "aria-label": m("evaluatedLabel"), "aria-valuenow": evs.length, "aria-valuemin": 0, "aria-valuemax": convs.length || 1 }, h("i", { style: { width: `${rate * 100}%` } }))),
+        metric("averageLabel", DA.msg(() => DA.fmt.score(average(evs))), m("of100")),
+        metric("callDuration", duration == null ? "—" : `${String(Math.floor(duration / 60)).padStart(2, "0")}:${String(duration % 60).padStart(2, "0")}`,
+          durations.length ? m("durationHelp", { count: durations.length }) : m("noData")),
+        metric("pendingAppeals", h("a", { href: "#/appeals" }, pending), m(pending ? "decisionRequired" : "noPending"))));
+  }
+
+  function topicsView(report) {
+    if (!report) return h("p", { role: "status" }, m("topicsLoading"));
+    const rows = report.rows;
+    if (!rows.length) return h("div", { class: "da-empty" }, h("h2", {}, m("noFrequentTopics")), h("p", {}, m("topicsRule")));
+    const unknown = rows.reduce((sum, r) => sum + r.count - r.known, 0);
+    const maxCount = Math.max(...rows.map((r) => r.count));
+    const step = Math.max(1, Math.ceil(maxCount / 4));
+    const countMax = step * 4;
+    const chart = (resolved) => h("section", { class: "da-ins-chart" },
+      h("h2", {}, m(resolved ? "resolvedShare" : "popularity")),
+      h("div", { class: "da-ins-chart-plot" },
+        rows.map((group) => {
+          const done = group.resolved;
+          const known = group.known > 0;
+          const value = resolved ? done / group.count : group.count;
+          const available = !resolved || known;
+          const label = group.topic || m("topicMissing");
+          return h("details", { class: "da-ins-chart-row", "data-topic": group.id + (resolved ? "-resolved" : "-count") },
+            h("summary", {}, h("span", { class: "da-ins-chart-label" }, label),
+              h("span", { class: "da-ins-chart-track" },
+                available ? h("span", { class: "da-ins-chart-bar", style: { width: `${100 * value / (resolved ? 1 : countMax)}%` } }) : null,
+                h("span", { class: "da-ins-chart-value" }, available ? DA.msg(() => resolved ? pct(value) : String(value)) : m("noData")))),
+            h("div", { class: "da-ins-chart-detail" }, h("p", {}, resolved ? m("resolvedCount", { count: done, total: group.count }) : nConv(group.count)),
+              h("div", { class: "da-ins-convs" }, group.conversationIds.filter((id) => DA.state.conversations[id]).map((id) => convLink(id)))));
+        }),
+        h("div", { class: "da-ins-chart-axis", "aria-hidden": "true" }, Array.from({ length: 5 }, (_, i) => h("span", {}, resolved ? `${i * 25}%` : String(i * step))))),
+      h("p", { class: "da-ins-chart-caption" }, m(resolved ? "resolvedHelp" : "popularityHelp")),
+      resolved && unknown ? h("p", { class: "da-ins-chart-caption" }, m("unknownResults", { count: unknown, total: rows.reduce((sum, r) => sum + r.count, 0) })) : null);
+    return h("div", { class: "da-ins-topic-dashboard" }, chart(false), chart(true));
+  }
+
   /* ---------- Экран ---------- */
   DA.views = DA.views || {};
   DA.views.insights = function mount(root, params) {
-    let tab = TABS.some((t) => t.value === params.query.tab) ? params.query.tab : "quality";
+    let tab = TABS.some((t) => t.value === params.query.tab) ? params.query.tab : "overview";
+    let topicReport = null, topicChannel = "all", topicError = null, topicLoading = false, starting = false, alive = true, timer = null, revision = 0;
+    async function loadTopics() {
+      const own = ++revision;
+      topicLoading = true;
+      try {
+        const result = await DA.api.getTopics(topicChannel);
+        if (!alive || own !== revision) return;
+        topicReport = result;
+        topicError = null;
+      } catch (error) {
+        if (!alive || own !== revision) return;
+        topicError = error;
+      } finally {
+        if (alive && own === revision) {
+          topicLoading = false;
+          render();
+          clearTimeout(timer);
+          if (topicReport?.job.status === "running" && !topicError) timer = setTimeout(loadTopics, 2000);
+        }
+      }
+    }
+    async function startTopics() {
+      starting = true; topicError = null; render();
+      try { await DA.api.analyzeTopics(); }
+      catch (error) { if (alive) topicError = error; }
+      starting = false;
+      if (!alive) return;
+      if (topicError) render(); else loadTopics();
+    }
+    const topicChannelSeg = DA.segmented(["all", "calls", "chats"].map((value) => ({ value, label: m(value) })), topicChannel, (v) => {
+      topicChannel = v; topicReport = null; loadTopics(); render();
+    }, m("section"));
+    function topicPanel() {
+      const running = starting || topicReport?.job.status === "running";
+      return h("div", { class: "da-ins-topic-panel" },
+        h("div", { class: "da-ins-topic-controls" },
+          topicChannelSeg,
+          h("button", { class: "da-btn is-primary", type: "button", disabled: running || topicLoading, onclick: startTopics }, m(running ? "analyzingTopics" : "analyzeTopics"))),
+        topicError ? h("p", { role: "alert", class: "da-review" }, DA.apiErrorMessage(topicError)) : null,
+        topicReport?.job.error ? h("p", { role: "alert", class: "da-review" }, topicReport.job.error) : null,
+        topicsView(topicReport));
+    }
     const body = h("div", { class: "da-ins-body" });
     const seg = DA.segmented(TABS, tab, (v) => {
       tab = v;
-      history.replaceState(null, "", v === "quality" ? "#/insights" : `#/insights?tab=${v}`);
+      history.replaceState(null, "", v === "overview" ? "#/insights" : `#/insights?tab=${v}`);
       render();
+      if (tab === "topics") loadTopics();
     }, m("section"));
 
     function coverage(evs) {
@@ -340,16 +478,28 @@
     }
 
     function render() {
+      const openTopics = new Set([...body.querySelectorAll("details[data-topic][open]")].map((node) => node.dataset.topic));
+      const focusedTopic = body.contains(document.activeElement) ? document.activeElement.closest("details[data-topic]")?.dataset.topic : null;
       const evs = evaluated();
-      const view = tab === "quality" ? quality(evs) : operatorsView();
-      body.replaceChildren(coverage(evs), h("div", { class: "da-ins-tab", "data-tab": tab }, view));
+      const view = tab === "quality" ? quality(evs) : tab === "topics" ? topicPanel() : overview(evs);
+      body.replaceChildren(...(tab === "quality" ? [coverage(evs)] : []), h("div", { class: "da-ins-tab", "data-tab": tab }, view));
+      body.querySelectorAll("details[data-topic]").forEach((node) => {
+        node.open = openTopics.has(node.dataset.topic);
+        if (focusedTopic === node.dataset.topic) node.querySelector("summary").focus({ preventScroll: true });
+      });
     }
 
     root.append(h("div", { class: "da-page da-ins" },
       h("div", { class: "da-page-head da-ins-head" }, h("h1", { class: "da-h1", tabindex: -1 }, m("title")), seg),
       body));
     render();
+    if (tab === "topics") loadTopics();
     window.addEventListener("da:appeals-changed", render);
-    return () => window.removeEventListener("da:appeals-changed", render);
+    window.addEventListener("da:stt-changed", render);
+    return () => {
+      alive = false; clearTimeout(timer); revision++;
+      window.removeEventListener("da:appeals-changed", render);
+      window.removeEventListener("da:stt-changed", render);
+    };
   };
 })();

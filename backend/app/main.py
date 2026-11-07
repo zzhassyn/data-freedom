@@ -133,8 +133,8 @@ def create_app(settings=None, *, providers=None):
         logger.error('Request failed on %s (%s)', request.url.path, type(exc).__name__)
         return error_response('internal_error', 'Не удалось обработать запрос. Повторите попытку', 500)
 
-    from . import conversations, checklists, evaluations, appeals, apply, stats, extras, export, operators, stt
-    for feature in (conversations, checklists, evaluations, appeals, apply, stats, extras, export, operators, stt):
+    from . import conversations, checklists, evaluations, appeals, apply, stats, extras, export, operators, stt, topics
+    for feature in (conversations, checklists, evaluations, appeals, apply, stats, extras, export, operators, stt, topics):
         application.include_router(feature.router)
 
     @application.get('/api/health')

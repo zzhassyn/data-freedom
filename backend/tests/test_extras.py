@@ -24,7 +24,8 @@ def test_summary_cache_refresh_usage_and_source_change(seeded_client, monkeypatc
     monkeypatch.setattr(llm_switch.get_ai(), "summarize", summarize)
     first = client.get("/api/conversations/p1-ru-001/summary")
     assert first.status_code == 200
-    assert set(first.json()) == {"topic", "request", "outcome", "operatorName"}
+    assert set(first.json()) == {"topic", "request", "outcome", "operatorName", "resolutionStatus"}
+    assert first.json()["resolutionStatus"] == "unknown"
     assert client.get("/api/conversations/p1-ru-001/summary").json() == first.json()
     assert len(calls) == 1
     assert client.get("/api/conversations/p1-ru-001/summary?refresh=1").status_code == 200
