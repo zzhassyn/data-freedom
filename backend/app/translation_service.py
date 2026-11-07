@@ -19,7 +19,8 @@ _PLACEHOLDER = re.compile(r'\[[^\]\r\n]{1,200}\]|\*{3,}')
 _HTML = re.compile(r'<\s*(?:/?[A-Za-z][^>]*|![^>]*|\?[^>]*)>', re.I)
 _MASK_MARKER = re.compile(r'__DA_MASK', re.I)
 _MASK_TOKEN = re.compile(r'__DA_MASK_[0-9a-f]{24}_[0-9]+__')
-_PROTECTED_TEXT = re.compile(_PLACEHOLDER.pattern + r'|(?i:__DA_MASK)')
+_MASK_LITERAL = re.compile(r'__DA_MASK[A-Za-z0-9_]*', re.I)
+_PROTECTED_TEXT = re.compile(_PLACEHOLDER.pattern + r'|(?i:__DA_MASK[A-Za-z0-9_]*)')
 
 
 class _TranslatedTurn(ApiModel):
@@ -115,7 +116,12 @@ def _restore_placeholders(turns, protected):
             raise ValueError('invalid_placeholders')
         # A single substitution cannot interpret a restored source literal as a
         # new token. Legitimate source marker spellings are allowed only here.
-        restored.append({**turn, 'text': _MASK_TOKEN.sub(lambda match: literals[match.group()], text)})
+        text = _MASK_TOKEN.sub(lambda match: literals[match.group()], text)
+        original_markers = Counter(marker for literal in literals.values()
+                                   for marker in _MASK_LITERAL.findall(literal))
+        if Counter(_MASK_LITERAL.findall(text)) != original_markers:
+            raise ValueError('invalid_source_marker')
+        restored.append({**turn, 'text': text})
     return restored
 
 

@@ -455,7 +455,7 @@ def test_opaque_tokens_preserve_labels_repeated_masks_and_source_marker_literals
     all_sent_text = ' '.join(turn['text'] for turn in sent)
     assert '[автоответчик]' not in all_sent_text
     assert '[ИИН скрыт]' not in all_sent_text and '***' not in all_sent_text
-    assert '__DA_MASK_deadbeef_0__' not in all_sent_text and '__da_mask' not in all_sent_text
+    assert 'deadbeef' not in all_sent_text and '__da_mask' not in all_sent_text
     tokens = re.findall(r'__DA_MASK_[0-9a-f]+_[0-9]+__', all_sent_text)
     assert len(tokens) == 8 and len(set(tokens)) == 8
     assert all(token not in json.dumps(first.turns) for token in tokens)
@@ -524,3 +524,21 @@ def test_source_token_collision_is_escaped_without_recursive_restoration(seeded_
     ]
     assert f'__DA_MASK_{fresh}_0__' in calls[0]['messages'][1]['content']
     assert f'__DA_MASK_{fresh}_' not in result.turns[0]['text']
+
+
+def test_literal_source_marker_cannot_gain_a_new_suffix_during_restoration(seeded_client, monkeypatch):
+    source = translation_service.TranslationSource('RU', [
+        translation_service.SourceTurn(9, 'client', 'Буквальная запись __DA_MASK_deadbeef_0__.'),
+    ])
+
+    def append_suffix(payload, result):
+        result['turns'][0]['text'] = re.sub(r'(__DA_MASK_[0-9a-f]+_[0-9]+__)', r'\1_changed',
+                                           result['turns'][0]['text'])
+        payload['choices'][0]['message']['content'] = json.dumps(result)
+        return payload
+
+    calls = _provider(seeded_client, monkeypatch, append_suffix)
+    result = asyncio.run(translation_service.translate(source, 'EN', seeded_client.app.state.settings))
+    assert result.turns is None
+    assert result.usage.calls == 1 and result.usage.cost_usd == pytest.approx(.00123)
+    assert 'deadbeef' not in calls[0]['messages'][1]['content']
