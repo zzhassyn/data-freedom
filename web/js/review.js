@@ -80,6 +80,9 @@
     "review.openAppeals": { ru: "Открытые апелляции", kk: "Ашық апелляциялар", en: "Open appeals" },
     "review.waitingTitle": { ru: "Сколько апелляция ждёт решения", kk: "Апелляцияның шешім күткен уақыты", en: "Time awaiting a decision" },
     "review.allResolved": { ru: "Все апелляции разобраны", kk: "Барлық апелляциялар қаралды", en: "All appeals resolved" },
+    "review.noAppeals": { ru: "Апелляций пока нет", kk: "Әзірге апелляциялар жоқ", en: "No appeals yet" },
+    "review.noAppealsHelp": { ru: "Они появятся здесь, когда аналитик оспорит оценку обращения.", kk: "Талдаушы өтініштің бағасына шағымданғанда, апелляциялар осында пайда болады.", en: "Appeals will appear here when an analyst disputes a conversation’s score." },
+    "review.goConversations": { ru: "К обращениям", kk: "Өтініштерге өту", en: "Go to conversations" },
     "review.emptyHelp": { ru: "Новые появятся здесь, как только аналитик оспорит оценку.", kk: "Талдаушы бағаға шағымданғанда, жаңа апелляциялар осында пайда болады.", en: "New appeals will appear here when an analyst disputes a score." },
     "review.resolvedToday": { ru: { one: "Сегодня решена {count} апелляция. Новые появятся здесь, как только аналитик оспорит оценку.", few: "Сегодня решено {count} апелляции. Новые появятся здесь, как только аналитик оспорит оценку.", many: "Сегодня решено {count} апелляций. Новые появятся здесь, как только аналитик оспорит оценку.", other: "Сегодня решено {count} апелляции. Новые появятся здесь, как только аналитик оспорит оценку." }, kk: "Бүгін {count} апелляция шешілді. Талдаушы бағаға шағымданғанда, жаңа апелляциялар осында пайда болады.", en: { one: "{count} appeal resolved today. New appeals will appear here when an analyst disputes a score.", other: "{count} appeals resolved today. New appeals will appear here when an analyst disputes a score." } },
     "review.openResolved": { ru: "Открыть решённые", kk: "Шешілгендерді ашу", en: "Open resolved appeals" },
@@ -561,6 +564,11 @@
     }
 
     function emptyState() {
+      if (!DA.state.appeals.length) return h("div", { class: "rv-empty" },
+        h("span", { class: "rv-empty-mark", "aria-hidden": "true" }, DA.icon("message")),
+        h("h1", { class: "da-h1", tabindex: -1 }, m("noAppeals")),
+        h("p", {}, m("noAppealsHelp")),
+        h("button", { class: "da-btn", type: "button", onclick: () => DA.setRole("analyst") }, m("goConversations")));
       const n = decidedToday();
       return h("div", { class: "rv-empty" },
         h("span", { class: "rv-empty-mark", "aria-hidden": "true" }, DA.icon("check")),
