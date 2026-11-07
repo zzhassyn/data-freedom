@@ -63,6 +63,16 @@
     "registry.marks": { ru: "Отметки", kk: "Белгілер", en: "Flags" },
     "registry.upload": { ru: "Загрузить обращения", kk: "Өтініштерді жүктеу", en: "Upload conversations" },
     "registry.uploadShort": { ru: "Загрузить", kk: "Жүктеу", en: "Upload" },
+    "registry.export": { ru: "Выгрузить", kk: "Экспорттау", en: "Export" },
+    "registry.exportOrganizers": { ru: "Результаты оценки (JSON)", kk: "Бағалау нәтижелері (JSON)", en: "Evaluation results (JSON)" },
+    "registry.exportGroup": { ru: "Текущий набор", kk: "Ағымдағы жинақ", en: "Current dataset" },
+    "registry.exportScope": { ru: "Весь набор, независимо от фильтров", kk: "Сүзгілерге қарамастан, бүкіл жинақ", en: "The whole dataset, regardless of filters" },
+    "registry.exportLoading": { ru: "Проверяем текущий набор…", kk: "Ағымдағы жинақ тексерілуде…", en: "Checking the current dataset…" },
+    "registry.exportPreparing": { ru: "Готовим файл…", kk: "Файл дайындалуда…", en: "Preparing the file…" },
+    "registry.exportRetry": { ru: "Повторить", kk: "Қайталау", en: "Try again" },
+    "registry.exportNoSource": { ru: "Набор не выбран. Откройте загрузку обращений и выберите набор.", kk: "Жинақ таңдалмаған. Өтініштерді жүктеуді ашып, жинақты таңдаңыз.", en: "No dataset selected. Open Upload conversations and choose a dataset." },
+    "registry.exportSync": { ru: "Синхронизируйте полный набор через загрузку обращений и повторите выгрузку.", kk: "Өтініштерді жүктеу арқылы толық жинақты синхрондап, экспорттауды қайталаңыз.", en: "Sync the complete dataset through Upload conversations, then export again." },
+    "registry.exportInvalid": { ru: "Сервер не смог проверить результаты. Файл не скачан. Повторите выгрузку.", kk: "Сервер нәтижелерді тексере алмады. Файл жүктелмеді. Экспорттауды қайталаңыз.", en: "The server could not validate the results. No file was downloaded. Try exporting again." },
     "registry.summary": { ru: "Сводка всего реестра", kk: "Бүкіл тізілімнің жиынтығы", en: "Whole registry summary" },
     "registry.totalAll": { ru: "Всего обращений", kk: "Барлық өтініш", en: "Total conversations" },
     "registry.evaluatedLabel": { ru: "Оценено", kk: "Бағаланды", en: "Evaluated" },
@@ -200,6 +210,131 @@
     return record.transcript.find((turn) => turn.speaker === "client")?.text || "";
   }
 
+  function organizerExport() {
+    let alive = true, busy = false, loading = false, groupId = "", error = null;
+    let sourceController = null, downloadController = null;
+    const button = h("button", { class: "da-btn is-text is-sm da-registry-export", type: "button", "aria-haspopup": "menu", "aria-expanded": "false" }, m("export"), DA.icon("chevron", 14));
+    const group = h("p", { class: "da-export-group" });
+    const scope = h("p", { class: "da-export-scope" }, m("exportScope"));
+    const status = h("p", { class: "da-export-status", role: "status" });
+    const action = h("button", { class: "da-export-action", type: "button", role: "menuitem", onclick: download }, m("exportOrganizers"));
+    const retry = h("button", { class: "da-btn is-text is-sm da-export-retry", type: "button", role: "menuitem", hidden: true, onclick: loadSource }, m("exportRetry"));
+    const panel = h("div", { class: "da-export-menu", role: "menu", "aria-label": m("export"), tabindex: -1, hidden: true }, group, scope, action, status, retry);
+    document.body.append(panel);
+    DA.i18n.bindText(group, () => groupId ? DA.t("registry.exportGroup") : "");
+    DA.i18n.bindText(action, () => DA.t("registry." + (busy ? "exportPreparing" : "exportOrganizers")));
+    DA.i18n.bindText(status, () => {
+      if (loading) return DA.t("registry.exportLoading");
+      if (!error) return "";
+      if (["export_roster_missing", "export_roster_invalid", "export_source_changed"].includes(error.code)) return DA.t("registry.exportSync");
+      if (error.code === "invalid_results_export") return DA.t("registry.exportInvalid");
+      if (error.code === "export_no_source") return DA.t("registry.exportNoSource");
+      return DA.apiErrorMessage(error);
+    });
+    function sync() {
+      group.hidden = !groupId;
+      scope.hidden = !groupId;
+      status.hidden = !loading && !error;
+      status.classList.toggle("is-error", !!error);
+      action.disabled = loading || busy || !groupId;
+      panel.setAttribute("aria-busy", String(loading || busy));
+      retry.hidden = loading || busy || !!groupId || !error;
+      [group, action, status].forEach(DA.i18n.refresh);
+      place();
+    }
+    function place() {
+      if (panel.hidden) return;
+      const rect = button.getBoundingClientRect(), width = Math.min(360, innerWidth - 24);
+      panel.style.width = `${width}px`;
+      panel.style.left = `${Math.max(12, Math.min(innerWidth - width - 12, rect.right - width))}px`;
+      panel.style.maxHeight = `${Math.max(120, innerHeight - 24)}px`;
+      const height = panel.getBoundingClientRect().height;
+      panel.style.top = `${Math.max(12, Math.min(rect.bottom + 6, innerHeight - height - 12))}px`;
+    }
+    function close(returnFocus = false) {
+      panel.hidden = true;
+      button.setAttribute("aria-expanded", "false");
+      sourceController?.abort();
+      sourceController = null;
+      loading = false;
+      if (returnFocus && alive) button.focus({ preventScroll: true });
+    }
+    async function open() {
+      panel.hidden = false;
+      button.setAttribute("aria-expanded", "true");
+      panel.focus({ preventScroll: true });
+      if (busy) { sync(); return; }
+      await loadSource();
+    }
+    async function loadSource() {
+      sourceController?.abort();
+      const controller = new AbortController();
+      sourceController = controller;
+      groupId = ""; error = null; loading = true; sync();
+      try {
+        const source = await DA.api.getSource({ signal: controller.signal });
+        if (!alive || controller.signal.aborted || sourceController !== controller) return;
+        if (typeof source?.groupId !== "string" || !source.groupId.trim()) throw { code: "export_no_source" };
+        groupId = source.groupId.trim();
+      } catch (caught) {
+        if (!alive || controller.signal.aborted || sourceController !== controller) return;
+        error = caught;
+      } finally {
+        if (alive && !controller.signal.aborted && sourceController === controller) {
+          sourceController = null; loading = false; sync();
+          if (!panel.hidden && panel.contains(document.activeElement)) (groupId ? action : retry).focus({ preventScroll: true });
+        }
+      }
+    }
+    async function download() {
+      if (busy || loading || !groupId) return;
+      const controller = new AbortController();
+      downloadController = controller; busy = true; error = null; sync();
+      try {
+        const data = await DA.api.request("/export/organizers", { method: "POST", body: { groupId, evaluateMissing: false }, signal: controller.signal });
+        if (!alive || controller.signal.aborted) return;
+        if (!data || data.schema_version !== "1.0" || !Array.isArray(data.results)) throw { code: "invalid_results_export" };
+        const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2) + "\n"], { type: "application/json;charset=utf-8" }));
+        const link = h("a", { href: url, download: "results.json", hidden: true });
+        document.body.append(link); link.click(); link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        close(panel.contains(document.activeElement));
+      } catch (caught) {
+        if (alive && !controller.signal.aborted) error = caught;
+      } finally {
+        if (alive && !controller.signal.aborted) { busy = false; downloadController = null; sync(); }
+      }
+    }
+    function outside(event) { if (!button.contains(event.target) && !panel.contains(event.target)) close(); }
+    function keys(event) {
+      if (panel.hidden) return;
+      if (event.key === "Escape") { event.preventDefault(); close(true); }
+      else if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+        event.preventDefault();
+        const target = !retry.hidden ? retry : action.disabled ? panel : action;
+        target.focus({ preventScroll: true });
+      } else if (event.key === "Tab") close(true);
+    }
+    button.addEventListener("click", () => panel.hidden ? open() : close());
+    button.addEventListener("keydown", (event) => {
+      if (panel.hidden && ["ArrowDown", "ArrowUp"].includes(event.key)) { event.preventDefault(); open(); }
+    });
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", keys);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("da:locale-changed", place);
+    return { button, destroy() {
+      alive = false;
+      sourceController?.abort(); downloadController?.abort(); panel.remove();
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", keys);
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("da:locale-changed", place);
+    } };
+  }
+
   function marks(cid) {
     const ev = DA.state.evaluations[cid];
     const open = DA.state.appeals.some((a) => a.conversationId === cid && a.status === "open");
@@ -267,6 +402,7 @@
     const allNew = h("button", { class: "da-btn is-primary da-registry-evaluate", type: "button", title: m("evaluateAllHint"), onclick: evaluateNew });
     const upload = h("button", { class: "da-btn da-registry-upload", type: "button", "aria-label": m("upload"), onclick: () => DA.openUpload(render) }, DA.icon("upload", 17), m("uploadShort"));
     const sttEntry = h("button", { class: "da-btn is-text is-sm stt-registry-open", type: "button", hidden: true, onclick: () => DA.stt?.open({ all: true }) }, DA.icon("phone", 16), m("transcriptions"));
+    const exports = DA.mode === "server" ? organizerExport() : null;
     const rows = new Map(), stamps = new Map();
     let fresh = new Set(), animate = false, filtered = [], pageRecords = [], mounted = true, starting = false;
 
@@ -565,7 +701,7 @@
     const toolbar = h("div", { class: "da-registry-tools" },
       h("div", { class: "da-registry-find" }, h("div", { class: "da-search" }, DA.icon("search"), search), menu),
       allNew,
-      h("div", { class: "da-registry-filter-state" }, counter, chips, sttEntry));
+      h("div", { class: "da-registry-filter-state" }, counter, chips, sttEntry, exports?.button));
     const table = h("table", { class: "da-table da-registry" },
         h("thead", {}, h("tr", {},
           h("th", { class: "c-select" }, pageCheck),
@@ -598,6 +734,7 @@
       unsubscribe?.();
       unsubscribeStt?.();
       summaryLayout.disconnect();
+      exports?.destroy();
       window.removeEventListener("da:appeals-changed", updateCounter);
       DA.bulk?.clearSelection();
     };

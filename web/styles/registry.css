@@ -31,6 +31,19 @@
 .da-registry-filter-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; grid-column: 1 / -1; min-width: 0; }
 .da-registry-scope { font-size: 13px; color: var(--da-text-2); }
 .da-registry-filter-state .stt-registry-open { margin-left: auto; min-height: 32px; padding-top: 4px; padding-bottom: 4px; }
+.da-registry-filter-state .da-registry-export { margin-left: auto; min-height: 32px; padding: 4px 8px; }
+.da-registry-filter-state .stt-registry-open:not([hidden]) + .da-registry-export { margin-left: 0; }
+.da-registry-export .da-icon { transform: rotate(90deg); }
+.da-export-menu { position: fixed; z-index: 30; display: grid; gap: 5px; padding: 12px; overflow: auto; border-radius: var(--da-r-card); background: var(--da-surface); box-shadow: var(--da-shadow-overlay); animation: da-menu-in 160ms var(--da-ease); }
+.da-export-menu[hidden] { display: none; }
+.da-export-group, .da-export-scope, .da-export-status { margin: 0; padding: 0 6px; overflow-wrap: anywhere; }
+.da-export-group { font-size: 14px; font-weight: 600; color: var(--da-text); }
+.da-export-scope, .da-export-status { font-size: 13px; line-height: 1.45; color: var(--da-text-2); }
+.da-export-action { min-height: 44px; width: 100%; padding: 10px 6px; border: 0; border-radius: 8px; background: transparent; text-align: left; color: var(--da-text); font-size: 14px; font-weight: 550; line-height: 1.4; transition: background var(--da-fast); }
+.da-export-action:hover:not(:disabled) { background: var(--da-surface-2); }
+.da-export-action:disabled { color: var(--da-text-3); cursor: default; }
+.da-export-status.is-error { color: var(--da-no-ink); }
+.da-export-retry { justify-self: start; }
 .da-registry-page .da-registry td { height: 70px; }
 .da-registry-page .da-registry .c-num { width: 56px; }
 .da-registry-page .da-registry .c-score { min-width: 132px; }
