@@ -1,0 +1,26 @@
+/* Загрузка повторяет рабочую поверхность, сохраняя место для её содержимого. */
+.da-loading .da-page-head { align-items: center; }
+.da-loading .is-action { height: 40px; margin-left: auto; border-radius: var(--da-r-control); }
+.da-load-paper { min-width: 0; padding: 20px; background: var(--da-surface); border-radius: var(--da-r-panel); box-shadow: var(--da-shadow-rest); }
+.da-load-columns { display: grid; grid-template-columns: minmax(0, 7fr) minmax(360px, 5fr); gap: 24px; align-items: start; }
+.da-load-columns.is-editor { grid-template-columns: 320px minmax(0, 1fr); }
+.da-load-row { display: grid; gap: 10px; padding: 16px 0; }
+.da-load-list .da-load-row + .da-load-row { border-top: 1px solid var(--da-line); }
+.da-load-list.is-table .da-load-row { min-height: 60px; grid-template-columns: 1fr 4fr 1fr; gap: 24px; align-items: center; }
+.da-load-transcript .da-load-row { max-width: 80%; padding: 16px; margin-bottom: 12px; background: var(--da-surface-2); border-radius: var(--da-r-card); }
+.da-load-transcript .da-load-row:nth-child(even) { margin-left: auto; background: var(--da-operator); }
+.da-loading .is-total { height: 44px; margin-bottom: 20px; }
+.da-loading .is-heading { height: 24px; margin: 4px 0 16px; }
+.da-loading .is-ribbon { height: 24px; margin-bottom: 12px; }
+.da-load-error { min-height: 320px; align-content: center; }
+.da-load-error p { max-width: 48ch; margin: 0 0 8px; }
+.da-save-error { width: 100%; margin: 0; }
+@media (max-width: 1180px) {
+  .da-load-columns, .da-load-columns.is-editor { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  .da-loading .da-page-head { align-items: start; }
+  .da-loading .is-action { flex: 0 0 100%; max-width: 200px; margin-left: 0; }
+  .da-load-paper { padding: 16px; }
+  .da-load-list.is-table .da-load-row { grid-template-columns: 1fr; gap: 12px; min-height: 110px; }
+}

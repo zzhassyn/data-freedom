@@ -172,7 +172,7 @@ async def decide_appeal(request: Request, appeal_id: str, body: dict = Body(...)
             db.invalidate_cache("coaching", evaluation["id"], conn)
         else:
             appeal["status"] = "confirmed"
-            appeal["totalAfter"] = appeal["totalBefore"]
+            appeal["totalAfter"] = evaluation["total"]
         appeal["decision"] = {
             "action": action,
             "newAnswer": new_answer,

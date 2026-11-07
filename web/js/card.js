@@ -1,6 +1,7 @@
 /* Карточка диалога: транскрипт слева, оценка справа, связь критериев и реплик, апелляции. */
 (function () {
   const DA = window.DA, h = DA.h;
+  const labelFor = (answer, c) => DA.answerText(answer, c);
   const TONE_VARS = {
     yes: ["var(--da-yes)", "var(--da-yes-soft)"], partial: ["var(--da-partial)", "var(--da-partial-soft)"],
     no: ["var(--da-no)", "var(--da-no-soft)"], na: ["var(--da-na)", "var(--da-na-soft)"],
@@ -10,7 +11,8 @@
   function setTone(node, tone) { for (const [k, v] of Object.entries(toneStyle(tone))) node.style.setProperty(k, v); }
 
   DA.views.card = function mount(root, params) {
-    const conv = DA.state.conversations[params.id];
+    const cardContext = DA.data.cardContext(params.id, params.query.evaluation);
+    const conv = cardContext.conv;
     if (!conv) {
       root.append(h("div", { class: "da-page" }, h("div", { class: "da-empty" },
         h("h2", { tabindex: -1 }, "Такого обращения нет в базе"),
@@ -20,12 +22,15 @@
     }
     const cid = conv.conversation_id;
     const isCall = conv.channel === "voice call";
-    let ev = DA.state.evaluations[cid] || null;
+    let ev = cardContext.ev;
     const CL = () => (ev ? DA.checklist(ev.checklistVersion) : DA.activeChecklist());
     let openId = params.query.criterion || null;
-    let running = false;
+    let running = !!ev && ["queued", "running"].includes(ev.status);
+    let disposed = false, selectedTurn = null, loadError = null;
+    const controller = new AbortController();
     /* Проверяющий видит карточку только для чтения: без переоценки и без новых апелляций. */
-    const readOnly = DA.state.role === "reviewer";
+    const historyView = !!params.query.evaluation;
+    const readOnly = DA.state.role === "reviewer" || historyView;
     const timers = [];
 
     /* ---------- Транскрипт ---------- */
@@ -49,7 +54,9 @@
           h("span", {}, ic ? DA.icon(ic) : null, h("span", {}, t.text), h("time", {}, DA.tx.clock(t.timestamp))));
       } else {
         const long = t.speaker === "bot" && t.text.length > 220;
-        const bubble = h("div", { class: "da-bubble" + (long ? " is-clamped" : "") }, t.text);
+        const bubble = h("div", { class: "da-bubble" + (long ? " is-clamped" : ""), tabindex: 0, role: "button", "aria-pressed": "false",
+          "aria-label": `Выделить реплику: ${DA.speakerLabel[t.speaker]}, ${DA.tx.clock(t.timestamp)}`,
+          onclick: () => selectTurn(i), onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectTurn(i); } } }, t.text);
         node = h("div", { class: `da-turn r-${t.speaker}`, "data-idx": i, tabindex: -1 },
           h("div", { class: "da-turn-meta" },
             h("b", {}, DA.speakerLabel[t.speaker]), h("time", {}, DA.tx.clock(t.timestamp)),
@@ -95,12 +102,30 @@
     function jumpTo(idx, tone) {
       const n = turnNodes[idx];
       if (!n) return;
+      showCardPart("dialogue");
+      markSelectedTurn(idx);
       setTone(n, tone || "yes");
       n.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" });
       n.classList.remove("is-flash"); void n.offsetWidth; n.classList.add("is-flash");
       n.focus({ preventScroll: true });
     }
+    function markSelectedTurn(idx) {
+      selectedTurn = idx;
+      turnNodes.forEach((node, i) => {
+        node.classList.toggle("is-selected", i === selectedTurn);
+        const bubble = node.querySelector(".da-bubble");
+        if (bubble) bubble.setAttribute("aria-pressed", String(i === selectedTurn));
+      });
+    }
+    function selectTurn(idx) {
+      markSelectedTurn(selectedTurn === idx ? null : idx);
+      const related = selectedTurn == null || !ev || ev.stale ? [] : ev.items.filter((item) => item.status === "done" && item.evidence.some((e) => e.turnIdx === selectedTurn));
+      if (related.length) toggle(related[0].criterionId, true, false);
+      else { openId = null; renderPanel(); focusCriterion(null); }
+      hoverTurn(selectedTurn);
+    }
     function hoverTurn(idx) {
+      if (idx == null) idx = selectedTurn;
       critNodes.forEach((node, id) => {
         const it = ev && ev.items.find((x) => x.criterionId === id);
         node.classList.toggle("is-hot", idx != null && !!it && it.evidence.some((e) => e.turnIdx === idx));
@@ -136,6 +161,9 @@
       opts = opts || {};
       panel.replaceChildren();
       critNodes.clear();
+      totalNode = null;
+      if (loadError) panel.append(h("div", { class: "da-card-error", role: "alert" },
+        h("p", {}, loadError.message), h("button", { class: "da-btn is-sm", onclick: () => runEvaluation(ev && ["queued", "running"].includes(ev.status) ? "resume" : "start") }, "Повторить")));
       if (ev && ev.stale) {
         panel.append(h("div", { class: "da-empty" },
           h("h2", {}, "Оценка устарела"),
@@ -156,8 +184,10 @@
       if (running) {
         totalBox.append(h("div", { class: "da-total-live" }, `Оценка идёт: ${done} из ${ev.items.length} ${DA.fmt.plural(ev.items.length, ["критерий", "критерия", "критериев"])}`),
           h("div", { class: "da-progress" }, h("i", { style: { width: (done / ev.items.length) * 100 + "%" } })));
+      } else if (ev.status === "failed") {
+        totalBox.append(h("div", { class: "da-total-live" }, "Оценка не завершена"), h("div", { class: "da-small da-muted" }, `Готово ${done} из ${ev.items.length} критериев. Ответы сохранены.`));
       } else if (ev.total == null) {
-        totalBox.append(h("div", { class: "da-total-live" }, "Итог не рассчитывается"), h("div", { class: "da-small da-muted" }, "Все критерии с весом получили N/A"));
+        totalBox.append(h("div", { class: "da-total-live" }, "Итог не рассчитывается"), h("div", { class: "da-small da-muted" }, "К этому разговору не применяется ни один критерий с баллами"));
       } else {
         totalNode = h("span", {}, DA.fmt.score(ev.total));
         if (ev.originalTotal !== ev.total) totalBox.append(h("div", { class: "da-total-was" }, h("s", {}, DA.fmt.score(ev.originalTotal)), "до апелляций"));
@@ -166,9 +196,9 @@
       const reviewCount = ev.items.filter((i) => i.needsReview && i.status === "done").length;
       top.append(h("div", { class: "da-total-row" }, totalBox,
         h("div", { class: "da-eval-meta" },
-          h("span", {}, `Чек-лист, версия ${ev.checklistVersion}`),
+          h("span", {}, `По чек-листу версии ${ev.checklistVersion}`),
           ev.checklistVersion !== DA.activeChecklist().version ? h("span", {}, `Активна версия ${DA.activeChecklist().version}`) : null,
-          h("span", {}, running ? "Модель читает диалог" : `Оценено ${DA.fmt.ago(ev.minutesAgo || 0)} за ${ev.durationSec} с`))));
+          h("span", {}, running ? "Модель читает диалог" : ev.status === "failed" ? "Часть критериев не оценена" : `Оценено ${DA.fmt.ago(ev.minutesAgo || 0)}${ev.durationSec != null ? ` за ${Math.max(1, Math.round(ev.durationSec))} с` : ""}`))));
 
       if (ev.grossFlagged) {
         const g = ev.items.find((i) => DA.criterionById(CL(), i.criterionId).type === "flag");
@@ -176,21 +206,19 @@
       }
       ribbon = DA.ribbon(itemsWithC(), {
         interactive: true,
-        onHover: (id) => { const it = id && ev.items.find((x) => x.criterionId === id); note(it); if (!openId) focusCriterion(it || null); },
+        onHover: (id) => { const it = id && ev.items.find((x) => x.criterionId === id); if (!openId) focusCriterion(it || null); },
         onClick: (id) => toggle(id, true)
       });
-      const noteNode = h("div", { class: "da-ribbon-note" });
-      function note(it) {
-        const naItems = ev.items.filter((i) => i.status === "done" && i.answer === "na");
-        if (it && it.answer === "na") {
-          const c = DA.criterionById(CL(), it.criterionId);
-          noteNode.textContent = `«${c.title}» не применяется. Его ${c.weight} ${DA.fmt.plural(c.weight, ["балл", "балла", "баллов"])} разделены между остальными критериями пропорционально весам.`;
-        } else noteNode.textContent = naItems.length ? `Вес ${naItems.length} ${DA.fmt.plural(naItems.length, ["критерия", "критериев", "критериев"])} с N/A разделён между остальными. Сегменты показывают вклад каждого критерия в 100 баллов.` : "";
+      const excluded = naSummary();
+      top.append(ribbon);
+      if (excluded.count) {
+        const points = Math.round(excluded.points);
+        top.append(h("div", { class: "da-cr-note" }, excluded.all
+          ? `${excluded.subject}. Применимых критериев с баллами нет.`
+          : `${excluded.subject}, поэтому ${excluded.count === 1 ? "его" : "их"} ${points} ${DA.fmt.plural(points, ["балл распределён", "балла распределены", "баллов распределены"])} между остальными.`));
       }
-      note(null);
-      top.append(ribbon, noteNode);
 
-      const decided = DA.state.appeals.filter((a) => a.conversationId === cid && a.status !== "open");
+      const decided = DA.state.appeals.filter((a) => a.conversationId === cid && (!a.evaluationId || a.evaluationId === ev.id) && a.status !== "open");
       if (decided.length) {
         const changed = decided.filter((a) => a.status === "changed").length;
         top.append(h("div", { class: "da-history" },
@@ -204,9 +232,11 @@
       for (const s of CL().sections) {
         const crits = CL().criteria.filter((c) => c.sectionId === s.id);
         const sr = ev.sections.find((x) => x.sectionId === s.id);
-        const sec = h("div", { class: "da-section" },
-          h("div", { class: "da-section-head" }, h("h3", {}, s.title),
-            sr && sr.max > 0 && !running ? h("span", {}, `${DA.fmt.score(sr.earned)} из ${DA.fmt.score(sr.max)}`) : null));
+        const weighted = crits.some((c) => c.type !== "flag" && c.weight > 0);
+        const sec = h("div", { class: "da-section da-cr-section" },
+          h("div", { class: "da-cr-section-head" }, h("h3", {}, s.title),
+            weighted && sr && !running ? h("span", {}, sr.max > 0 ? `${Math.round(sr.earned)} из ${Math.round(sr.max)}` : "не применяется") : null),
+          weighted && sr && sr.max > 0 ? h("div", { class: "da-cr-section-bar", "aria-hidden": "true" }, h("i", { style: { width: `${Math.max(0, Math.min(100, sr.earned / sr.max * 100))}%` } })) : null);
         for (const c of crits) sec.append(critRow(c, opts));
         panel.append(sec);
       }
@@ -217,47 +247,77 @@
       }
     }
 
+    function naSummary() {
+      const excluded = ev.items.filter((i) => i.status === "done" && i.answer === "na" && DA.criterionById(CL(), i.criterionId).type !== "flag");
+      const weighted = CL().criteria.filter((c) => c.type !== "flag" && c.weight > 0);
+      const totalWeight = weighted.reduce((sum, c) => sum + c.weight, 0);
+      const weight = excluded.reduce((sum, i) => sum + DA.criterionById(CL(), i.criterionId).weight, 0);
+      const count = excluded.length;
+      const word = ["", "Один", "Два", "Три", "Четыре"][count] || String(count);
+      return { count, totalWeight, points: totalWeight ? weight / totalWeight * 100 : 0, all: weighted.length === count,
+        subject: `${word} ${DA.fmt.plural(count, ["критерий к этому разговору не относится", "критерия к этому разговору не относятся", "критериев к этому разговору не относятся"])}` };
+    }
+
     function critRow(c, opts) {
       const it = ev.items.find((i) => i.criterionId === c.id);
       const isOpen = openId === c.id && it.status === "done";
       const tone = DA.tone(it.status === "done" ? it.answer : null, c);
-      const node = h("div", { class: "da-crit" + (isOpen ? " is-open" : ""), "data-id": c.id });
+      const node = h("div", { class: "da-crit da-cr-criterion" + (isOpen ? " is-open" : "") + (it.answer === "na" ? " is-na" : ""), "data-id": c.id });
       setTone(node, tone);
       critNodes.set(c.id, node);
       const appeal = it.appealId && DA.state.appeals.find((a) => a.id === it.appealId);
 
-      let pts = null, sub = null;
-      if (it.status === "done" && c.type !== "flag") {
-        if (it.answer === "na") pts = h("span", { class: "da-pts" }, "без баллов");
-        else pts = h("span", { class: "da-pts" }, h("b", {}, DA.fmt.score(it.points)), ` из ${DA.fmt.score(it.effectiveWeight)}`);
-        if (it.answer === "na") sub = h("div", { class: "da-crit-sub" }, h("span", {}, `вес ${c.weight} передан другим критериям`));
-        else if (Math.abs(it.effectiveWeight - c.weight) > 0.005) sub = h("div", { class: "da-crit-sub" }, h("span", { class: opts.blink ? "is-blink" : "" }, `вес ${c.weight} → ${DA.fmt.score(it.effectiveWeight)}`));
+      const ready = it.status === "done";
+      const points = ready && c.type !== "flag" && it.answer !== "na" ? Math.round(it.points) : null;
+      const pts = points == null ? null : h("span", { class: "da-cr-points" + (points === 0 ? " is-zero" : "") }, points ? `+${points}` : "0");
+      const marks = [];
+      function mark(text, kind, explanation) {
+        const badge = h("span", { class: `da-cr-mark is-${kind}` }, text);
+        DA.hoverCard(badge, () => h("p", { class: "da-cr-tooltip" }, explanation));
+        marks.push(badge);
       }
-      const pill = DA.answerPill(it.answer, c, it.original ? it.original.answer : null, it.status);
+      if (appeal) {
+        if (appeal.status === "open") mark("Оспорено", "appeal", "Аналитик не согласен с оценкой, решение за проверяющим");
+        else mark("Пересмотрено", "reviewed", appeal.status === "changed"
+          ? `Проверяющий изменил оценку: было ${labelFor(appeal.originalAnswer, c)}, стало ${labelFor(appeal.decision.newAnswer, c)}`
+          : "Проверяющий подтвердил оценку после рассмотрения апелляции");
+      }
+      if (it.needsReview && ready) mark("Стоит проверить", "check", "Модель ответила по-разному при двух проверках, ответ стоит перепроверить");
+      const maxWeight = Math.max(1, ...ev.items.map((item) => item.effectiveWeight || 0));
+      const fraction = Math.max(0, Math.min(1, it.fraction || 0));
+      const bar = c.type !== "flag" ? h("span", { class: "da-cr-track" + (it.answer === "na" ? " is-na" : ""), "aria-hidden": "true",
+        style: { width: it.answer === "na" ? "100%" : `${(it.effectiveWeight || 0) / maxWeight * 100}%` } },
+        h("i", { style: { width: `${ready ? fraction * 100 : 0}%` } })) : null;
+      const pill = DA.answerPill(it.answer, c, null, it.status);
       if (opts.justDone === c.id) pill.classList.add("is-in");
-      const row = h("button", { class: "da-crit-row", type: "button", "aria-expanded": String(isOpen), disabled: it.status !== "done" ? true : null },
-        h("span", { class: "da-crit-title" }, c.title,
-          it.needsReview && it.status === "done" ? h("span", { class: "da-review", title: "Модель ответила по-разному при двух проверках, ответ стоит перепроверить" }, DA.icon("alert")) : null,
-          appeal && appeal.status === "open" ? h("span", { class: "da-review", title: "Есть открытая апелляция" }, DA.icon("message")) : null),
-        h("span", { class: "da-crit-score" },
+      const row = h("button", { class: "da-cr-row", type: "button", "aria-expanded": String(isOpen), "aria-controls": `da-criterion-${c.id}`, disabled: !ready ? true : null },
+        h("span", { class: "da-cr-title" }, h("span", {}, c.title), marks),
+        h("span", { class: "da-cr-score" },
           it.status === "running" ? h("span", { class: "da-thinking" }, "Модель читает диалог") : null,
           pts, pill),
-        sub);
+        bar);
       row.addEventListener("click", () => toggle(c.id));
       node.addEventListener("mouseenter", () => { if (!openId && it.status === "done") { focusCriterion(it); ribbon && ribbon.light(c.id); } });
       node.addEventListener("mouseleave", () => { if (!openId) focusCriterion(null); });
       node.append(row);
 
       if (it.status === "pending" && running) {
-        node.querySelector(".da-crit-title").style.color = "var(--da-text-3)";
+        node.querySelector(".da-cr-title").style.color = "var(--da-text-3)";
       }
-      if (isOpen) node.append(critBody(c, it, tone, appeal));
+      if (it.status === "failed") node.append(h("div", { class: "da-card-error" },
+        h("p", {}, it.explanation || "Не удалось оценить этот критерий"),
+        readOnly ? null : h("button", { class: "da-btn is-sm", disabled: running, onclick: () => runEvaluation(DA.mode === "server" ? "retry" : "start", c.id) }, "Повторить")));
+      if (ready) {
+        const reveal = h("div", { class: "da-cr-reveal", id: `da-criterion-${c.id}`, "aria-hidden": String(!isOpen) }, h("div", { class: "da-cr-inner" }, critBody(c, it, tone, appeal)));
+        reveal.inert = !isOpen;
+        node.append(reveal);
+      }
       return node;
     }
 
     function critBody(c, it, tone, appeal) {
       const body = h("div", { class: "da-crit-body" });
-      if (it.answer === "na") body.append(h("div", {}, h("div", { class: "da-label" }, "Почему N/A"), h("p", {}, it.naReason)));
+      if (it.answer === "na") body.append(h("div", {}, h("div", { class: "da-label" }, "Почему не применимо"), h("p", {}, it.naReason || it.explanation)));
       else if (it.explanation) body.append(h("p", {}, it.explanation));
       if (it.evidence.length) {
         const list = h("div", { style: { display: "grid", gap: "8px" } });
@@ -269,13 +329,22 @@
           setTone(q, tone);
           list.append(q);
         }
-        body.append(h("div", {}, h("div", { class: "da-label" }, "Доказательства"), list));
+        body.append(h("div", {}, h("div", { class: "da-label" }, "Цитаты из разговора"), list));
       } else if (it.answer !== "na" && c.type !== "flag") body.append(h("p", { class: "da-small da-muted" }, "Модель не привела реплику"));
       if (it.checkedRange) {
         body.append(h("div", {}, h("button", { class: "da-turnchip", type: "button", onclick: () => jumpTo(it.checkedRange.fromIdx, tone) },
           `Проверенный участок ${DA.tx.clock(conv.transcript[it.checkedRange.fromIdx].timestamp)}–${DA.tx.clock(conv.transcript[it.checkedRange.toIdx].timestamp)}`)));
       }
-      body.append(ruleBlock(c, it));
+      const excluded = naSummary();
+      const basePoints = excluded.totalWeight ? c.weight / excluded.totalWeight * 100 : 0;
+      const baseLabel = Number.isInteger(basePoints) ? basePoints : DA.fmt.score(basePoints);
+      let calculation;
+      if (c.type === "flag") calculation = "Нарушение отмечается отдельно и не меняет итоговый балл.";
+      else if (it.answer === "na") calculation = excluded.all ? "Критерий не учитывается. В этом разговоре нет применимых критериев с баллами."
+        : `Критерий не учитывается, его ${baseLabel} ${Number.isInteger(basePoints) ? DA.fmt.plural(basePoints, ["балл распределён", "балла распределены", "баллов распределены"]) : "балла распределены"} между остальными.`;
+      else if (excluded.count) calculation = `Вес критерия ${c.weight} из ${excluded.totalWeight}. ${excluded.subject}, поэтому сейчас он стоит ${DA.fmt.score(it.effectiveWeight)} балла. Набрано ${DA.fmt.score(it.points)}.`;
+      else calculation = `Вес критерия ${c.weight} из ${excluded.totalWeight}. Набрано ${DA.fmt.score(it.points)} из ${DA.fmt.score(it.effectiveWeight)}.`;
+      body.append(h("div", {}, h("div", { class: "da-label" }, "Как посчитаны баллы"), h("p", {}, calculation)), ruleBlock(c, it));
 
       if (appeal) {
         if (appeal.status === "open") {
@@ -285,10 +354,10 @@
             readOnly ? h("div", {}, h("a", { class: "da-btn is-sm", style: { marginTop: "6px" }, href: `#/review/${appeal.id}` }, "Разобрать апелляцию")) : null));
         } else {
           body.append(h("div", { class: "da-appeal-state is-done" },
-            h("b", {}, appeal.status === "changed" ? `Изменено проверяющим: ${DA.answerLabel(appeal.originalAnswer, c)} → ${DA.answerLabel(appeal.decision.newAnswer, c)}` : "Оценка подтверждена проверяющим"),
+            h("b", {}, appeal.status === "changed" ? `Изменено проверяющим: было ${labelFor(appeal.originalAnswer, c)}, стало ${labelFor(appeal.decision.newAnswer, c)}` : "Оценка подтверждена проверяющим"),
             h("span", {}, appeal.decision.reason)));
         }
-      } else if (!running && !readOnly) {
+      } else if (!running && !readOnly && ev.status === "done") {
         body.append(h("div", { class: "da-crit-actions" },
           h("button", { class: "da-btn is-sm", onclick: (e) => appealDrawer(c, it, e.currentTarget) }, DA.icon("message"), "Оспорить оценку")));
       }
@@ -299,7 +368,7 @@
       const box = h("div", { class: "da-rule" });
       const content = h("div", { hidden: true, style: { marginTop: "8px" } },
         h("p", { style: { margin: 0 } }, c.description),
-        c.naAllowed ? h("p", { style: { margin: "6px 0 0" } }, `N/A: ${c.naCondition}`) : null,
+        c.naAllowed ? h("p", { style: { margin: "6px 0 0" } }, `Критерий не применяется: ${c.naCondition}`) : null,
         c.scale ? h("ol", {}, c.scale.map((s) => h("li", { class: it.answer === s.value ? "is-picked" : "" }, h("b", {}, s.value), h("span", {}, s.description)))) : null);
       const btn = h("button", { class: "da-rule-toggle", type: "button", "aria-expanded": "false" }, DA.icon("chevron"), "Правило критерия");
       btn.addEventListener("click", () => {
@@ -310,58 +379,61 @@
       return box;
     }
 
-    function toggle(id, fromRibbon) {
+    function toggle(id, fromRibbon, scroll = true) {
       const it = ev.items.find((i) => i.criterionId === id);
       if (!it || it.status !== "done") return;
+      if (scroll) markSelectedTurn(null);
       openId = openId === id && !fromRibbon ? null : id;
-      renderPanel();
+      critNodes.forEach((node, criterionId) => {
+        const isOpen = criterionId === openId;
+        node.classList.toggle("is-open", isOpen);
+        node.querySelector(".da-cr-row").setAttribute("aria-expanded", String(isOpen));
+        const reveal = node.querySelector(".da-cr-reveal");
+        if (reveal) { reveal.inert = !isOpen; reveal.setAttribute("aria-hidden", String(!isOpen)); }
+      });
       focusCriterion(openId ? it : null);
       const node = critNodes.get(id);
-      if (node && fromRibbon) node.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      if (node && fromRibbon && scroll) node.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
 
-    /* ---------- Живая оценка (в прототипе проигрывает тестовые ответы) ---------- */
-    function evaluate(btn) {
-      const fresh = DA.freshEvaluation(cid);
-      if (!fresh) {
-        DA.toast("Оценка для этого транскрипта пока недоступна", btn);
-        return;
-      }
-      const prevTotal = ev && ev.total;
+    /* ---------- Живая оценка: сохранённые частичные ответы из слоя данных ---------- */
+    let operationPending = false;
+    const evaluate = () => runEvaluation("start");
+    async function runEvaluation(kind, criterionId) {
+      if (operationPending || (readOnly && kind !== "resume")) return;
+      operationPending = true;
+      loadError = null;
       running = true;
-      openId = null;
-      focusCriterion(null);
-      DA.state.appeals = DA.state.appeals.filter((a) => a.conversationId !== cid);
-      ev = fresh;
-      const answers = ev.items.map((i) => ({ ...i }));
-      ev.items.forEach((i) => { i.status = "pending"; i.answer = null; });
-      ev.total = null;
-      DA.rescore(ev);
-      renderPanel();
+      if (kind === "start") { openId = null; markSelectedTurn(null); focusCriterion(null); }
       setHeadBusy(true);
-      const order = answers.map((_, k) => k).sort(() => Math.random() - 0.5);
-      let delay = 300;
-      order.forEach((k, n) => {
-        timers.push(setTimeout(() => { ev.items[k].status = "running"; renderPanel(); }, delay - 250));
-        delay += 450 + Math.random() * 500;
-        timers.push(setTimeout(() => {
-          Object.assign(ev.items[k], answers[k], { status: "done" });
-          DA.rescore(ev);
-          if (n === order.length - 1) finish(prevTotal);
-          else renderPanel({ justDone: answers[k].criterionId, blink: answers[k].answer === "na" });
-        }, delay));
-      });
-    }
-    function finish(prevTotal) {
-      running = false;
-      ev.originalTotal = ev.total;
-      ev.minutesAgo = 0;
-      DA.state.evaluations[cid] = ev;
-      DA.save();
-      window.dispatchEvent(new CustomEvent("da:appeals-changed"));
-      renderPanel();
-      if (totalNode) DA.countTo(totalNode, 0, ev.total, 700);
-      setHeadBusy(false);
+      showCardPart("evaluation");
+      const onProgress = (next) => {
+        if (disposed) return;
+        const previousDone = new Set((ev?.items || []).filter((i) => i.status === "done").map((i) => i.criterionId));
+        const justDone = next.items.find((i) => i.status === "done" && !previousDone.has(i.criterionId));
+        ev = next;
+        running = ["queued", "running"].includes(ev.status);
+        renderPanel({ justDone: justDone?.criterionId });
+      };
+      const options = { signal: controller.signal, onProgress };
+      try {
+        const next = kind === "resume" ? await DA.data.watchEvaluation(ev.id, options)
+          : kind === "retry" ? await DA.data.retryCriterion(ev.id, criterionId, options)
+          : await DA.data.evaluate(cid, { ...options, checklistVersion: DA.activeChecklist().version, reuse: false });
+        if (disposed) return;
+        ev = next;
+        running = false;
+        renderPanel();
+        if (totalNode && ev.status === "done" && kind !== "resume") DA.countTo(totalNode, 0, ev.total, 700);
+      } catch (error) {
+        if (disposed || error.name === "AbortError") return;
+        loadError = error;
+        running = false;
+        renderPanel();
+      } finally {
+        operationPending = false;
+        if (!disposed) setHeadBusy(false);
+      }
     }
 
     /* ---------- Апелляция ---------- */
@@ -371,11 +443,12 @@
       return DA.computeScores(CL(), answers).total;
     }
     function answerOptions(c, exclude) {
-      return DA.allowedAnswers(c).filter((a) => a !== exclude).map((a) => ({ value: a, label: DA.answerLabel(a, c) }));
+      return DA.allowedAnswers(c).filter((a) => a !== exclude).map((a) => ({ value: a, label: labelFor(a, c) }));
     }
 
     function appealDrawer(c, it, anchor) {
       let proposed = null;
+      let submitting = false;
       const err = h("div", { class: "da-error", hidden: true });
       const ta = h("textarea", { class: "da-textarea", placeholder: "Например: оператор представился во втором сообщении" });
       const left = h("span", { class: "da-hint" });
@@ -383,7 +456,7 @@
       const upd = () => {
         const n = ta.value.trim().length;
         left.textContent = n < 10 ? `Ещё ${10 - n} ${DA.fmt.plural(10 - n, ["символ", "символа", "символов"])}` : "";
-        submit.disabled = n < 10;
+        submit.disabled = submitting || n < 10;
       };
       ta.addEventListener("input", upd);
       const submit = h("button", { class: "da-btn is-primary", disabled: true }, "Подать апелляцию");
@@ -405,21 +478,44 @@
           err],
         foot: [submit, h("button", { class: "da-btn is-text", onclick: () => d.close() }, "Отмена")]
       });
-      submit.addEventListener("click", () => {
-        DA.createAppeal(cid, c.id, ta.value.trim(), proposed, 0);
-        d.close();
-        renderPanel();
-        const node = critNodes.get(c.id);
-        DA.toast("Апелляция отправлена проверяющему", node || anchor);
+      submit.addEventListener("click", async () => {
+        if (submitting || ta.value.trim().length < 10) return;
+        submitting = true;
+        err.hidden = true;
+        submit.classList.add("is-busy");
+        upd();
+        try {
+          await DA.data.createAppeal(cid, c.id, ta.value.trim(), proposed);
+          d.close();
+          if (disposed) return;
+          ev = DA.state.evaluations[cid];
+          renderPanel();
+          DA.toast("Апелляция отправлена проверяющему", critNodes.get(c.id) || anchor);
+        } catch (error) {
+          err.textContent = error.message;
+          err.hidden = false;
+        } finally {
+          submitting = false;
+          submit.classList.remove("is-busy");
+          upd();
+        }
       });
     }
 
     /* ---------- Шапка карточки ---------- */
     const evalBtn = h("button", { class: "da-btn", onclick: (e) => evaluate(e.currentTarget) }, DA.icon("refresh"), ev ? "Переоценить" : "Оценить");
-    function setHeadBusy(b) { evalBtn.disabled = b; evalBtn.classList.toggle("is-busy", b); evalBtn.lastChild.textContent = b ? "Оценка идёт" : "Переоценить"; }
+    function setHeadBusy(b) { evalBtn.disabled = b; evalBtn.classList.toggle("is-busy", b); evalBtn.lastChild.textContent = b ? "Оценка идёт" : ev ? "Переоценить" : "Оценить"; }
+    const initialPart = ev && !params.query.turn ? "evaluation" : "dialogue";
+    const grid = h("div", { class: "da-card-grid", "data-part": initialPart }, transcript, panel);
+    const cardTabs = DA.segmented([{ value: "dialogue", label: "Диалог" }, { value: "evaluation", label: "Оценка" }], initialPart, showCardPart, "Содержимое карточки");
+    const tabs = h("div", { class: "da-card-tabs" }, cardTabs);
+    function showCardPart(part) {
+      grid.dataset.part = part;
+      cardTabs.setValue(part);
+    }
     const durSec = DA.tx.duration(conv);
     root.append(h("div", { class: "da-page" },
-      readOnly ? h("a", { class: "da-btn is-text is-sm", href: "#/review", style: { marginBottom: "8px" } }, DA.icon("back", 16), "Вернуться к очереди") : null,
+      DA.state.role === "reviewer" ? h("a", { class: "da-btn is-text is-sm", href: "#/review", style: { marginBottom: "8px" } }, DA.icon("back", 16), "Вернуться к очереди") : null,
       h("div", { class: "da-card-head" },
         readOnly ? null : h("a", { class: "da-back", href: "#/", "aria-label": "К списку обращений" }, DA.icon("back")),
         h("h1", { class: "da-h1", tabindex: -1, title: cid }, `Обращение № ${DA.convNumber(cid)}`),
@@ -427,11 +523,14 @@
         h("span", { class: "da-chip" }, DA.icon(isCall ? "phone" : "message"), DA.channelLabel(conv)),
         h("span", { class: "da-muted da-small" }, `${DA.fmt.dateTime(DA.tx.startedAt(conv))}, длительность ${DA.fmt.duration(durSec)}`),
         readOnly ? null : h("div", { class: "da-card-actions" }, evalBtn)),
-      h("div", { class: "da-card-grid" }, transcript, panel)));
+      historyView ? h("p", { class: "da-card-history" }, "Открыта сохранённая оценка. ", h("a", { href: `#/c/${encodeURIComponent(cid)}` }, "Перейти к текущему обращению")) : null,
+      tabs, grid));
 
     renderPanel();
-    if (params.query.turn) setTimeout(() => jumpTo(+params.query.turn, "yes"), 200);
-    if (openId) setTimeout(() => { const n = critNodes.get(openId); n && n.scrollIntoView({ block: "nearest" }); }, 100);
-    return () => timers.forEach(clearTimeout);
+    setHeadBusy(running);
+    if (running) runEvaluation("resume");
+    if (params.query.turn) timers.push(setTimeout(() => jumpTo(+params.query.turn, "yes"), 200));
+    if (openId) timers.push(setTimeout(() => { const n = critNodes.get(openId); n && n.scrollIntoView({ block: "nearest" }); }, 100));
+    return () => { disposed = true; controller.abort(); timers.forEach(clearTimeout); };
   };
 })();

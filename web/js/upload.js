@@ -5,7 +5,7 @@
   const CONV = ["обращение", "обращения", "обращений"];
   const LANGS = ["RU", "KZ", "EN"];
   const CHANNELS = ["agent chat", "voice call"];
-  const CRM_ERROR = "CRM не ответила. Попробуйте ещё раз через минуту";
+  const errorText = (error) => error instanceof DA.ApiError ? error.message : "Не удалось выполнить действие. Попробуйте ещё раз.";
 
   function stats(records) {
     const calls = records.filter((r) => r.channel === "voice call").length;
@@ -13,28 +13,7 @@
     return { total: records.length, calls, chats: records.length - calls, langs };
   }
 
-  async function request(url, options, timeout = 15000) {
-    const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), timeout);
-    try {
-      const response = await fetch(url, { ...options, signal: ctrl.signal });
-      if (!response.ok) throw new Error("request_failed");
-      return await response.json();
-    } finally { clearTimeout(timer); }
-  }
-  const jsonBody = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const resultText = (r) => `Новых ${r.imported}, обновлено ${r.updated}, без изменений ${r.unchanged}`;
-
-  /* Транскрипт API содержит служебные idx и tSec, для сравнения берём исходные поля. */
-  async function serverRecords(ids, onProgress) {
-    const records = [];
-    for (let i = 0; i < ids.length; i += 8) {
-      const batch = await Promise.all(ids.slice(i, i + 8).map((id) => request(`/api/conversations/${encodeURIComponent(id)}`)));
-      records.push(...batch.map((r) => ({ conversation_id: r.id, channel: r.channel, language: r.language,
-        audio_url: r.audioUrl, transcript: r.transcript.map(({ timestamp, speaker, text }) => ({ timestamp, speaker, text })) })));
-      if (onProgress) onProgress(records.length, ids.length);
-    }
-    return records;
-  }
 
   /* ---------- Разбор файла выгрузки ---------- */
   const validTime = (ts) => typeof ts === "string" && (/^\d+:\d{2}$/.test(ts) || (ts.includes("T") && !isNaN(Date.parse(ts.slice(0, 23) + ts.slice(-6)))));
@@ -70,15 +49,15 @@
 
   /* ---------- Окно загрузки ---------- */
   DA.openUpload = function (onDone) {
-    const dev = window.DA_DEV.records;
+    const backend = DA.mode === "server";
     const pane = h("div", { class: "da-up-pane" });
     const foot = h("div", { class: "da-up-foot" });
-    let tab = "file", busy = false, closed = false, backend = false, ready = false;
+    let tab = "file", busy = false, closed = false, ready = !backend;
     let source = DA.state.source || { groupId: "DEV", lastSyncAt: null, lastResult: null };
     let sourceError = "", settingsOpen = false, draftGroup = source.groupId;
 
-    const tabs = DA.segmented([{ value: "file", label: "Из файла" }, { value: "crm", label: "Из CRM" }], tab, (v) => { tab = v; show(); }, "Откуда загрузить");
-    tabs.classList.add("da-up-tabs");
+    const tabs = backend ? DA.segmented([{ value: "file", label: "Из файла" }, { value: "crm", label: "Из CRM" }], tab, (v) => { tab = v; show(); }, "Откуда загрузить") : null;
+    if (tabs) tabs.classList.add("da-up-tabs");
 
     const m = DA.modal({
       title: "Загрузить обращения",
@@ -93,8 +72,10 @@
 
     function setBusy(on) {
       busy = on;
-      tabs.classList.toggle("is-locked", on);
-      tabs.querySelectorAll("button").forEach((b) => { b.disabled = on; });
+      if (tabs) {
+        tabs.classList.toggle("is-locked", on);
+        tabs.querySelectorAll("button").forEach((b) => { b.disabled = on; });
+      }
     }
     function swap(nodes, actions) {
       pane.replaceChildren(...[nodes].flat().filter((node) => node != null && node !== false));
@@ -104,12 +85,11 @@
     const cancelBtn = () => h("button", { class: "da-btn", type: "button", onclick: () => m.close() }, "Отмена");
     function show() { if (!busy) (tab === "crm" ? crmPane : filePane)(); }
 
-    /* Наличие сервера проверяется при каждом открытии окна, максимум две секунды. */
+    /* Режим выбран при запуске. Сбой источника не переключает его на данные браузера. */
     const initialization = (async () => {
-      backend = await DA.checkBackend();
       if (backend) {
-        try { source = await request("/api/source"); draftGroup = source.groupId; }
-        catch (e) { sourceError = CRM_ERROR; }
+        try { source = await DA.api.getSource(); draftGroup = source.groupId; DA.state.source = source; }
+        catch (e) { sourceError = errorText(e); }
       }
       ready = true;
       if (!closed && tab === "crm" && !busy) crmPane();
@@ -125,7 +105,7 @@
 
     function crmPane() {
       const error = h("p", { class: "da-up-error", role: "alert", hidden: !sourceError }, sourceError);
-      const input = h("input", { class: "da-input", value: draftGroup, maxlength: 100, autocomplete: "off" });
+      const input = h("input", { class: "da-input", value: draftGroup, maxlength: 100, autocomplete: "off", disabled: !ready });
       const saved = h("span", { class: "da-small da-muted", role: "status" });
       const save = h("button", { class: "da-btn", type: "button", disabled: !ready }, "Сохранить");
       const load = h("button", { class: "da-btn is-primary", type: "button", disabled: !ready }, DA.icon("refresh"), "Синхронизировать");
@@ -143,11 +123,10 @@
       async function saveSource() {
         const groupId = draftGroup.trim();
         if (!groupId || groupId.length > 100) { fail("Укажите набор обращений, до 100 символов."); input.focus(); return false; }
-        if (backend) await request("/api/source", jsonBody("PUT", { groupId }));
+        await DA.api.putSource({ groupId });
         if (groupId !== source.groupId) source = { groupId, lastSyncAt: null, lastResult: null };
         draftGroup = groupId;
         DA.state.source = source;
-        DA.save();
         return true;
       }
       save.addEventListener("click", async () => {
@@ -157,7 +136,7 @@
             sourceError = ""; error.hidden = true; saved.textContent = "Сохранено";
             last.textContent = lastSyncLabel();
           }
-        } catch (e) { fail("Не удалось сохранить источник. Попробуйте ещё раз."); }
+        } catch (e) { fail(errorText(e)); }
         finally { setBusy(false); save.disabled = load.disabled = input.disabled = false; }
       });
       load.addEventListener("click", async () => {
@@ -167,7 +146,7 @@
           sourceError = "";
           await synchronize();
         } catch (e) {
-          sourceError = CRM_ERROR;
+          sourceError = errorText(e);
           if (!closed) crmPane();
         } finally {
           setBusy(false); save.disabled = load.disabled = input.disabled = false;
@@ -181,7 +160,7 @@
     }
 
     async function synchronize() {
-      const title = h("b", {}, backend ? "Ждём ответ CRM" : "Сверяем обращения с реестром");
+      const title = h("b", {}, "Ждём ответ CRM");
       const count = h("span");
       const bar = h("progress", { max: 1, "aria-label": "Ход синхронизации" });
       swap(h("div", { class: "da-up-progress", role: "status", "aria-live": "polite" },
@@ -191,45 +170,36 @@
         count.textContent = `${processed} из ${total}`;
         bar.max = total || 1; bar.value = processed;
       };
-      let result, records;
-      if (backend) {
-        const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 135000);
-        try {
-          const res = await fetch("/api/source/sync", { method: "POST", headers: { Accept: "application/x-ndjson", "Content-Type": "application/json" }, body: "{}", signal: ctrl.signal });
-          if (!res.ok || !res.body) throw new Error("sync_failed");
-          const reader = res.body.getReader(), decoder = new TextDecoder();
-          let pending = "";
-          for (;;) {
-            const { done, value } = await reader.read();
-            pending += decoder.decode(value, { stream: !done });
-            const lines = pending.split("\n"); pending = lines.pop();
-            for (const line of lines.filter(Boolean)) {
-              const event = JSON.parse(line);
-              if (event.stage === "error") throw new Error("sync_failed");
-              if (event.stage === "importing") progress(event.processed, event.total, "Сохраняем обращения из CRM");
-              if (event.stage === "done") result = event.result;
-            }
-            if (done) break;
-          }
-          if (!result) throw new Error("sync_incomplete");
-        } finally { clearTimeout(timer); }
-        const list = await request(`/api/conversations?groupId=${encodeURIComponent(source.groupId)}`);
-        records = await serverRecords(list.items.map((r) => r.id), (n, total) => progress(n, total, "Обновляем реестр"));
-        DA.upsertConversations(records);
-      } else {
-        if (source.groupId !== "DEV") throw new Error("source_unavailable");
-        result = DA.upsertConversations(dev);
-        result.total = dev.length;
-        result.lastSyncAt = new Date().toISOString();
-        records = dev;
-        progress(dev.length, dev.length, "Сверка завершена");
-      }
+      const result = await DA.api.syncSource({ onProgress(event) {
+        if (event.stage === "importing") progress(event.processed, event.total, "Сохраняем обращения из CRM");
+      } });
       source = { groupId: source.groupId, lastSyncAt: result.lastSyncAt,
         lastResult: { imported: result.imported, updated: result.updated, unchanged: result.unchanged } };
       DA.state.source = source;
-      DA.save();
-      onDone && onDone(records.map((r) => r.conversation_id));
-      if (!closed) doneView("Синхронизация завершена", resultText(result));
+      title.textContent = "Обновляем реестр";
+      count.textContent = "";
+      bar.removeAttribute("value");
+      await finishServerImport("Синхронизация завершена", result);
+    }
+
+    /* После сохранения повторяем только загрузку реестра, а не уже завершённый импорт. */
+    async function finishServerImport(title, result, ids) {
+      DA.data.invalidate("conversations");
+      try {
+        await DA.data.refresh();
+        onDone && onDone(ids || []);
+        if (!closed) doneView(title, resultText(result));
+      } catch (e) {
+        if (closed) return;
+        const retry = h("button", { class: "da-btn is-primary", type: "button", onclick: async () => {
+          setBusy(true); retry.disabled = true; retry.classList.add("is-busy");
+          try { await finishServerImport(title, result, ids); }
+          finally { setBusy(false); retry.disabled = false; retry.classList.remove("is-busy"); }
+        } }, "Обновить реестр");
+        swap(h("div", { class: "da-up-done" },
+          h("h3", {}, "Обращения сохранены"), h("p", {}, resultText(result)),
+          h("p", { class: "da-up-error", role: "alert" }, `${errorText(e)} Реестр пока не обновился.`)), [cancelBtn(), retry]);
+      }
     }
 
     function doneView(title, text) {
@@ -288,16 +258,16 @@
         setBusy(true); add.disabled = true; add.classList.add("is-busy");
         try {
           await initialization;
-          let records = r.records;
           if (backend) {
-            await request("/api/conversations/upload", jsonBody("POST", records));
-            records = await serverRecords(records.map((rec) => rec.conversation_id));
+            const result = await DA.api.uploadConversations(r.records);
+            await finishServerImport("Реестр обновлён", result, [...r.fresh, ...r.updated].map((rec) => rec.conversation_id));
+          } else {
+            const result = DA.upsertConversations(r.records);
+            onDone && onDone(result.ids);
+            if (!closed) doneView("Реестр обновлён", resultText(result));
           }
-          const result = DA.upsertConversations(records);
-          onDone && onDone(result.ids);
-          if (!closed) doneView("Реестр обновлён", resultText(result));
         } catch (e) {
-          error.textContent = "Не удалось сохранить обращения. Попробуйте ещё раз. Файл можно выбрать повторно.";
+          error.textContent = `${errorText(e)} Файл остался выбранным, можно повторить сохранение.`;
           error.hidden = false;
         } finally { setBusy(false); add.disabled = false; add.classList.remove("is-busy"); }
       });

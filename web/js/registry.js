@@ -7,6 +7,7 @@
     { key: "channel", title: "Канал", options: [{ value: "agent chat", label: "Чаты" }, { value: "voice call", label: "Звонки" }] },
     { key: "state", title: "Состояние", options: [
       { value: "done", label: "Оценено" }, { value: "new", label: "Без оценки" },
+      { value: "running", label: "Оценивается" }, { value: "failed", label: "Не удалось оценить" },
       { value: "appeal", label: "Есть апелляция" }, { value: "review", label: "Стоит проверить вручную" }, { value: "gross", label: "Грубая ошибка" }] }
   ];
   /* Фильтры, поиск и страница живут в модуле: возврат из карточки показывает реестр таким, каким его оставили. */
@@ -19,7 +20,6 @@
   function storedSize() {
     try { const n = Number(localStorage.getItem(SIZE_KEY)); return SIZES.includes(n) ? n : null; } catch (e) { return null; }
   }
-  DA.state.pageSize = DA.state.pageSize || storedSize() || 10;
   function setPageSize(n) {
     DA.state.pageSize = n;
     try { localStorage.setItem(SIZE_KEY, String(n)); } catch (e) { /* без сохранения */ }
@@ -30,11 +30,13 @@
     if (!filter.state.size) return true;
     const ev = DA.state.evaluations[cid];
     const checks = {
-      done: () => !!ev && !ev.stale,
+      done: () => !!ev && ev.status === "done" && !ev.stale,
       new: () => !ev,
+      running: () => !!ev && !ev.stale && ["queued", "running"].includes(ev.status),
+      failed: () => !!ev && !ev.stale && ev.status === "failed",
       appeal: () => DA.state.appeals.some((a) => a.conversationId === cid),
       review: () => !!ev && (ev.stale || ev.items.some((i) => i.needsReview)),
-      gross: () => !!ev && ev.grossFlagged
+      gross: () => !!ev && !ev.stale && ev.grossFlagged
     };
     return [...filter.state].some((k) => checks[k]());
   }
@@ -77,6 +79,9 @@
     const ev = DA.state.evaluations[cid];
     if (!ev) return h("span", { class: "da-quiet" }, "Не оценено");
     if (ev.stale) return h("span", { class: "da-muted da-small" }, "Оценка устарела");
+    if (ev.status === "queued") return h("span", { class: "da-muted da-small" }, "В очереди");
+    if (ev.status === "running") return h("span", { class: "da-thinking" }, "Оценивается");
+    if (ev.status === "failed") return h("span", { class: "da-error" }, "Не удалось оценить");
     const cl = DA.checklist(ev.checklistVersion);
     const cell = h("div", { class: "da-score-cell", tabindex: 0, onclick: (e) => e.stopPropagation() },
       h("span", { class: "da-score-num" }, DA.fmt.score(ev.total),
@@ -98,6 +103,7 @@
 
   DA.views = DA.views || {};
   DA.views.registry = function mount(root, params) {
+    if (!SIZES.includes(DA.state.pageSize)) DA.state.pageSize = storedSize() || 10;
     const query = params && params.query || {};
     if (GROUPS.some((g) => Object.hasOwn(query, g.key))) {
       GROUPS.forEach((g) => {
@@ -188,7 +194,10 @@
       const pages = Math.max(1, Math.ceil(list.length / size));
       view.page = Math.min(Math.max(1, view.page), pages);
 
-      const evaluated = records.filter((r) => DA.state.evaluations[r.conversation_id] && !DA.state.evaluations[r.conversation_id].stale).length;
+      const evaluated = records.filter((r) => {
+        const ev = DA.state.evaluations[r.conversation_id];
+        return ev && ev.status === "done" && !ev.stale;
+      }).length;
       counter.textContent = `${records.length} ${DA.fmt.plural(records.length, ["обращение", "обращения", "обращений"])}, оценено ${evaluated}`;
       renderChips();
       tbody.replaceChildren();
@@ -209,7 +218,7 @@
           h("td", { class: "da-muted da-nowrap c-date" }, when(DA.tx.startedAt(r))),
           h("td", { class: "c-lang" }, DA.langLabel[r.language]),
           h("td", { class: "c-chan" }, h("span", { class: "da-channel" }, DA.icon(r.channel === "voice call" ? "phone" : "message", 16), DA.channelLabel(r))),
-          h("td", { class: "c-prev" }, h("div", { class: "da-preview" }, DA.tx.preview(r))),
+          h("td", { class: "c-prev" }, h("div", { class: "da-preview" }, r.summary?.topic || DA.tx.preview(r))),
           h("td", { class: "da-muted c-dur" }, h("span", { class: "da-only-narrow" }, "Длительность "), DA.fmt.duration(DA.tx.duration(r))),
           h("td", { class: "c-score" }, scoreCell(cid)),
           h("td", { class: "c-marks" }, marks(cid))));

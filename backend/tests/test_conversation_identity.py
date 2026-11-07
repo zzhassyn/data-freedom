@@ -54,6 +54,25 @@ def test_updated_records_keep_identity_after_import_and_restart(client, monkeypa
         assert other_browser.get('/api/conversations/fourth').json()['number'] == 4
 
 
+def test_registry_cache_signature_changes_with_transcript_and_audio(client):
+    payload = record('call', timestamp='2026-11-03T18:10:00+05:00')
+    payload['audio_url'] = 'https://media.dynamics.com/first'
+    client.post('/api/conversations/upload', json=[payload])
+    before = client.get('/api/conversations').json()['items'][0]
+    assert before['audioUrl'] == payload['audio_url']
+    assert len(before['transcriptHash']) == 64
+    payload['transcript'][0]['text'] += ' Нужен отчёт за октябрь.'
+    assert client.post('/api/conversations/upload', json=[payload]).json()['updated'] == 1
+    changed = client.get('/api/conversations').json()['items'][0]
+    assert changed['transcriptHash'] != before['transcriptHash']
+    assert changed['audioUrl'] == before['audioUrl']
+    payload['audio_url'] = 'https://media.dynamics.com/renewed'
+    assert client.post('/api/conversations/upload', json=[payload]).json()['updated'] == 0
+    renewed = client.get('/api/conversations').json()['items'][0]
+    assert renewed['transcriptHash'] == changed['transcriptHash']
+    assert renewed['audioUrl'] == payload['audio_url'] != changed['audioUrl']
+
+
 def test_legacy_database_identity_is_backfilled_and_survives_rowid_changes(tmp_path):
     path = tmp_path / 'legacy.sqlite'
     records = conversations.normalize_records([record('older'), record('later')], 'DEV')

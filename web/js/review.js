@@ -23,12 +23,7 @@
   }
 
   /* Всё, что нужно для разбора: оценка, чек-лист той версии, по которой она сделана, критерий, обращение. */
-  function context(appeal) {
-    const ev = DA.state.evaluations[appeal.conversationId];
-    const cl = DA.checklist(ev.checklistVersion);
-    const c = DA.criterionById(cl, appeal.criterionId);
-    return { ev, cl, c, item: ev.items.find((i) => i.criterionId === c.id), conv: DA.state.conversations[appeal.conversationId] };
-  }
+  const context = (appeal) => DA.data.appealContext(appeal);
   const openQueue = () => DA.openAppeals().slice().sort((a, b) => a.createdAt - b.createdAt);
   const decidedToday = () => DA.state.appeals.filter((a) => a.decision && new Date(a.decision.decidedAt).toDateString() === new Date().toDateString()).length;
 
@@ -120,7 +115,7 @@
     const node = h("section", { class: "rv-panel is-quiet rv-rule", "aria-label": "Правило критерия" },
       h("h2", { class: "rv-h2" }, "Правило критерия"),
       h("p", {}, c.description),
-      c.naAllowed ? h("p", { class: "rv-na" }, h("b", {}, "Когда ставится N/A. "), c.naCondition) : null,
+      c.naAllowed ? h("p", { class: "rv-na" }, h("b", {}, "Критерий не применяется. "), c.naCondition) : null,
       steps.length ? h("ol", { class: "rv-scale" }, steps) : null);
     node.mark = (value) => steps.forEach((li) => li.classList.toggle("is-new", value != null && +li.dataset.value === value && value !== modelAnswer));
     return node;
@@ -134,7 +129,7 @@
       h("div", { class: "rv-side" },
         h("h2", { class: "rv-h2" }, "Оценка модели"),
         h("div", { class: "rv-answer" }, DA.answerPill(answer, c),
-          c.type !== "flag" && answer !== "na" ? h("span", { class: "da-small da-muted" }, `${DA.fmt.score(shown.points)} из ${DA.fmt.score(shown.effectiveWeight)} баллов`) : null),
+          c.type !== "flag" && answer !== "na" ? h("span", { class: "da-small da-muted" }, `${Math.round(shown.points)} из ${Math.round(shown.effectiveWeight)} баллов`) : null),
         h("p", {}, answer === "na" ? item.naReason : item.explanation || "Модель не оставила объяснения."),
         item.needsReview ? h("p", { class: "rv-warn" }, DA.icon("alert", 15), "При двух проверках модель ответила по-разному") : null),
       h("div", { class: "rv-side" },
@@ -177,11 +172,15 @@
       shownAfter = r.total;
     };
     /* После сохранения: старый итог зачёркнут, новый отсчитывается к своему значению. */
-    node.settle = function (from, to, changed) {
-      label.textContent = changed ? "Итог пересчитан" : "Итог не изменился";
-      before.classList.toggle("rv-was", changed && from !== to);
+    node.settle = function (from, result, changed) {
+      const to = result.total;
+      label.textContent = changed ? "Итог пересчитан" : from !== to ? "Итог после решения" : "Итог не изменился";
+      before.textContent = DA.fmt.score(from);
+      before.classList.toggle("rv-was", from !== to);
+      node.classList.toggle("is-change", changed || from !== to);
+      ribbonAfter.update(result.items.map((i) => ({ ...i, c: DA.criterionById(cl, i.criterionId) })));
       arrow.hidden = true;
-      after.hidden = !changed || from === to;
+      after.hidden = from === to;
       if (!after.hidden) DA.countTo(after, from, to, 700);
     };
     node.update(null, null);
@@ -193,7 +192,7 @@
     const { ev, cl, c, item } = ctx;
     const modelAnswer = item.answer;
     const options = DA.allowedAnswers(c).filter((a) => a !== modelAnswer);
-    let action = null;
+    let action = null, busy = false, committed = false, disposed = false;
     let newAnswer = options.includes(appeal.proposedAnswer) ? appeal.proposedAnswer : null;
 
     const choice = (value, icon, title, sub) => h("button", { class: "rv-option", type: "button", role: "radio", "aria-checked": "false", "data-value": value, onclick: () => choose(value) },
@@ -202,10 +201,10 @@
     const optChange = choice("change", "refresh", "Изменить оценку", "Поставить другой ответ");
     const optionsBox = h("div", { class: "rv-options", role: "radiogroup", "aria-label": "Решение" }, optConfirm, optChange);
 
-    const seg = DA.segmented(options.map((a) => ({ value: a, label: DA.answerLabel(a, c) })), newAnswer, (v) => { newAnswer = v; refresh(); }, "Новый ответ");
+    const seg = DA.segmented(options.map((a) => ({ value: a, label: DA.answerText(a, c) })), newAnswer, (v) => { if (!busy && !committed) { newAnswer = v; refresh(); } }, "Новый ответ");
     const changeBox = h("div", { class: "rv-reveal" }, h("div", {}, h("div", { class: "rv-new" },
       h("span", { class: "rv-label" }, "Новый ответ"), seg,
-      appeal.proposedAnswer != null ? h("span", { class: "da-hint" }, `Аналитик предложил «${DA.answerLabel(appeal.proposedAnswer, c)}»`) : null)));
+      appeal.proposedAnswer != null ? h("span", { class: "da-hint" }, `Аналитик предложил «${DA.answerText(appeal.proposedAnswer, c)}»`) : null)));
     changeBox.inert = true;
 
     const reason = h("textarea", { class: "da-textarea", id: "rv-reason", placeholder: "Коротко объясните решение, его увидит аналитик" });
@@ -215,16 +214,19 @@
 
     const prev = preview(ev, cl, c);
     const saveBtn = h("button", { class: "da-btn is-primary rv-save", type: "button", disabled: true, onclick: () => save() }, "Сохранить решение");
+    const error = h("p", { class: "da-error rv-save-error", role: "alert", hidden: true });
+    const showDecision = h("button", { class: "da-btn is-text is-sm", type: "button", hidden: true, onclick: () => DA.route() }, "Открыть принятое решение");
     const keys = h("p", { class: "rv-keys" }, h("kbd", {}, "1"), " оценка верна, ", h("kbd", {}, "2"), " изменить оценку, ", h("kbd", {}, "Ctrl"), "+", h("kbd", {}, "Enter"), " сохранить решение");
-    const foot = h("div", { class: "rv-foot" }, saveBtn, keys);
+    const foot = h("div", { class: "rv-foot" }, error, showDecision, saveBtn, keys);
 
     const node = h("section", { class: "rv-decide", "aria-label": "Решение" },
       h("h2", { class: "rv-h2" }, "Решение"), optionsBox, changeBox, field, prev, foot);
 
     function ready() {
-      return action != null && reason.value.trim().length >= MIN_REASON && (action === "confirm" || newAnswer != null);
+      return !busy && !committed && !disposed && action != null && reason.value.trim().length >= MIN_REASON && (action === "confirm" || newAnswer != null);
     }
     function choose(value, fromKey) {
+      if (busy || committed || disposed) return;
       action = value;
       [optConfirm, optChange].forEach((b) => b.setAttribute("aria-checked", String(b.dataset.value === value)));
       changeBox.classList.toggle("is-on", value === "change");
@@ -241,24 +243,52 @@
     }
     /* Ctrl+Enter до заполнения показывает, чего не хватает. */
     function nudge() {
+      if (busy || committed || disposed) return;
       const target = action == null ? optionsBox : action === "change" && newAnswer == null ? seg : left;
       target.classList.remove("rv-nudge"); void target.offsetWidth; target.classList.add("rv-nudge");
       if (target === left) reason.focus();
     }
-    function save() {
+    async function save() {
       if (!ready()) return;
-      const before = ev.total;
-      DA.decideAppeal(appeal, action, action === "change" ? newAnswer : null, reason.value.trim());
-      const after = DA.state.evaluations[appeal.conversationId].total;
-      node.classList.add("is-saved");
+      const before = ev.total, submittedAction = action, submittedAnswer = action === "change" ? newAnswer : null;
+      const submittedReason = reason.value.trim();
+      busy = true;
+      error.hidden = true; showDecision.hidden = true;
+      node.setAttribute("aria-busy", "true");
+      saveBtn.disabled = true; saveBtn.classList.add("is-busy");
       [optionsBox, changeBox, field].forEach((x) => (x.inert = true));
-      prev.settle(before, after, action === "change");
-      foot.replaceChildren(h("div", { class: "rv-saved", role: "status" }, h("span", { class: "rv-saved-icon" }, DA.icon("check")),
-        action === "change" ? "Решение сохранено, оценка изменена" : "Решение сохранено, оценка подтверждена"));
-      hooks.saved(action, newAnswer);
+      try {
+        const result = await DA.data.decideAppeal(appeal.id, submittedAction, submittedAnswer, submittedReason);
+        Object.assign(appeal, result.appeal);
+        Object.assign(ev, result.evaluation);
+        committed = true;
+        const changed = result.appeal.decision.action === "change";
+        if (!disposed) {
+          node.classList.add("is-saved");
+          prev.settle(before, result.evaluation, changed);
+          foot.replaceChildren(h("div", { class: "rv-saved", role: "status" }, h("span", { class: "rv-saved-icon" }, DA.icon("check")),
+            changed ? "Решение сохранено, оценка изменена" : "Решение сохранено, оценка подтверждена"));
+          hooks.saved(result.appeal.decision.action, result.appeal.decision.newAnswer);
+        } else hooks.updated();
+      } catch (e) {
+        if (!disposed) {
+          error.textContent = e instanceof DA.ApiError ? e.message : "Не удалось сохранить решение. Причина осталась в форме, повторите сохранение";
+          error.hidden = false;
+          showDecision.hidden = e.code !== "appeal_decided";
+        }
+      } finally {
+        busy = false;
+        node.removeAttribute("aria-busy");
+        saveBtn.classList.remove("is-busy");
+        if (!committed && !disposed) {
+          optionsBox.inert = field.inert = false;
+          changeBox.inert = action !== "change";
+          refresh();
+        }
+      }
     }
     refresh();
-    return { node, ready, save, nudge, choose };
+    return { node, ready, save, nudge, choose, dispose: () => { disposed = true; } };
   }
 
   /* Решение по апелляции, которая уже закрыта: вместо формы итог разбора. */
@@ -284,7 +314,7 @@
     const pillBox = h("div", { class: "rv-pills", "aria-label": "Ответ модели" }, DA.answerPill(appeal.originalAnswer, c));
     const head = h("header", { class: "rv-head" },
       h("div", { class: "rv-head-meta" },
-        h("a", { class: "rv-conv", href: `#/c/${encodeURIComponent(conv.conversation_id)}?criterion=${encodeURIComponent(c.id)}`, title: "Открыть карточку обращения" }, `Обращение № ${DA.convNumber(conv.conversation_id)}`),
+        h("a", { class: "rv-conv", href: `#/c/${encodeURIComponent(conv.conversation_id)}?${new URLSearchParams({ criterion: c.id, evaluation: ctx.ev.id })}`, title: "Открыть карточку обращения" }, `Обращение № ${DA.convNumber(conv.conversation_id)}`),
         h("span", { class: "da-chip" }, DA.langLabel[conv.language]),
         h("span", { class: "da-chip" }, DA.icon(conv.channel === "voice call" ? "phone" : "message"), DA.channelLabel(conv)),
         h("span", { class: "da-small da-muted" }, isOpen ? `Ждёт решения ${waited(appeal)}` : "Апелляция разобрана")),
@@ -295,6 +325,7 @@
     if (isOpen) {
       decision = decisionBlock(appeal, ctx, {
         rule,
+        updated: () => onSaved(appeal),
         saved(action, newAnswer) {
           const old = pillBox.firstChild;
           if (action === "change") {
@@ -318,7 +349,7 @@
   /* ---------- Очередь ---------- */
   DA.views.review = function mount(root, params) {
     const timers = [];
-    let current = null, work = null;
+    let current = null, work = null, disposed = false, stageVersion = 0;
 
     const count = h("span", { class: "da-count" });
     const list = h("div", { class: "rv-q-list" });
@@ -371,36 +402,43 @@
 
     /* Смена содержимого справа: старое уходит вверх, новое приходит снизу. */
     function swap(next) {
+      const version = ++stageVersion;
       const prev = stage.firstElementChild;
       if (!prev || reduced()) { stage.replaceChildren(next); return; }
       prev.classList.add("rv-out");
       timers.push(setTimeout(() => {
+        if (disposed || version !== stageVersion) return;
         stage.replaceChildren(next);
         next.classList.add("rv-enter");
         window.scrollTo({ top: 0 });
       }, 180));
     }
     function select(id, how) {
+      work?.decision?.dispose();
       const appeal = DA.state.appeals.find((a) => a.id === id);
       current = appeal ? appeal.id : null;
       renderQueue();
       work = appeal ? workspace(appeal, saved) : null;
       const next = work || notFound();
-      if (how === "swap") swap(next); else stage.replaceChildren(next);
-      if (how === "swap") timers.push(setTimeout(() => { const t = next.querySelector("h1"); t && t.focus({ preventScroll: true }); }, 200));
+      if (how === "swap") swap(next); else { stageVersion++; stage.replaceChildren(next); }
+      if (how === "swap") timers.push(setTimeout(() => { const t = next.isConnected && next.querySelector("h1"); t && t.focus({ preventScroll: true }); }, 200));
     }
 
     /* После сохранения: апелляция уходит из очереди, через секунду открывается следующая. */
     function saved(appeal) {
+      if (disposed) return;
+      if (current !== appeal.id) { renderQueue(); return; }
       count.textContent = DA.openAppeals().length;
       count.hidden = !DA.openAppeals().length;
       timers.push(setTimeout(() => {
+        if (disposed || current !== appeal.id) { if (!disposed) renderQueue(); return; }
         const node = list.querySelector(`[data-id="${appeal.id}"]`);
         if (node && !reduced()) {
           node.style.height = node.offsetHeight + "px";
           node.classList.add("rv-q-leave");
         }
         timers.push(setTimeout(() => {
+          if (disposed || current !== appeal.id) { if (!disposed) renderQueue(); return; }
           const rest = openQueue();
           if (rest.length) {
             history.replaceState(null, "", `#/review/${rest[0].id}`);
@@ -451,6 +489,8 @@
     }
 
     return () => {
+      disposed = true;
+      work?.decision?.dispose();
       timers.forEach(clearTimeout);
       clearInterval(tick);
       document.removeEventListener("keydown", onKey);

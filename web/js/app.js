@@ -1,7 +1,7 @@
 /* Боковое меню и маршрутизация через хэш: в веб-ресурсе Dynamics 365 путь сервера недоступен. */
 (function () {
   const DA = window.DA, h = DA.h;
-  let unmount = null;
+  let unmount = null, routeId = 0, routeRequest = null, ready = false;
 
   /* Меню по роли. Входа в систему нет, роль выбирается переключателем внизу меню. */
   const NAV = {
@@ -77,39 +77,93 @@
   };
 
   const ROUTES = [
-    [/^\/?$/, (m, query) => DA.views.registry(main(), { query })],
-    [/^\/c\/([^/]+)$/, (m, query) => DA.views.card(main(), { id: decodeURIComponent(m[1]), query })],
-    [/^\/appeals$/, (m, query) => DA.views.appeals(main(), { query })],
-    [/^\/checklists$/, (m, query) => DA.views.checklists(main(), { query })],
-    [/^\/insights$/, (m, query) => DA.views.insights(main(), { query })],
-    [/^\/lab\/accuracy$/, () => DA.views.accuracy(main())],
-    [/^\/review$/, (m, query) => DA.views.review(main(), { query })],
-    [/^\/review\/done$/, (m, query) => DA.views.reviewDone(main(), { query })],
-    [/^\/review\/([^/]+)$/, (m, query) => DA.views.review(main(), { id: decodeURIComponent(m[1]), query })]
+    [/^\/?$/, "registry", (m, query) => DA.views.registry(main(), { query })],
+    [/^\/c\/([^/]+)$/, "card", (m, query) => DA.views.card(main(), { id: decodeURIComponent(m[1]), query })],
+    [/^\/appeals$/, "appeals", (m, query) => DA.views.appeals(main(), { query })],
+    [/^\/checklists$/, "checklists", (m, query) => DA.views.checklists(main(), { query })],
+    [/^\/insights$/, "insights", (m, query) => DA.views.insights(main(), { query })],
+    [/^\/lab\/accuracy$/, "accuracy", () => DA.views.accuracy(main())],
+    [/^\/review$/, "review", (m, query) => DA.views.review(main(), { query })],
+    [/^\/review\/done$/, "reviewDone", (m, query) => DA.views.reviewDone(main(), { query })],
+    [/^\/review\/([^/]+)$/, "review", (m, query) => DA.views.review(main(), { id: decodeURIComponent(m[1]), query })]
   ];
   /* Карточка для проверяющего доступна только для чтения; внутренний экран точности общий. */
   const allowed = (path) => path === "/lab/accuracy" || (DA.state.role === "reviewer" ? /^\/(review(\/.*)?|c\/.+)$/.test(path) : !/^\/review(\/|$)/.test(path));
   const main = () => document.getElementById("da-main");
 
-  DA.route = function () {
+  const titles = { registry: "Обращения", card: "Обращение", appeals: "Апелляции", checklists: "Чек-лист", insights: "Сводка", accuracy: "Точность оценки", review: "Очередь апелляций", reviewDone: "Решённые апелляции" };
+  const skeleton = (width, cls) => h("div", { class: "da-skel" + (cls ? " " + cls : ""), style: { width } });
+  function loadingState(scope) {
+    const row = () => h("div", { class: "da-load-row" }, skeleton("52%"), skeleton("90%"), skeleton("38%"));
+    const lines = (n) => Array.from({ length: n }, row);
+    let content;
+    if (scope === "card" || scope === "review") {
+      content = h("div", { class: "da-load-columns" },
+        h("div", { class: "da-load-paper da-load-transcript" }, lines(6)),
+        h("div", { class: "da-load-paper" }, skeleton("42%", "is-total"), skeleton("100%", "is-ribbon"), lines(5)));
+    } else if (scope === "checklists") {
+      content = h("div", { class: "da-load-columns is-editor" },
+        h("div", { class: "da-load-paper" }, lines(6)),
+        h("div", { class: "da-load-paper" }, skeleton("55%", "is-heading"), lines(4)));
+    } else {
+      content = h("div", { class: "da-load-paper da-load-list" + (scope === "registry" || scope === "insights" ? " is-table" : "") }, lines(7));
+    }
+    main().setAttribute("aria-busy", "true");
+    main().replaceChildren(h("div", { class: "da-page da-loading" },
+      h("div", { class: "da-page-head" }, h("h1", { class: "da-h1" }, titles[scope]), skeleton("160px", "is-action")),
+      h("span", { class: "da-sr", role: "status" }, "Загружаем данные"),
+      h("div", { "aria-hidden": "true" }, content)));
+  }
+
+  function errorState(scope, error) {
+    const message = error instanceof DA.ApiError ? error.message : "Не удалось открыть страницу. Попробуйте ещё раз";
+    main().replaceChildren(h("div", { class: "da-page" },
+      h("div", { class: "da-page-head" }, h("h1", { class: "da-h1", tabindex: -1 }, titles[scope])),
+      h("div", { class: "da-empty da-load-error", role: "alert" },
+        h("h2", {}, "Не удалось загрузить данные"), h("p", {}, message),
+        h("button", { class: "da-btn is-primary", type: "button", onclick: () => DA.route() }, DA.icon("refresh"), "Повторить"))));
+  }
+
+  DA.route = async function () {
+    if (!ready) return;
+    const current = ++routeId;
+    routeRequest?.abort();
+    const request = routeRequest = new AbortController();
     const [path, qs] = (location.hash || "#/").slice(1).split("?");
     if (!allowed(path)) { location.replace(DA.state.role === "reviewer" ? "#/review" : "#/appeals"); return; }
     const query = Object.fromEntries(new URLSearchParams(qs || ""));
     if (unmount) unmount();
     unmount = null;
-    main().replaceChildren();
-    const hit = ROUTES.map(([re, fn]) => [path.match(re), fn]).find(([m]) => m);
-    if (hit) unmount = hit[1](hit[0], query) || null;
-    else main().append(h("div", { class: "da-page" }, h("div", { class: "da-empty" }, h("h2", { tabindex: -1 }, "Такой страницы нет"), h("a", { class: "da-btn", href: "#/" }, "К списку обращений"))));
+    const hit = ROUTES.map(([re, scope, fn]) => [path.match(re), scope, fn]).find(([m]) => m);
+    if (hit) {
+      loadingState(hit[1]);
+      try {
+        await DA.data.prepare(hit[1], { id: hit[0][1] ? decodeURIComponent(hit[0][1]) : null,
+          evaluationId: query.evaluation, refresh: true, signal: request.signal });
+        if (current !== routeId || request.signal.aborted) return;
+        main().replaceChildren();
+        unmount = hit[2](hit[0], query) || null;
+      } catch (error) {
+        if (current !== routeId || request.signal.aborted) return;
+        errorState(hit[1], error);
+      }
+    } else main().replaceChildren(h("div", { class: "da-page" }, h("div", { class: "da-empty" }, h("h2", { tabindex: -1 }, "Такой страницы нет"), h("a", { class: "da-btn", href: home() }, "Вернуться к работе"))));
+    main().removeAttribute("aria-busy");
     const title = main().querySelector("h1, h2");
     if (title) title.focus({ preventScroll: true });
     window.scrollTo(0, 0);
     DA.side.sync();
   };
 
-  DA.initState();
-  DA.side = sidebar();
-  document.body.prepend(DA.side.mobileBar, DA.side.el, DA.side.scrim);
-  window.addEventListener("hashchange", DA.route);
-  DA.checkBackend().then(() => DA.route());
+  async function start() {
+    loadingState("registry");
+    await DA.api.detect();
+    DA.initState();
+    DA.side = sidebar();
+    document.body.prepend(DA.side.mobileBar, DA.side.el, DA.side.scrim);
+    ready = true;
+    window.addEventListener("hashchange", DA.route);
+    await DA.route();
+  }
+  start();
 })();

@@ -58,10 +58,14 @@
     document.body.append(t);
     const r = anchor ? anchor.getBoundingClientRect() : { left: innerWidth / 2 - 150, bottom: innerHeight - 80, top: innerHeight - 80 };
     const w = Math.min(360, innerWidth - 32);
+    t.style.maxWidth = w + "px";
     t.style.left = Math.max(16, Math.min(r.left, innerWidth - w - 16)) + "px";
-    const below = r.bottom + 8 + 60 < innerHeight;
-    t.style.top = (below ? r.bottom + 8 : r.top - 52) + "px";
-    setTimeout(() => { t.style.transition = "opacity 200ms"; t.style.opacity = "0"; setTimeout(() => t.remove(), 220); }, 3600);
+    const height = t.offsetHeight, below = r.bottom + 8 + height < innerHeight - 16;
+    t.style.top = Math.max(16, Math.min(below ? r.bottom + 8 : r.top - height - 8, innerHeight - height - 16)) + "px";
+    const remove = () => { t.remove(); window.removeEventListener("hashchange", remove); window.removeEventListener("resize", remove); };
+    window.addEventListener("hashchange", remove, { once: true });
+    window.addEventListener("resize", remove, { once: true });
+    setTimeout(() => { t.style.transition = "opacity 200ms"; t.style.opacity = "0"; setTimeout(remove, 220); }, 3600);
   };
 
   DA.drawer = function ({ title, subtitle, body, foot, onClose }) {
@@ -154,7 +158,7 @@
         s.style.setProperty("--w", tone === "na" ? 0 : (it.effectiveWeight || it.c.weight).toFixed(3));
         s.style.setProperty("--f", it.status === "done" && it.fraction != null ? it.fraction : 0);
         s.style.setProperty("--tone", `var(--da-${tone === "partial" ? "partial" : tone === "flag" ? "gross" : tone})`);
-        if (!opts.mini) s.title = `${it.c.title}: ${it.status === "done" ? (tone === "na" ? "N/A" : DA.fmt.score(it.points) + " из " + DA.fmt.score(it.effectiveWeight)) : "оценивается"}`;
+        if (!opts.mini) s.title = `${it.c.title}: ${it.status === "done" ? (tone === "na" ? "Не применимо" : DA.fmt.score(it.points) + " из " + DA.fmt.score(it.effectiveWeight)) : "оценивается"}`;
       }
       const done = list.filter((i) => i.status === "done" && i.c.type !== "flag");
       root.setAttribute("aria-label", `Лента весов: ${done.length} из ${list.filter((i) => i.c.type !== "flag").length} критериев оценено`);
@@ -167,10 +171,11 @@
   /* Ряд пилюль: ответ, при апелляции старый зачёркнут. */
   DA.answerPill = function (answer, c, previous, status) {
     if (status && status !== "done") return DA.h("span", { class: "da-pill t-pending" }, "…");
+    const label = (value) => DA.answerText(value, c);
     const tone = DA.tone(answer, c);
     const pill = DA.h("span", { class: `da-pill t-${tone}` });
-    if (previous != null && previous !== answer) pill.append(DA.h("s", {}, DA.answerLabel(previous, c)), " ");
-    pill.append(DA.answerLabel(answer, c));
+    if (previous != null && previous !== answer) pill.append(DA.h("s", {}, label(previous)), " ");
+    pill.append(label(answer));
     return pill;
   };
 
@@ -230,11 +235,11 @@
         return DA.h("li", {},
           DA.h("i", { class: `da-swatch t-${tone}` }),
           DA.h("span", {}, i.c.title),
-          DA.h("b", {}, i.answer === "na" ? "N/A" : `${DA.fmt.score(i.points)} из ${DA.fmt.score(i.effectiveWeight)}`));
+          DA.h("b", {}, i.answer === "na" ? "Не применимо" : `${DA.fmt.score(i.points)} из ${DA.fmt.score(i.effectiveWeight)}`));
       })),
       DA.h("p", { class: "da-hc-note" },
         "Каждый сегмент это критерий. Ширина показывает его вес, заливка показывает, сколько баллов набрано.",
-        hasNa ? " Штриховка означает N/A: вес такого критерия разделён между остальными." : "")
+        hasNa ? " Штриховка отмечает критерии, которые не применяются. Их баллы распределены между остальными." : "")
     ];
   };
 

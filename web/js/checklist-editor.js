@@ -34,22 +34,35 @@
     const form = h("div", {});
     const bar = h("div", { class: "da-editor-bar" });
     const versions = h("div", { class: "da-versions" });
+    let saving = false, saveError = "", disposed = false;
 
     const base = () => viewing;
     const sameAsBase = (c) => { const b = base().criteria.find((x) => x.id === c.id); return b && JSON.stringify(b) === JSON.stringify(c); };
     const isDirty = () => JSON.stringify(base().criteria) !== JSON.stringify(draft.criteria);
-    const allErrors = () => draft.criteria.reduce((n, c) => n + Object.keys(errorsOf(c, draft.criteria)).length, 0);
+    const allErrors = () => draft.criteria.length ? draft.criteria.reduce((n, c) => n + Object.keys(errorsOf(c, draft.criteria)).length, 0) : 1;
     const selected = () => draft.criteria.find((c) => c.id === selectedId);
 
     function renderVersions() {
       versions.replaceChildren(...DA.state.checklists.map((cl) => h("button", {
         class: "da-filter-chip" + (cl.version === viewing.version ? "" : " is-quiet"), type: "button",
         style: cl.version === viewing.version ? {} : { background: "var(--da-surface-2)", color: "var(--da-text-2)" },
-        onclick: () => {
-          if (isDirty() && !confirm("Несохранённые изменения пропадут. Продолжить?")) return;
-          viewing = cl; draft = structuredClone(cl); selectedId = draft.criteria[0].id; renderAll();
-        }
+        disabled: saving,
+        onclick: () => switchVersion(cl)
       }, `Версия ${cl.version}`, cl.isActive ? ", активная" : "")));
+    }
+
+    function switchVersion(cl) {
+      if (saving || cl.version === viewing.version) return;
+      const change = () => {
+        viewing = cl; draft = structuredClone(cl); selectedId = draft.criteria[0]?.id;
+        saveError = ""; renderAll();
+      };
+      if (!isDirty()) { change(); return; }
+      let modal;
+      modal = DA.modal({ title: "Перейти к другой версии", body: h("p", {}, "Несохранённые изменения будут потеряны."),
+        foot: h("div", { class: "da-crit-actions" },
+          h("button", { class: "da-btn", type: "button", onclick: () => modal.close() }, "Вернуться к правке"),
+          h("button", { class: "da-btn is-primary", type: "button", onclick: () => { modal.close(); change(); } }, "Не сохранять")) });
     }
 
     function renderBar() {
@@ -59,15 +72,16 @@
         Object.fromEntries(draft.criteria.map((c) => [c.id, c.type === "scale" ? DA.scaleMax(c) : "yes"])));
       const ribbon = DA.ribbon(weighted.map((c) => ({ c, status: "done", answer: "yes", fraction: 1, effectiveWeight: preview.items[c.id].effectiveWeight, points: preview.items[c.id].points })));
       const errors = allErrors();
-      const save = h("button", { class: "da-btn is-primary", disabled: !isDirty() || errors > 0 ? true : null, onclick: onSave }, `Сохранить как версию ${Math.max(...DA.state.checklists.map((c) => c.version)) + 1}`);
+      const save = h("button", { class: "da-btn is-primary" + (saving ? " is-busy" : ""), disabled: saving || !isDirty() || errors > 0 ? true : null, onclick: onSave }, `Сохранить как версию ${Math.max(...DA.state.checklists.map((c) => c.version)) + 1}`);
       if (errors && isDirty()) save.title = `Исправьте ${errors} ${DA.fmt.plural(errors, ["поле", "поля", "полей"])}`;
       bar.replaceChildren(...[
         ribbon,
         h("span", { class: "da-weight-sum" + (sum !== 100 ? " is-warn" : "") },
           sum === 100 ? "Сумма весов 100" : `Сумма весов ${sum}. Итог всё равно считается из 100: веса будут пересчитаны пропорционально`),
-        isDirty() ? h("button", { class: "da-btn is-text", onclick: () => { draft = structuredClone(viewing); if (!selected()) selectedId = draft.criteria[0].id; renderAll(); } }, "Отменить изменения") : null,
-        !viewing.isActive && !isDirty() ? h("button", { class: "da-btn", onclick: () => { DA.activateChecklist(viewing.version); renderAll(); DA.toast(`Версия ${viewing.version} стала активной`); } }, "Сделать активной") : null,
-        save].filter(Boolean));
+        isDirty() ? h("button", { class: "da-btn is-text", disabled: saving, onclick: () => { draft = structuredClone(viewing); if (!selected()) selectedId = draft.criteria[0]?.id; saveError = ""; renderAll(); } }, "Отменить изменения") : null,
+        !viewing.isActive && !isDirty() ? h("button", { class: "da-btn" + (saving ? " is-busy" : ""), disabled: saving, onclick: onActivate }, "Сделать активной") : null,
+        save,
+        saveError ? h("p", { class: "da-error da-save-error", role: "alert" }, saveError) : null].filter(Boolean));
     }
 
     function renderTree() {
@@ -78,14 +92,14 @@
           const isNew = !base().criteria.some((x) => x.id === c.id);
           const hasErr = Object.keys(errorsOf(c, draft.criteria)).length > 0;
           tree.append(h("button", {
-            class: "da-tree-item" + (isNew ? " is-new" : !sameAsBase(c) ? " is-changed" : ""), type: "button",
+            class: "da-tree-item" + (isNew ? " is-new" : !sameAsBase(c) ? " is-changed" : ""), type: "button", disabled: saving,
             "aria-current": String(c.id === selectedId), onclick: () => { selectedId = c.id; renderTree(); renderForm(); }
           },
             h("span", { style: hasErr ? { color: "var(--da-no-ink)" } : {} }, c.title || "Без названия"),
-            h("small", {}, typeShort(c) + (c.naAllowed ? ", можно N/A" : "")),
+            h("small", {}, typeShort(c) + (c.naAllowed ? ", может не применяться" : "")),
             c.type !== "flag" ? h("b", {}, c.weight || 0) : null));
         }
-        tree.append(h("button", { class: "da-btn is-text is-sm da-tree-add", onclick: () => addCriterion(s.id) }, DA.icon("plus", 16), "Добавить критерий"));
+        tree.append(h("button", { class: "da-btn is-text is-sm da-tree-add", disabled: saving, onclick: () => addCriterion(s.id) }, DA.icon("plus", 16), "Добавить критерий"));
       }
     }
 
@@ -154,8 +168,8 @@
         h("div", { class: "da-field" }, h("span", {}, "Раздел"), sections),
         h("label", { class: "da-field" }, h("span", {}, "Правило оценки"), rule, h("span", { class: "da-hint" }, "Модель получает этот текст дословно и оценивает по нему"), errSlot("description")),
         c.type === "scale" ? scaleEditor(c, errSlot("scale"), showErrors) : null,
-        c.type !== "flag" ? h("label", { class: "da-switch" }, na, h("i"), "Можно поставить N/A, если критерий неприменим") : null,
-        c.naAllowed ? h("label", { class: "da-field" }, h("span", {}, "Когда ставится N/A"), naCond, errSlot("naCondition")) : null,
+        c.type !== "flag" ? h("label", { class: "da-switch" }, na, h("i"), "Критерий может не относиться к разговору") : null,
+        c.naAllowed ? h("label", { class: "da-field" }, h("span", {}, "Когда критерий не применяется"), naCond, errSlot("naCondition")) : null,
         h("div", {}, h("button", { class: "da-btn is-text", style: { color: "var(--da-no-ink)" }, onclick: () => removeCriterion(c) }, DA.icon("trash", 16), "Удалить критерий"))));
     }
 
@@ -185,15 +199,38 @@
       DA.toast(`Критерий «${c.title || "без названия"}» удалён из черновика`, bar);
     }
 
-    function onSave() {
-      const saved = DA.saveChecklist(draft);
-      viewing = saved;
-      draft = structuredClone(saved);
-      renderAll();
-      DA.toast(`Версия ${saved.version} сохранена и стала активной. Новые оценки пойдут по ней`, bar);
+    async function onSave() {
+      if (saving || !isDirty() || allErrors()) return;
+      saving = true; saveError = ""; renderAll();
+      try {
+        const saved = await DA.data.saveChecklist(structuredClone(draft), { activate: true });
+        viewing = saved;
+        draft = structuredClone(saved);
+        if (!disposed) DA.toast(`Версия ${saved.version} сохранена и стала активной. Новые оценки пойдут по ней`, bar);
+      } catch (error) {
+        saveError = error.message || "Не удалось сохранить версию. Изменения остались в форме";
+      } finally {
+        saving = false;
+        if (!disposed) renderAll();
+      }
     }
 
-    function renderAll() { renderVersions(); renderBar(); renderTree(); renderForm(); }
+    async function onActivate() {
+      if (saving) return;
+      saving = true; saveError = ""; renderAll();
+      try {
+        viewing = await DA.data.activateChecklist(viewing.version);
+        draft = structuredClone(viewing);
+        if (!disposed) DA.toast(`Версия ${viewing.version} стала активной`, bar);
+      } catch (error) {
+        saveError = error.message || "Не удалось сделать версию активной. Повторите действие";
+      } finally {
+        saving = false;
+        if (!disposed) renderAll();
+      }
+    }
+
+    function renderAll() { renderVersions(); renderBar(); renderTree(); renderForm(); form.inert = saving; }
 
     root.append(h("div", { class: "da-page" },
       h("div", { class: "da-page-head" }, h("h1", { class: "da-h1", tabindex: -1 }, "Чек-лист"), versions),
@@ -203,6 +240,6 @@
 
     const leave = (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ""; } };
     window.addEventListener("beforeunload", leave);
-    return () => window.removeEventListener("beforeunload", leave);
+    return () => { disposed = true; window.removeEventListener("beforeunload", leave); };
   };
 })();

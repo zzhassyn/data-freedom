@@ -130,6 +130,27 @@ def test_bad_inputs_leave_no_partial_mutations(seeded_client, example_evaluation
     assert all(i["original"] is None for i in unchanged["evaluation"]["items"])
 
 
+def test_confirm_uses_current_total_after_another_appeal_changed_evaluation(seeded_client, example_evaluation):
+    changed = open_appeal(seeded_client, example_evaluation, "closing")
+    confirmed = open_appeal(seeded_client, example_evaluation, "contact", "no")
+    assert changed["totalBefore"] == confirmed["totalBefore"] == 82.94
+    response = seeded_client.post(f"/api/appeals/{changed['id']}/decision", json={
+        "action": "change", "newAnswer": "yes", "reason": "Завершение подтверждено последней репликой.",
+    })
+    assert response.status_code == 200
+    assert response.json()["evaluation"]["total"] == 88.82
+    response = seeded_client.post(f"/api/appeals/{confirmed['id']}/decision", json={
+        "action": "confirm", "newAnswer": None, "reason": "Оператор представился в первой реплике.",
+    })
+    assert response.status_code == 200
+    result = response.json()
+    assert result["appeal"]["status"] == "confirmed"
+    assert result["appeal"]["totalBefore"] == 82.94
+    assert result["appeal"]["totalAfter"] == result["evaluation"]["total"] == 88.82
+    persisted = seeded_client.get(f"/api/appeals/{confirmed['id']}").json()
+    assert persisted["totalAfter"] == persisted["evaluation"]["total"] == 88.82
+
+
 def test_second_appeal_preserves_first_model_answer_and_invalidates_coaching(seeded_client, example_evaluation):
     db = seeded_client.app.state.db
     appeal = open_appeal(seeded_client, example_evaluation)

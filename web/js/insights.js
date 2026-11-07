@@ -11,7 +11,7 @@
 
   /* ---------- Данные ---------- */
   const evaluated = () => Object.values(DA.state.evaluations)
-    .filter((ev) => ev && !ev.stale && ev.total != null && DA.state.conversations[ev.conversationId])
+    .filter((ev) => ev && ev.status === "done" && !ev.stale && ev.total != null && DA.state.conversations[ev.conversationId])
     .sort((a, b) => DA.state.numbers[a.conversationId] - DA.state.numbers[b.conversationId]);
 
   function doneItem(ev, criterionId) {
@@ -103,7 +103,7 @@
 
   /* ---------- Мелкие элементы ---------- */
   const TONES = ["yes", "partial", "no", "na"];
-  const toneLabel = (tone, c) => ({ yes: c && c.type === "scale" ? "Полный балл" : "Да", partial: "Частично", no: "Нет", na: "N/A" })[tone];
+  const toneLabel = (tone, c) => ({ yes: c && c.type === "scale" ? "Полный балл" : "Да", partial: "Частично", no: "Нет", na: "Не применимо" })[tone];
 
   function stackBar(parts, cls) {
     const total = parts.reduce((s, p) => s + p.n, 0);
@@ -158,8 +158,8 @@
     if (!s.n) return h("span", { class: "da-ins-dash", "aria-label": "Нет оценок" }, "—");
     const href = col.key ? `#/?lang=${col.key}&state=done` : "#/?state=done";
     const cell = h("a", { class: "da-ins-cell", href, style: { "--i": i },
-      "aria-label": `${c.title}, ${col.label.toLowerCase()}: ${s.rate == null ? "везде N/A" : "выполнено " + pct(s.rate)}` },
-      h("span", { class: "da-ins-rate" + (s.rate == null ? " is-na" : "") }, s.rate == null ? "N/A" : pct(s.rate)),
+      "aria-label": `${c.title}, ${col.label.toLowerCase()}: ${s.rate == null ? "не применяется" : "выполнено " + pct(s.rate)}` },
+      h("span", { class: "da-ins-rate" + (s.rate == null ? " is-na" : "") }, s.rate == null ? "Не применимо" : pct(s.rate)),
       stackBar(TONES.map((tone) => ({ tone, n: s[tone] }))));
     DA.hoverCard(cell, () => [
       h("div", { class: "da-hc-title" }, `${col.key ? col.label : "Все языки"}: ${nConv(s.n)}. ${TONES.filter((t) => s[t]).map((t) => `${toneLabel(t, c)} ${s[t]}`).join(", ")}`),

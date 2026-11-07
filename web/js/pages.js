@@ -5,14 +5,13 @@
 
   /* Строка апелляции: обращение, критерий, ответ модели и что с ним стало. opts.comment показывает комментарий аналитика. */
   DA.appealRow = function (a, opts) {
-    const ev = DA.state.evaluations[a.conversationId];
-    const c = DA.criterionById(DA.checklist(ev.checklistVersion), a.criterionId);
-    const conv = DA.state.conversations[a.conversationId];
+    const { ev, c, conv } = DA.data.appealContext(a);
     const open = a.status === "open";
     const target = open ? a.proposedAnswer : a.status === "changed" ? a.decision.newAnswer : null;
     const status = open ? `На рассмотрении, подана ${DA.fmt.ago(Math.round((Date.now() - a.createdAt) / 60000))}`
       : `${a.status === "changed" ? "Оценка изменена" : "Оценка подтверждена"}, ${DA.fmt.dateTime(a.decision.decidedAt).toLowerCase()}`;
-    return h("a", { class: "da-list-row ap-row", href: `#/c/${encodeURIComponent(a.conversationId)}?criterion=${encodeURIComponent(a.criterionId)}` },
+    const query = new URLSearchParams({ criterion: a.criterionId, evaluation: ev.id });
+    return h("a", { class: "da-list-row ap-row", href: `#/c/${encodeURIComponent(a.conversationId)}?${query}` },
       h("div", {}, h("div", { class: "da-num" }, `№ ${DA.convNumber(a.conversationId)}`), h("div", { class: "da-small da-muted" }, `${DA.langLabel[conv.language]}, ${DA.channelLabel(conv).toLowerCase()}`)),
       h("div", { class: "ap-main" },
         h("b", {}, c.title),
