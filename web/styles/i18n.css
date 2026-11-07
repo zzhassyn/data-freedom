@@ -1,0 +1,15 @@
+/* Компактный выбор языка не меняет ширину при переключении подписи интерфейса. */
+.da-locale-control { display: inline-flex; align-items: center; flex: none; gap: 2px; padding: 3px; border: 1px solid var(--da-line); border-radius: var(--da-r-control); background: var(--da-surface-2); }
+.da-locale-option { display: grid; place-items: center; min-width: 34px; min-height: 32px; padding: 5px 7px; border: 0; border-radius: 8px; background: transparent; color: var(--da-text-2); font-size: 12px; font-weight: 650; line-height: 1; transition: background var(--da-fast), color var(--da-fast), box-shadow var(--da-fast), transform 90ms var(--da-ease); }
+.da-locale-option:hover { color: var(--da-brand-press); background: var(--da-brand-soft); }
+.da-locale-option:active { transform: scale(.96); }
+.da-locale-option[aria-pressed="true"] { background: var(--da-surface); color: var(--da-text); box-shadow: var(--da-shadow-rest); }
+.da-locale-option:focus-visible { outline: 2px solid var(--da-brand); outline-offset: 2px; }
+body[data-sidebar="closed"] .da-side .da-locale-control { flex-direction: column; align-items: stretch; }
+body[data-sidebar="closed"] .da-side .da-locale-option { min-width: 30px; padding-right: 4px; padding-left: 4px; }
+@media (max-width: 760px) {
+  .da-locale-option { min-height: 36px; min-width: 32px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .da-locale-option { transition-duration: 1ms; }
+}

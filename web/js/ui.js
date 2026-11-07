@@ -7,7 +7,8 @@
     const node = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs || {})) {
       if (v == null || v === false) continue;
-      if (k === "class") node.className = v;
+      if (DA.i18n?.isMessage(v)) DA.i18n.bindAttr(node, k, v);
+      else if (k === "class") node.className = v;
       else if (k === "style" && typeof v === "object") Object.assign(node.style, v);
       else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
       else if (k === "html") node.innerHTML = v;
@@ -15,7 +16,7 @@
     }
     for (const c of children.flat(Infinity)) {
       if (c == null || c === false) continue;
-      node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+      node.append(DA.i18n?.isMessage(c) ? DA.i18n.text(c) : c instanceof Node ? c : document.createTextNode(String(c)));
     }
     return node;
   };
@@ -75,7 +76,7 @@
     const panel = DA.h("aside", { class: "da-drawer", role: "dialog", "aria-modal": "true", "aria-label": title },
       DA.h("div", { class: "da-drawer-head" },
         DA.h("div", {}, DA.h("h2", {}, title), subtitle ? DA.h("p", {}, subtitle) : null),
-        DA.h("button", { class: "da-close", "aria-label": "Закрыть", onclick: () => close() }, DA.icon("x"))),
+        DA.h("button", { class: "da-close", "aria-label": DA.msg("ui.close"), onclick: () => close() }, DA.icon("x"))),
       DA.h("div", { class: "da-drawer-body" }, body),
       foot ? DA.h("div", { class: "da-drawer-foot" }, foot) : null);
     function key(e) {
@@ -159,10 +160,11 @@
         s.style.setProperty("--w", tone === "na" ? 0 : (it.effectiveWeight || it.c.weight).toFixed(3));
         s.style.setProperty("--f", it.status === "done" && it.fraction != null ? it.fraction : 0);
         s.style.setProperty("--tone", `var(--da-${tone === "partial" ? "partial" : tone === "flag" ? "gross" : tone})`);
-        if (!opts.mini) s.title = `${it.c.title}: ${it.status === "done" ? (tone === "na" ? "Не применимо" : DA.fmt.score(it.points) + " из " + DA.fmt.score(it.effectiveWeight)) : "оценивается"}`;
+        if (!opts.mini) DA.i18n.bindAttr(s, "title", "ui.ribbonTitle", () => ({ criterion: it.c.title,
+          result: it.status === "done" ? (tone === "na" ? DA.t("ui.notApplicable") : DA.t("ui.pointsOf", { points: DA.fmt.score(it.points), max: DA.fmt.score(it.effectiveWeight) })) : DA.t("ui.evaluating") }));
       }
       const done = list.filter((i) => i.status === "done" && i.c.type !== "flag");
-      root.setAttribute("aria-label", `Лента весов: ${done.length} из ${list.filter((i) => i.c.type !== "flag").length} критериев оценено`);
+      DA.i18n.bindAttr(root, "aria-label", "ui.ribbonProgress", { done: done.length, total: list.filter((i) => i.c.type !== "flag").length });
     };
     root.update(items);
     root.light = (id) => Object.entries(segs).forEach(([k, s]) => s.classList.toggle("is-lit", k === id));
@@ -172,20 +174,27 @@
   /* Ряд пилюль: ответ, при апелляции старый зачёркнут. */
   DA.answerPill = function (answer, c, previous, status) {
     if (status && status !== "done") return DA.h("span", { class: "da-pill t-pending" }, "…");
-    const label = (value) => DA.answerText(value, c);
+    const label = (value) => DA.msg(() => DA.answerText(value, c));
     const tone = DA.tone(answer, c);
     const pill = DA.h("span", { class: `da-pill t-${tone}` });
     if (previous != null && previous !== answer) pill.append(DA.h("s", {}, label(previous)), " ");
-    pill.append(label(answer));
+    pill.append(DA.i18n.text(label(answer)));
     return pill;
   };
 
+  const counts = new WeakMap();
   DA.countTo = function (node, from, to, ms) {
-    if (from == null || to == null || matchMedia("(prefers-reduced-motion: reduce)").matches) { node.textContent = DA.fmt.score(to); return; }
+    const run = {}, still = from == null || to == null || matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let current = still ? to : from;
+    counts.set(node, run);
+    DA.i18n.bindText(node, () => DA.fmt.score(current));
+    if (still) return;
     const t0 = performance.now();
     (function step(t) {
+      if (counts.get(node) !== run) return;
       const k = Math.min(1, (t - t0) / ms), e = 1 - Math.pow(1 - k, 3);
-      node.textContent = DA.fmt.score(from + (to - from) * e);
+      current = from + (to - from) * e;
+      DA.i18n.refresh(node);
       if (k < 1) requestAnimationFrame(step);
     })(t0);
   };
@@ -229,18 +238,17 @@
       .filter((i) => i.c.type !== "flag");
     const hasNa = rows.some((i) => i.answer === "na");
     return [
-      DA.h("div", { class: "da-hc-title" }, "Из чего сложился итог"),
+      DA.h("div", { class: "da-hc-title" }, DA.msg("ui.totalBreakdown")),
       DA.ribbon(rows),
       DA.h("ul", { class: "da-hc-list" }, rows.map((i) => {
         const tone = DA.tone(i.answer, i.c);
         return DA.h("li", {},
           DA.h("i", { class: `da-swatch t-${tone}` }),
           DA.h("span", {}, i.c.title),
-          DA.h("b", {}, i.answer === "na" ? "Не применимо" : `${DA.fmt.score(i.points)} из ${DA.fmt.score(i.effectiveWeight)}`));
+          DA.h("b", {}, i.answer === "na" ? DA.msg("ui.notApplicable") : DA.msg("ui.pointsOf", () => ({ points: DA.fmt.score(i.points), max: DA.fmt.score(i.effectiveWeight) }))));
       })),
       DA.h("p", { class: "da-hc-note" },
-        "Каждый сегмент это критерий. Ширина показывает его вес, заливка показывает, сколько баллов набрано.",
-        hasNa ? " Штриховка отмечает критерии, которые не применяются. Их баллы распределены между остальными." : "")
+        DA.msg("ui.ribbonMeaning"), hasNa ? DA.msg("ui.ribbonExcluded") : "")
     ];
   };
 
@@ -255,7 +263,7 @@
   /* Кнопка «Фильтры» с выпадающей панелью групп. groups: [{ key, title, options: [{ value, label }] }], value: { key: Set } */
   DA.filterMenu = function (groups, value, onChange) {
     const count = DA.h("span", { class: "da-count is-brand" });
-    const btn = DA.h("button", { class: "da-btn", type: "button", "aria-haspopup": "true", "aria-expanded": "false" }, DA.icon("filter"), "Фильтры", count);
+    const btn = DA.h("button", { class: "da-btn", type: "button", "aria-haspopup": "true", "aria-expanded": "false" }, DA.icon("filter"), DA.msg("ui.filters"), count);
     const panel = DA.h("div", { class: "da-menu", hidden: true });
     const root = DA.h("div", { class: "da-menu-wrap" }, btn, panel);
     function sync() {
@@ -299,7 +307,7 @@
     const panel = h("div", { class: "da-modal", role: "dialog", "aria-modal": "true", "aria-labelledby": titleId, tabindex: -1, style: { width: `min(${width || 560}px, 100%)` } },
       h("div", { class: "da-modal-head" },
         h("h2", { id: titleId }, title),
-        h("button", { class: "da-close", type: "button", "aria-label": "Закрыть", onclick: () => close() }, DA.icon("x"))),
+        h("button", { class: "da-close", type: "button", "aria-label": DA.msg("ui.close"), onclick: () => close() }, DA.icon("x"))),
       h("div", { class: "da-modal-body" }, body),
       foot ? h("div", { class: "da-modal-foot" }, foot) : null);
     const wrap = h("div", { class: "da-modal-wrap" }, panel);
