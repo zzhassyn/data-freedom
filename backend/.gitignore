@@ -4,5 +4,6 @@
 __pycache__/
 .pytest_cache/
 .pytest-tmp/
+.pytest-roster-tmp/
 *.pyc
 /verification/
