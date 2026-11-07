@@ -151,9 +151,7 @@
   }
 
   function errorState(scope, error) {
-    const errorKey = { network: "networkError", invalid_response: "responseError", not_found: "missingData", stale_source: "staleData" }[error?.code];
-    const message = errorKey ? msg(errorKey) : error instanceof DA.ApiError
-      ? DA.msg((locale) => locale === "ru" ? error.message : DA.t("app.openError")) : msg("openError");
+    const message = DA.msg(() => DA.apiErrorMessage(error));
     main().replaceChildren(h("div", { class: "da-page" },
       h("div", { class: "da-page-head" }, h("h1", { class: "da-h1", tabindex: -1 }, msg(titles[scope]))),
       h("div", { class: "da-empty da-load-error", role: "alert" },

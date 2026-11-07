@@ -1,5 +1,50 @@
 /* Реестр: страницы, подсветка новых строк, карточки строк на телефоне, модальное окно и загрузка обращений. */
 
+/* Сводка относится ко всему реестру, инструменты и счётчик фильтров принадлежат списку. */
+.da-registry-heading { align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.da-registry-heading .da-registry-upload { min-height: 44px; }
+.da-registry-summary { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 18px 36px; margin: 0 0 24px; }
+.da-registry-metric { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; }
+.da-registry-metric > b { font-size: 22px; font-weight: 650; line-height: 1.2; letter-spacing: -.02em; font-variant-numeric: tabular-nums; color: var(--da-text); }
+.da-registry-metric > span { font-size: 13px; line-height: 1.4; color: var(--da-text-2); }
+.da-registry-evaluation { display: flex; gap: 24px; }
+.da-registry-metric.is-link { max-width: 190px; min-height: 44px; text-decoration: none; border-radius: 6px; }
+.da-registry-metric.is-link > span { color: var(--da-brand-press); text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; transition: text-decoration-color var(--da-fast); }
+.da-registry-metric.is-link:hover > span { text-decoration-color: currentColor; }
+.da-registry-metric.is-link:active { transform: translateY(1px); }
+.da-registry-metric.is-gross > b, .da-registry-metric.is-gross > span { color: var(--da-gross); }
+.da-registry-tools { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px 24px; padding: 16px 20px 12px; border-bottom: 1px solid var(--da-line); }
+.da-registry-find { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.da-registry-find .da-search { flex: 1; min-width: 0; }
+.da-registry-find .da-search .da-input { width: 100%; }
+.da-registry-tools .da-btn { min-height: 44px; }
+.da-registry-tools .da-registry-evaluate { max-width: 380px; height: auto; white-space: normal; }
+.da-registry-filter-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; grid-column: 1 / -1; min-width: 0; }
+.da-registry-scope { font-size: 13px; color: var(--da-text-2); }
+.da-registry-filter-state .stt-registry-open { margin-left: auto; min-height: 32px; padding-top: 4px; padding-bottom: 4px; }
+.da-registry-page .da-registry td { height: 70px; }
+.da-registry-page .da-registry .c-num { width: 56px; }
+.da-registry-page .da-registry .c-score { min-width: 132px; }
+.da-registry-page .da-registry .c-marks { min-width: 40px; }
+.da-registry-page .da-registry .da-preview { font-size: 15px; color: var(--da-text); }
+.da-record-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 12px; line-height: 1.3; color: var(--da-text-2); }
+.da-record-meta > span { display: inline-flex; align-items: center; gap: 5px; }
+.da-record-meta .da-channel { font-size: inherit; }
+.da-record-meta .stt-row-slot:empty { display: none; }
+.da-registry-empty { display: flex; flex-direction: column; align-items: center; padding: 52px 24px 56px; text-align: center; }
+.da-registry-empty h2 { margin: 26px 0 8px; font-size: 22px; font-weight: 650; letter-spacing: -.02em; }
+.da-registry-empty p { max-width: 430px; margin: 0 0 22px; color: var(--da-text-2); line-height: 1.5; }
+.da-registry-empty .da-btn { min-height: 44px; height: auto; white-space: normal; }
+.da-empty-register { width: 420px; max-width: 100%; padding: 0 16px; border: 1px dashed var(--da-line); border-radius: 12px; }
+.da-empty-register > div { display: grid; grid-template-columns: 18px minmax(0, 1fr) 48px; align-items: center; gap: 18px; height: 34px; }
+.da-empty-register-head { border-bottom: 1px solid var(--da-line); }
+.da-empty-register-head i { height: 4px; width: 65%; background: var(--da-line); border-radius: 3px; }
+.da-empty-register-head i:first-child { width: 100%; }
+.da-empty-register-row i { height: 10px; border-bottom: 1px dashed var(--da-line); }
+.da-empty-register-row i:first-child { width: 12px; height: 12px; border: 1px dashed var(--da-line); border-radius: 3px; }
+.da-empty-register-row:nth-child(3) i:nth-child(2) { width: 75%; }
+.da-empty-register-row:nth-child(4) i:nth-child(2) { width: 90%; }
+
 /* ---------- Смена страницы и новые строки ---------- */
 .da-table tbody.is-paging tr { animation: da-row-in 240ms var(--da-ease) both; animation-delay: calc(var(--i) * 14ms); }
 @keyframes da-row-in { from { opacity: 0; transform: translateY(4px); } }
@@ -114,6 +159,33 @@
 
 /* ---------- Узкий экран ---------- */
 @media (max-width: 760px) {
+  .da-registry-heading { gap: 8px; margin-bottom: 18px; flex-wrap: nowrap; }
+  .da-registry-heading .da-registry-upload { padding: 0 12px; font-size: 14px; flex: none; }
+  .da-registry-summary { gap: 10px 24px; margin-bottom: 18px; }
+  .da-registry-summary > .da-registry-metric:not(.is-link) { width: 100px; }
+  .da-registry-evaluation { flex: 1; gap: 20px; }
+  .da-registry-metric > span { max-width: 130px; }
+  .da-registry-metric.is-link { flex: 1 1 140px; flex-direction: row; align-items: center; gap: 10px; max-width: none; }
+  .da-registry-metric.is-link > span { max-width: 250px; }
+  .da-registry-tools { grid-template-columns: auto minmax(0, 1fr); gap: 10px; padding: 12px; }
+  .da-registry-find { display: contents; }
+  .da-registry-find .da-search { grid-column: 1 / -1; }
+  .da-registry-tools .da-registry-evaluate { justify-self: stretch; font-size: 13px; padding: 9px 12px; }
+  .da-registry-filter-state { gap: 6px; }
+  .da-registry-filter-state .stt-registry-open { margin-left: -8px; font-size: 13px; }
+  .da-registry-page .da-registry td { height: auto; }
+  .da-registry-page .da-registry .c-num { width: auto; }
+  .da-registry-page .da-registry .c-score { min-width: 0; }
+  .da-registry-page .da-registry .c-marks { min-width: 0; }
+  .da-registry-page .da-record-meta { gap: 4px 12px; margin-top: 7px; }
+  .da-registry-page .da-record-meta > span { color: var(--da-text-2); font-size: 12px; }
+  .da-registry-page .da-record-meta .da-channel { font-size: 12px; }
+  .da-registry-page .da-record-meta .stt-row-slot { margin-left: 0; }
+  .da-registry-empty { padding: 32px 20px 36px; }
+  .da-empty-register { padding: 0 12px; }
+  .da-empty-register > div { grid-template-columns: 14px minmax(0, 1fr) 34px; gap: 12px; height: 30px; }
+  .da-registry-empty h2 { font-size: 20px; }
+  .da-registry-empty p { font-size: 14px; }
   .da-only-narrow { display: inline; }
   .da-registry tbody tr:not(.da-empty-row) { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 14px 16px; }
   .da-registry td { padding: 0; }

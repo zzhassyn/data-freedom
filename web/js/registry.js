@@ -60,7 +60,24 @@
     "registry.duration": { ru: "Длительность", kk: "Ұзақтығы", en: "Duration" },
     "registry.total": { ru: "Итог", kk: "Қорытынды", en: "Total" },
     "registry.marks": { ru: "Отметки", kk: "Белгілер", en: "Flags" },
-    "registry.upload": { ru: "Загрузить обращения", kk: "Өтініштерді жүктеу", en: "Upload conversations" }
+    "registry.upload": { ru: "Загрузить обращения", kk: "Өтініштерді жүктеу", en: "Upload conversations" },
+    "registry.uploadShort": { ru: "Загрузить", kk: "Жүктеу", en: "Upload" },
+    "registry.summary": { ru: "Сводка всего реестра", kk: "Бүкіл тізілімнің жиынтығы", en: "Whole registry summary" },
+    "registry.totalAll": { ru: "Всего обращений", kk: "Барлық өтініш", en: "Total conversations" },
+    "registry.evaluatedLabel": { ru: "Оценено", kk: "Бағаланды", en: "Evaluated" },
+    "registry.averageLabel": { ru: "Средний итог", kk: "Орташа қорытынды", en: "Average score" },
+    "registry.pendingAppeals": {
+      ru: { one: "апелляция ждёт решения", few: "апелляции ждут решения", many: "апелляций ждут решения", other: "апелляции ждут решения" },
+      kk: "апелляция шешім күтуде", en: { one: "appeal awaiting a decision", other: "appeals awaiting a decision" }
+    },
+    "registry.grossCount": { ru: { one: "грубая ошибка", few: "грубые ошибки", many: "грубых ошибок", other: "грубые ошибки" }, kk: "өрескел қате", en: { one: "serious error", other: "serious errors" } },
+    "registry.scopeAll": { ru: "Все обращения в реестре", kk: "Тізілімдегі барлық өтініш", en: "All conversations in the registry" },
+    "registry.scopeFiltered": { ru: "По фильтрам: {count} из {total}", kk: "Сүзгі бойынша: {total} ішінен {count}", en: "Matching filters: {count} of {total}" },
+    "registry.evaluateAllHint": { ru: "Оценить все обращения без оценки во всём реестре, включая скрытые фильтрами", kk: "Сүзгілер жасырған өтініштерді қоса, бүкіл тізілімдегі бағаланбаған өтініштердің бәрін бағалау", en: "Evaluate every unrated conversation in the registry, including those hidden by filters" },
+    "registry.conversation": { ru: "Обращение", kk: "Өтініш", en: "Conversation" },
+    "registry.emptyTitle": { ru: "Обращений пока нет", kk: "Өтініштер әзірге жоқ", en: "No conversations yet" },
+    "registry.emptyHelp": { ru: "Загрузите выгрузку из CRM файлом или синхронизируйте обращения.", kk: "CRM жүйесінен экспортталған файлды жүктеңіз немесе өтініштерді синхрондаңыз.", en: "Upload a CRM export file or sync conversations." },
+    "registry.emptyFileHelp": { ru: "Загрузите файл выгрузки, чтобы увидеть обращения и начать оценку.", kk: "Өтініштерді көріп, бағалауды бастау үшін экспорт файлын жүктеңіз.", en: "Upload an export file to see conversations and start evaluating them." }
   });
 
   const GROUPS = [
@@ -198,7 +215,21 @@
     }
     for (const cid of view.selected) if (!DA.state.conversations[cid]) view.selected.delete(cid);
     const tbody = h("tbody");
-    const counter = h("span", { class: "da-muted" });
+    const counter = h("span", { class: "da-registry-scope", "aria-live": "polite" });
+    const totalValue = h("b"), evaluatedValue = h("b"), averageValue = h("b"), appealValue = h("b"), grossValue = h("b");
+    const appealLabel = h("span"), grossLabel = h("span");
+    const metric = (value, label, cls) => h("div", { class: `da-registry-metric${cls ? " " + cls : ""}` }, value, h("span", {}, label));
+    const averageMetric = metric(averageValue, m("averageLabel"), "is-average");
+    const evaluatedMetric = h("div", { class: "da-registry-evaluation" }, metric(evaluatedValue, m("evaluatedLabel")), averageMetric);
+    const appealMetric = h("a", { class: "da-registry-metric is-link", href: "#/appeals?status=open" }, appealValue, appealLabel);
+    const grossMetric = h("a", { class: "da-registry-metric is-link is-gross", href: "#/?state=gross", onclick: (event) => {
+      if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      GROUPS.forEach((g) => filter[g.key].clear());
+      filter.state.add("gross"); filter.q = ""; filter.batch = null; search.value = "";
+      filtersChanged(); view.page = 1; menu.refresh(); render();
+    } }, grossValue, grossLabel);
+    const summary = h("section", { class: "da-registry-summary", "aria-label": m("summary") }, metric(totalValue, m("totalAll")), evaluatedMetric, appealMetric, grossMetric);
     const chips = h("div", { class: "da-active-filters" });
     const menu = DA.filterMenu(GROUPS, filter, () => { filter.batch = null; filtersChanged(); view.page = 1; render(); });
     const range = h("span", { class: "da-pager-range", "aria-live": "polite" });
@@ -216,7 +247,8 @@
     mobilePageCheck.classList.add("da-select-page-mobile");
     const selectionMessage = h("span", { class: "da-selection-message", "aria-live": "polite" });
     const selectionBar = h("div", { class: "da-registry-selection" }, mobilePageCheck, selectionMessage);
-    const allNew = h("button", { class: "da-btn", type: "button", onclick: evaluateNew });
+    const allNew = h("button", { class: "da-btn is-primary da-registry-evaluate", type: "button", title: m("evaluateAllHint"), onclick: evaluateNew });
+    const upload = h("button", { class: "da-btn da-registry-upload", type: "button", "aria-label": m("upload"), onclick: () => DA.openUpload(render) }, DA.icon("upload", 17), m("uploadShort"));
     const sttEntry = h("button", { class: "da-btn is-text is-sm stt-registry-open", type: "button", hidden: true, onclick: () => DA.stt?.open({ all: true }) }, DA.icon("phone", 16), m("transcriptions"));
     const rows = new Map(), stamps = new Map();
     let fresh = new Set(), animate = false, filtered = [], pageRecords = [], mounted = true, starting = false;
@@ -287,13 +319,32 @@
 
     function updateCounter() {
       const records = Object.values(DA.state.conversations);
-      const evaluated = records.filter((r) => {
+      const evaluated = records.map((r) => DA.state.evaluations[r.conversation_id]).filter((ev) => ev && ev.status === "done" && !ev.stale);
+      const scored = evaluated.filter((ev) => Number.isFinite(ev.total));
+      const average = scored.length ? scored.reduce((sum, ev) => sum + ev.total, 0) / scored.length : null;
+      const ids = new Set(records.map((r) => r.conversation_id));
+      const appeals = DA.state.appeals.filter((appeal) => appeal.status === "open" && ids.has(appeal.conversationId)).length;
+      const gross = records.filter((r) => {
         const ev = DA.state.evaluations[r.conversation_id];
-        return ev && ev.status === "done" && !ev.stale;
+        return ev && !ev.stale && ev.grossFlagged;
       }).length;
-      DA.i18n.bindText(counter, m("counter", { count: records.length, evaluated }));
+      DA.i18n.bindText(totalValue, () => records.length.toLocaleString(DA.fmt.locale()));
+      DA.i18n.bindText(evaluatedValue, () => evaluated.length.toLocaleString(DA.fmt.locale()));
+      DA.i18n.bindText(averageValue, () => average == null ? "" : average.toLocaleString(DA.fmt.locale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 }));
+      DA.i18n.bindText(appealValue, () => appeals.toLocaleString(DA.fmt.locale()));
+      DA.i18n.bindText(grossValue, () => gross.toLocaleString(DA.fmt.locale()));
+      DA.i18n.bindText(appealLabel, m("pendingAppeals", { count: appeals }));
+      DA.i18n.bindText(grossLabel, m("grossCount", { count: gross }));
+      summary.hidden = !records.length;
+      evaluatedMetric.hidden = !evaluated.length;
+      averageMetric.hidden = !scored.length;
+      appealMetric.hidden = !appeals;
+      grossMetric.hidden = !gross;
+      const constrained = filter.q.trim() || filter.batch || GROUPS.some((g) => filter[g.key].size);
+      DA.i18n.bindText(counter, constrained ? m("scopeFiltered", { count: visible(records).length, total: records.length }) : m("scopeAll"));
       const count = records.filter((r) => !DA.state.evaluations[r.conversation_id]).length;
       DA.i18n.bindText(allNew, m("evaluateNew", { count }));
+      allNew.hidden = !count;
       allNew.disabled = !count || starting || !DA.bulk || DA.bulk.isBusy();
     }
 
@@ -306,7 +357,7 @@
       try {
         await DA.bulk.start(ids, { checklistVersion: DA.activeChecklist().version, reuse: false });
       } catch (error) {
-        if (mounted) DA.toast(error.message || m("startFailed"), allNew);
+        if (mounted) DA.toast(DA.msg(() => DA.apiErrorMessage(error)), allNew);
       } finally {
         starting = false;
         if (mounted) updateCounter();
@@ -431,14 +482,26 @@
 
       updateCounter();
       renderChips();
+      const empty = !records.length;
+      page.classList.toggle("is-empty", empty);
+      emptyState.hidden = !empty;
+      table.hidden = empty;
+      selectionBar.hidden = empty;
+      toolbar.hidden = empty;
+      upload.hidden = empty;
       tbody.replaceChildren();
       rows.clear();
       stamps.clear();
       tbody.classList.remove("is-paging");
       pageRecords = list.slice((view.page - 1) * size, view.page * size);
+      if (empty) {
+        pager.hidden = true;
+        syncSelection();
+        return;
+      }
       if (!list.length) {
         pager.hidden = true;
-        tbody.append(h("tr", { class: "da-empty-row" }, h("td", { colspan: 9 },
+        tbody.append(h("tr", { class: "da-empty-row" }, h("td", { colspan: 5 },
           h("div", {}, m("noMatches")),
           h("button", { class: "da-btn is-text", onclick: reset }, m("clearFilters")))));
         syncSelection();
@@ -454,11 +517,13 @@
           onkeydown: (e) => { if (e.key === "Enter" && e.target === e.currentTarget) open(); } },
           h("td", { class: "c-select", onclick: (e) => e.stopPropagation() }, control),
           h("td", { class: "da-num c-num", title: cid }, DA.convNumber(cid)),
-          h("td", { class: "da-muted da-nowrap c-date" }, DA.msg(() => when(DA.tx.startedAt(r)))),
-          h("td", { class: "c-lang" }, DA.msg(() => DA.langLabel[r.language])),
-          h("td", { class: "c-chan" }, h("span", { class: "da-channel" }, DA.icon(r.channel === "voice call" ? "phone" : "message", 16), DA.msg(() => DA.channelLabel(r))), r.channel === "voice call" ? stt : null),
-          h("td", { class: "c-prev" }, h("div", { class: "da-preview" }, r.summary?.topic || DA.tx.preview(r))),
-          h("td", { class: "da-muted c-dur" }, h("span", { class: "da-only-narrow" }, m("durationLabel")), DA.fmt.duration(DA.tx.duration(r))),
+          h("td", { class: "c-prev" }, h("div", { class: "da-preview" }, r.summary?.topic || DA.tx.preview(r)),
+            h("div", { class: "da-record-meta" },
+              h("span", { class: "c-chan" }, h("span", { class: "da-channel" }, DA.icon(r.channel === "voice call" ? "phone" : "message", 14), DA.msg(() => DA.channelLabel(r)))),
+              h("span", { class: "c-lang" }, DA.msg(() => DA.langLabel[r.language])),
+              h("span", { class: "c-date" }, DA.msg(() => when(DA.tx.startedAt(r)))),
+              h("span", { class: "c-dur" }, DA.icon("clock", 12), h("span", { class: "da-sr" }, m("durationLabel")), DA.fmt.duration(DA.tx.duration(r))),
+              r.channel === "voice call" ? stt : null)),
           score, mark);
         rows.set(cid, { row, input: control.querySelector("input"), score, mark, stt, sttStamp: null });
         stamps.set(cid, evaluationStamp(cid));
@@ -476,30 +541,33 @@
     let t;
     search.addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => { filter.q = search.value; filter.batch = null; filtersChanged(); view.page = 1; render(); }, 200); });
 
-    wrap.append(
-      selectionBar,
-      h("table", { class: "da-table da-registry" },
+    const toolbar = h("div", { class: "da-registry-tools" },
+      h("div", { class: "da-registry-find" }, h("div", { class: "da-search" }, DA.icon("search"), search), menu),
+      allNew,
+      h("div", { class: "da-registry-filter-state" }, counter, chips, sttEntry));
+    const table = h("table", { class: "da-table da-registry" },
         h("thead", {}, h("tr", {},
           h("th", { class: "c-select" }, pageCheck),
-          h("th", {}, m("number")), h("th", {}, m("dateTime")), h("th", {}, m("language")), h("th", {}, m("channel")),
-          h("th", {}, m("topic")), h("th", {}, m("duration")), h("th", {}, m("total")), h("th", {}, h("span", { class: "da-sr" }, m("marks"))))),
-        tbody),
-      pager);
-    root.append(h("div", { class: "da-page" },
-      h("div", { class: "da-page-head" },
-        h("h1", { class: "da-h1", tabindex: -1 }, m("title")), counter,
-        h("div", { class: "da-registry-actions da-head-action" }, allNew,
-          h("button", { class: "da-btn is-primary", onclick: () => DA.openUpload(render) }, DA.icon("upload"), m("upload")))),
-      h("div", { class: "da-toolbar" }, h("div", { class: "da-search" }, DA.icon("search"), search), menu, chips, sttEntry),
-      wrap));
+          h("th", {}, m("number")), h("th", {}, m("conversation")), h("th", {}, m("total")), h("th", {}, h("span", { class: "da-sr" }, m("marks"))))), tbody);
+    const emptyState = h("div", { class: "da-registry-empty", hidden: true },
+      h("div", { class: "da-empty-register", "aria-hidden": "true" },
+        ...Array.from({ length: 4 }, (_, i) => h("div", { class: i ? "da-empty-register-row" : "da-empty-register-head" }, h("i"), h("i"), h("i")))),
+      h("h2", {}, m("emptyTitle")), h("p", {}, m(DA.mode === "server" ? "emptyHelp" : "emptyFileHelp")),
+      h("button", { class: "da-btn is-primary", type: "button", onclick: () => DA.openUpload(render) }, DA.icon("upload", 18), m("upload")));
+    wrap.append(toolbar, selectionBar, table, pager, emptyState);
+    const page = h("div", { class: "da-page da-registry-page" },
+      h("div", { class: "da-page-head da-registry-heading" }, h("h1", { class: "da-h1", tabindex: -1 }, m("title")), upload), summary, wrap);
+    root.append(page);
     render();
     const unsubscribe = DA.bulk?.subscribe(refreshProgress);
     const unsubscribeStt = DA.stt?.subscribe(refreshStt);
+    window.addEventListener("da:appeals-changed", updateCounter);
     return () => {
       mounted = false;
       clearTimeout(t);
       unsubscribe?.();
       unsubscribeStt?.();
+      window.removeEventListener("da:appeals-changed", updateCounter);
       DA.bulk?.clearSelection();
     };
   };

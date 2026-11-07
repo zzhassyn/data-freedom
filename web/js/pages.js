@@ -39,7 +39,8 @@
         h("span", { class: "da-small da-muted" }, status)));
   };
 
-  DA.views.appeals = function mount(root) {
+  DA.views.appeals = function mount(root, params = {}) {
+    if (["open", "done"].includes(params.query?.status)) appealsTab = params.query.status;
     const list = h("div", { class: "da-list" });
     const head = h("div", { class: "da-page-head" }, h("h1", { class: "da-h1", tabindex: -1 }, m("appeals")));
 
