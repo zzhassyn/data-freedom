@@ -97,7 +97,9 @@
     getTranscription: (id, options) => request(`/conversations/${part(id)}/transcription`, options),
     retryTranscription: (id, options) => post(`/conversations/${part(id)}/transcription/retry`, options?.force === true ? { force: true } : {}, options),
     getSummary: (id, options) => aiGet(`/conversations/${part(id)}/summary`, options),
-    getTranslation: (id, options) => aiGet(`/conversations/${part(id)}/translation`, options),
+    getTranslation: (id, options) => get(`/conversations/${part(id)}/translation`, {
+      refresh: options?.refresh, targetLanguage: options?.targetLanguage || "RU", source: options?.source || "canonical", sourceHash: options?.sourceHash
+    }, aiOptions(options)),
     listEvaluations: (id, options) => request(`/conversations/${part(id)}/evaluations`, options),
     getEvaluation: (id, options) => request(`/evaluations/${part(id)}`, options),
     getEvaluationConversation: (id, options) => request(`/evaluations/${part(id)}/conversation`, options),

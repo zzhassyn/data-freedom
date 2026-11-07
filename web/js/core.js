@@ -1,39 +1,68 @@
 /* Форматирование, расчёт предпросмотра и единый слой данных экранов. */
 (function () {
   const DA = (window.DA = window.DA || {});
+  DA.i18n.addMessages({
+    "core.justNow": { ru: "только что", kk: "жаңа ғана", en: "just now" },
+    "core.minutesAgo": { ru: "{count} мин назад", kk: "{count} мин бұрын", en: "{count} min ago" },
+    "core.hoursAgo": { ru: "{count} ч назад", kk: "{count} сағ бұрын", en: "{count} hr ago" },
+    "core.todayAt": { ru: "Сегодня, {time}", kk: "Бүгін, {time}", en: "Today, {time}" },
+    "core.speaker.client": { ru: "Клиент", kk: "Клиент", en: "Customer" },
+    "core.speaker.operator": { ru: "Оператор", kk: "Оператор", en: "Agent" },
+    "core.speaker.bot": { ru: "Бот AIM", kk: "AIM боты", en: "AIM bot" },
+    "core.speaker.system": { ru: "Система", kk: "Жүйе", en: "System" },
+    "core.language.RU": { ru: "Русский", kk: "Орысша", en: "Russian" },
+    "core.language.KZ": { ru: "Казахский", kk: "Қазақша", en: "Kazakh" },
+    "core.language.EN": { ru: "Английский", kk: "Ағылшынша", en: "English" },
+    "core.channel.call": { ru: "Звонок", kk: "Қоңырау", en: "Call" },
+    "core.channel.chat": { ru: "Чат", kk: "Чат", en: "Chat" },
+    "core.answer.yes": { ru: "Да", kk: "Иә", en: "Yes" },
+    "core.answer.no": { ru: "Нет", kk: "Жоқ", en: "No" },
+    "core.answer.found": { ru: "Найдена", kk: "Табылды", en: "Found" },
+    "core.answer.violation": { ru: "Нарушение", kk: "Бұзушылық", en: "Violation" },
+    "core.answer.noViolations": { ru: "Нет нарушений", kk: "Бұзушылық жоқ", en: "No violations" },
+    "core.answer.na": { ru: "Не применимо", kk: "Қолданылмайды", en: "Not applicable" },
+    "core.answer.scale": { ru: "{value} из {max}", kk: "{max} ұпайдан {value}", en: "{value} of {max}" }
+  });
 
   /* ---------- Форматирование ---------- */
-  const nf = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const scoreFormats = new Map();
+  const locale = () => ({ ru: "ru-RU", kk: "kk-KZ", en: "en-US" })[DA.i18n.locale()];
   DA.fmt = {
-    score: (x) => (x == null ? "—" : nf.format(x)),
+    locale,
+    score(x) {
+      if (x == null) return "—";
+      const code = locale();
+      if (!scoreFormats.has(code)) scoreFormats.set(code, new Intl.NumberFormat(code, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+      return scoreFormats.get(code).format(x);
+    },
     duration(sec) {
       sec = Math.max(0, Math.round(sec));
       return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
     },
     plural(n, forms) {
-      const a = Math.abs(n) % 100, b = a % 10;
-      if (a > 10 && a < 20) return forms[2];
-      if (b > 1 && b < 5) return forms[1];
-      if (b === 1) return forms[0];
-      return forms[2];
+      const variants = Array.isArray(forms) ? forms : forms[DA.i18n.locale()] || forms.ru || forms;
+      const category = DA.i18n.plural(n);
+      if (!Array.isArray(variants)) return variants[category] ?? variants.other ?? variants.one;
+      return variants[category === "one" ? 0 : category === "few" ? 1 : 2] ?? variants.at(-1);
     },
     ago(min) {
-      if (min < 1) return "только что";
-      if (min < 60) return `${min} мин назад`;
-      return `${Math.round(min / 60)} ч назад`;
+      if (min < 1) return DA.t("core.justNow");
+      if (min < 60) return DA.t("core.minutesAgo", { count: min });
+      return DA.t("core.hoursAgo", { count: Math.round(min / 60) });
     },
     dateTime(ms) {
       const d = new Date(ms), today = new Date();
-      const time = d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-      if (d.toDateString() === today.toDateString()) return `Сегодня, ${time}`;
-      return `${d.toLocaleDateString("ru-RU", { day: "numeric", month: "long" })}, ${time}`;
+      const time = d.toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
+      if (d.toDateString() === today.toDateString()) return DA.t("core.todayAt", { time });
+      return `${d.toLocaleDateString(locale(), { day: "numeric", month: "long" })}, ${time}`;
     },
     number: (n) => String(n).padStart(3, "0")
   };
 
-  DA.speakerLabel = { client: "Клиент", operator: "Оператор", bot: "Бот AIM", system: "Система" };
-  DA.langLabel = { RU: "Русский", KZ: "Казахский", EN: "Английский" };
-  DA.channelLabel = (conv) => (conv.channel === "voice call" ? "Звонок" : "Чат");
+  const labels = (prefix, keys) => Object.defineProperties({}, Object.fromEntries(keys.map((key) => [key, { enumerable: true, get: () => DA.t(prefix + key) }])));
+  DA.speakerLabel = labels("core.speaker.", ["client", "operator", "bot", "system"]);
+  DA.langLabel = labels("core.language.", ["RU", "KZ", "EN"]);
+  DA.channelLabel = (conv) => DA.t(conv.channel === "voice call" ? "core.channel.call" : "core.channel.chat");
 
   /* Режим определяется один раз при запуске. Отказ API не подменяет серверные данные. */
   DA.backendAvailable = false;
@@ -116,16 +145,16 @@
   DA.answerLabel = function (answer, c) {
     if (answer == null) return "…";
     if (answer === "na") return "N/A";
-    if (c.type === "scale") return `${answer} из ${DA.scaleMax(c)}`;
-    if (c.type === "flag") return answer === "yes" ? "Найдена" : "Нет";
-    return answer === "yes" ? "Да" : "Нет";
+    if (c.type === "scale") return DA.t("core.answer.scale", { value: answer, max: DA.scaleMax(c) });
+    if (c.type === "flag") return DA.t(answer === "yes" ? "core.answer.found" : "core.answer.no");
+    return DA.t(answer === "yes" ? "core.answer.yes" : "core.answer.no");
   };
   DA.answerText = function (answer, c) {
     if (answer == null) return "…";
-    if (answer === "na") return "Не применимо";
-    if (c.type === "scale") return `${answer} из ${DA.scaleMax(c)}`;
-    if (c.type === "flag") return answer === "yes" ? "Нарушение" : "Нет нарушений";
-    return answer === "yes" ? "Да" : "Нет";
+    if (answer === "na") return DA.t("core.answer.na");
+    if (c.type === "scale") return DA.t("core.answer.scale", { value: answer, max: DA.scaleMax(c) });
+    if (c.type === "flag") return DA.t(answer === "yes" ? "core.answer.violation" : "core.answer.noViolations");
+    return DA.t(answer === "yes" ? "core.answer.yes" : "core.answer.no");
   };
   DA.allowedAnswers = function (c) {
     if (c.type === "scale") return [...c.scale.map((s) => s.value), ...(c.naAllowed ? ["na"] : [])];

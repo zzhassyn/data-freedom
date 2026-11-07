@@ -18,6 +18,7 @@ function environment(fetcher, savedState) {
     CustomEvent: class extends Event { constructor(type, opts) { super(type); this.detail = opts?.detail; } },
     dispatchEvent: events.dispatchEvent.bind(events), addEventListener: events.addEventListener.bind(events),
     removeEventListener: events.removeEventListener.bind(events),
+    document: { documentElement: { lang: 'ru' } },
     localStorage: { getItem: (key) => storage.get(key) || null, setItem: (key, value) => storage.set(key, value), removeItem: (key) => storage.delete(key) },
     location: { reload() {} } };
   context.window = context;
@@ -26,7 +27,7 @@ function environment(fetcher, savedState) {
   context.DA_DEV = { records: [{ conversation_id: 'fixture', channel: source.channel, language: source.language, transcript: [turn], audio_url: null }] };
   context.DA_MOCK_ANSWERS = { fixture: Object.fromEntries(context.DA_CHECKLIST.criteria.map((c) => [c.id, { answer: c.type === 'scale' ? Math.max(...c.scale.map((s) => s.value)) : c.type === 'flag' ? 'no' : 'yes', explanation: 'Проверено', evidence: [] }])) };
   context.DA_MOCK_APPEALS = [];
-  for (const file of ['api.js', 'core.js']) vm.runInContext(fs.readFileSync(path.join(web, 'js', file), 'utf8'), context);
+  for (const file of ['i18n.js', 'api.js', 'core.js']) vm.runInContext(fs.readFileSync(path.join(web, 'js', file), 'utf8'), context);
   context.DA.initState();
   return { DA: context.DA, context, storage };
 }
@@ -93,7 +94,7 @@ test('STT and AI requests encode IDs, pass refresh separately and send JSON on m
   assert.deepEqual(calls.map(({ url }) => url), [
     '/api/stt/jobs?groupId=DEV+%26+UPLOAD', '/api/conversations/call%20%2F1/transcription',
     '/api/conversations/call%20%2F1/transcription/retry', '/api/conversations/call%20%2F1/summary?refresh=true',
-    '/api/conversations/call%20%2F1/translation', '/api/evaluations/ev%20%2F1/coaching?refresh=false',
+    '/api/conversations/call%20%2F1/translation?targetLanguage=RU&source=canonical', '/api/evaluations/ev%20%2F1/coaching?refresh=false',
     '/api/appeals/ap%20%2F1/second-opinion?refresh=true'
   ]);
   for (const index of [2, 6]) {
@@ -105,6 +106,36 @@ test('STT and AI requests encode IDs, pass refresh separately and send JSON on m
   await DA.api.retryTranscription('call /1', { force: true });
   assert.equal(calls.at(-1).url, '/api/conversations/call%20%2F1/transcription/retry');
   assert.deepEqual(JSON.parse(calls.at(-1).opts.body), { force: true });
+  await DA.api.getTranslation('call /1', { targetLanguage: 'KZ', source: 'transcription', sourceHash: 'hash +&/', refresh: true });
+  assert.equal(calls.at(-1).url, '/api/conversations/call%20%2F1/translation?refresh=true&targetLanguage=KZ&source=transcription&sourceHash=hash+%2B%26%2F');
+});
+
+test('locale switching updates formatting and labels without changing evaluation or conversation data', () => {
+  const { DA } = environment();
+  const before = json({ evaluations: DA.state.evaluations, conversations: DA.state.conversations });
+  const forms = { ru: ['обращение', 'обращения', 'обращений'], kk: ['өтініш'], en: ['conversation', 'conversations'] };
+  assert.equal(DA.fmt.plural(21, forms), 'обращение');
+  assert.equal(DA.fmt.plural(22, forms), 'обращения');
+  assert.equal(DA.fmt.plural(25, forms), 'обращений');
+  DA.i18n.setLocale('en');
+  assert.equal(DA.fmt.locale(), 'en-US');
+  assert.equal(DA.fmt.score(1234.5), '1,234.50');
+  assert.equal(DA.fmt.plural(21, forms), 'conversations');
+  assert.equal(DA.speakerLabel.operator, 'Agent');
+  assert.equal(DA.channelLabel({ channel: 'voice call' }), 'Call');
+  assert.equal(DA.answerText('yes', { type: 'binary' }), 'Yes');
+  assert.equal(DA.fmt.ago(5), '5 min ago');
+  DA.i18n.setLocale('kk');
+  assert.equal(DA.fmt.locale(), 'kk-KZ');
+  assert.equal(DA.fmt.score(1234.5), new Intl.NumberFormat('kk-KZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(1234.5));
+  assert.equal(DA.fmt.plural(22, forms), 'өтініш');
+  assert.equal(DA.speakerLabel.system, 'Жүйе');
+  assert.equal(DA.channelLabel({ channel: 'voice call' }), 'Қоңырау');
+  assert.equal(DA.answerText('yes', { type: 'binary' }), 'Иә');
+  assert.equal(DA.fmt.ago(5), '5 мин бұрын');
+  DA.i18n.setLocale('ru');
+  assert.equal(DA.speakerLabel.operator, 'Оператор');
+  assert.deepEqual(json({ evaluations: DA.state.evaluations, conversations: DA.state.conversations }), before);
 });
 
 test('second opinion and reviewer decision preserve each other in either response order', async () => {
