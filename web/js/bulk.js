@@ -7,7 +7,7 @@
   let selectionError = "", version = null;
 
   const terminal = (job) => job && ["done", "failed"].includes(job.status);
-  const busy = () => starting || !!batch && !terminal(batch);
+  const busy = () => starting || !!batch && !batch.unavailable && !terminal(batch);
   const plural = (n) => DA.fmt.plural(n, ["обращение", "обращения", "обращений"]);
   const errorText = (error) => error?.message || "Не удалось получить результат. Попробуйте ещё раз";
   const elapsedText = (seconds) => {
@@ -29,8 +29,18 @@
     listeners.forEach((fn) => fn(batch));
   }
   function timersOff() { clearTimeout(hideTimer); clearTimeout(collapseTimer); }
+  function hideNotice() {
+    if (!batch) return;
+    const hadFocus = panel?.contains(document.activeElement);
+    timersOff();
+    batch.hidden = true;
+    publish();
+    if (hadFocus) document.querySelector("#da-main h1")?.focus({ preventScroll: true });
+  }
+  const dismissButton = () => h("button", { class: "bulk-dismiss", type: "button", "aria-label": "Скрыть уведомление об оценке", title: "Скрыть уведомление об оценке", onclick: hideNotice }, DA.icon("x", 18));
   function finishLater() {
     timersOff();
+    if (batch?.hidden) return;
     collapseTimer = setTimeout(() => {
       if (!terminal(batch)) return;
       batch.collapsed = true;
@@ -41,7 +51,7 @@
   function receive(job) {
     if (!batch || batch.jobId !== job.id) return;
     const wasDone = terminal(batch);
-    Object.assign(batch, job, { jobId: job.id, error: null });
+    Object.assign(batch, job, { jobId: job.id, error: null, unavailable: false });
     publish();
     if (!wasDone && terminal(batch)) finishLater();
   }
@@ -145,9 +155,11 @@
     const ring = h("span", { class: "bulk-ring", "aria-hidden": "true" });
     ring.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle class="bulk-ring-value" cx="12" cy="12" r="9"/></svg>';
     ring.querySelector(".bulk-ring-value").style.strokeDasharray = `${value * 56.55} 56.55`;
-    return h("button", { class: "bulk-pill", type: "button", onclick: () => { timersOff(); batch.collapsed = false; batch.hidden = false; publish(); } },
-      finished && !batch.failed ? DA.icon("check", 18) : ring,
-      batch.error ? "Проверить оценку" : finished ? batch.failed ? `Не удалось оценить ${batch.failed}` : "Готово" : `Оценка ${done} из ${batch.total}`);
+    return h("div", { class: "bulk-pill-wrap" },
+      h("button", { class: "bulk-pill", type: "button", onclick: () => { timersOff(); batch.collapsed = false; publish(); } },
+        finished && !batch.failed ? DA.icon("check", 18) : ring,
+        h("span", {}, batch.error ? "Проверить оценку" : finished ? batch.failed ? `Не удалось оценить ${batch.failed}` : "Готово" : `Оценка ${done} из ${batch.total}`)),
+      dismissButton());
   }
   function progressPanel() {
     const finished = terminal(batch), settled = batch.done + batch.failed;
@@ -155,7 +167,9 @@
       ? `Готово: оценено ${batch.done} ${plural(batch.done)} за ${elapsedText(batch.durationSec)}`
       : `Оцениваем обращения: ${settled} из ${batch.total}`);
     const head = h("div", { class: "bulk-progress-head" }, title,
-      h("button", { class: "da-btn is-text is-sm", type: "button", onclick: () => { timersOff(); batch.collapsed = true; publish(); } }, "Свернуть"));
+      h("div", { class: "bulk-progress-actions" },
+        h("button", { class: "da-btn is-text is-sm", type: "button", onclick: () => { timersOff(); batch.collapsed = true; publish(); } }, "Свернуть"),
+        dismissButton()));
     const foot = h("div", { class: "bulk-progress-foot" });
     if (batch.failed) foot.append(h("button", { class: "da-btn is-text is-sm bulk-failures", type: "button", onclick: showFailures }, `Не удалось оценить ${batch.failed}. Показать`));
     if (finished && batch.failed) foot.append(h("button", { class: "da-btn is-sm", type: "button", disabled: starting, onclick: retryFailed }, starting ? "Запускаем" : "Повторить их"));
@@ -166,7 +180,7 @@
     const content = h("div", { class: "bulk-progress-content" }, head, progressBar(), foot);
     if (batch.error) content.append(h("div", { class: "bulk-error", role: "alert" }, h("span", {}, batch.error),
       h("button", { class: "da-btn is-sm", type: "button", onclick: () => {
-        if (batch.unavailable) { timersOff(); batch = null; publish(); }
+        if (batch.unavailable) hideNotice();
         else watch();
       } }, batch.unavailable ? "Закрыть" : "Проверить снова")));
     return content;

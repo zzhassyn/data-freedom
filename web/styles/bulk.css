@@ -41,7 +41,10 @@ body[data-sidebar="closed"] .bulk-panel { left: calc(50% + var(--da-side-closed)
 .bulk-progress-content { display: grid; gap: 10px; }
 .bulk-progress-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .bulk-progress-title { font-size: 16px; line-height: 1.5; padding-top: 3px; }
-.bulk-progress-head > button { margin-right: -10px; flex: none; }
+.bulk-progress-actions { display: flex; align-items: center; flex: none; margin: -6px -10px -6px 0; }
+.bulk-dismiss { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 44px; height: 44px; padding: 0; border: 0; border-radius: var(--da-r-control); background: transparent; color: var(--da-text-2); transition: background var(--da-fast), color var(--da-fast), transform 80ms var(--da-ease); }
+.bulk-dismiss:hover { background: var(--da-surface-2); color: var(--da-text); }
+.bulk-dismiss:active { transform: scale(.94); }
 .bulk-meter { display: flex; gap: 3px; height: 14px; border-radius: 4px; overflow: hidden; }
 .bulk-meter > i { flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; background: var(--da-surface-3); border-radius: 2px; color: var(--da-text-2); transition: background 400ms var(--da-ease); }
 .bulk-meter > .is-yes { background: var(--da-yes); }
@@ -58,11 +61,14 @@ body[data-sidebar="closed"] .bulk-panel { left: calc(50% + var(--da-side-closed)
 .bulk-error { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; grid-column: 1 / -1; margin: 4px 0 0; color: var(--da-no-ink); font-size: 14px; }
 .bulk-error > span { min-width: 0; overflow-wrap: anywhere; }
 .bulk-panel.is-pill, body[data-sidebar="closed"] .bulk-panel.is-pill { left: auto; right: 24px; transform: none; width: auto; max-width: calc(100vw - 48px); padding: 0; border: 0; border-radius: 50px; }
-.bulk-pill { display: flex; align-items: center; gap: 9px; min-height: 44px; border: 1px solid var(--da-line); border-radius: 50px; padding: 8px 16px 8px 12px; background: var(--da-surface); color: var(--da-text); font-weight: 550; transition: background var(--da-fast), transform 80ms var(--da-ease); }
+.bulk-pill-wrap { display: flex; align-items: center; max-width: 100%; border: 1px solid var(--da-line); border-radius: 50px; background: var(--da-surface); }
+.bulk-pill { display: flex; align-items: center; gap: 9px; min-width: 0; min-height: 44px; border: 0; border-radius: 50px 0 0 50px; padding: 8px 12px; background: transparent; color: var(--da-text); font-weight: 550; text-align: left; transition: background var(--da-fast), transform 80ms var(--da-ease); }
+.bulk-pill > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.bulk-pill-wrap > .bulk-dismiss { border-radius: 0 50px 50px 0; border-left: 1px solid var(--da-line); }
 .bulk-pill:hover { background: var(--da-brand-soft); }
 .bulk-pill:active { transform: scale(.97); }
 .bulk-pill > .da-icon { color: var(--da-brand); }
-.bulk-ring { display: inline-flex; width: 24px; height: 24px; }
+.bulk-ring { display: inline-flex; flex: none; width: 24px; height: 24px; }
 .bulk-ring svg { width: 24px; height: 24px; transform: rotate(-90deg); }
 .bulk-ring circle { fill: none; stroke: var(--da-surface-3); stroke-width: 2.5; }
 .bulk-ring .bulk-ring-value { stroke: var(--da-brand); stroke-linecap: round; transition: stroke-dasharray 400ms var(--da-ease); }
@@ -95,7 +101,7 @@ body[data-sidebar="closed"] .bulk-panel { left: calc(50% + var(--da-side-closed)
   .bulk-repeat { grid-column: 2; grid-row: 3; max-width: 210px; text-align: right; }
   .bulk-progress-title { font-size: 14px; }
   .bulk-progress-head { gap: 6px; }
-  .bulk-progress-head > button { font-size: 13px; }
+  .bulk-progress-actions > .da-btn { font-size: 13px; }
   .bulk-meter { gap: 2px; }
   .bulk-meter > i > svg { max-width: 100%; }
   .bulk-progress-foot { gap: 4px; }
