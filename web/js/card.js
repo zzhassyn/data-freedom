@@ -1,7 +1,6 @@
 /* Карточка диалога: транскрипт слева, оценка справа, связь критериев и реплик, апелляции. */
 (function () {
   const DA = window.DA, h = DA.h;
-  const CL = () => window.DA_CHECKLIST;
   const TONE_VARS = {
     yes: ["var(--da-yes)", "var(--da-yes-soft)"], partial: ["var(--da-partial)", "var(--da-partial-soft)"],
     no: ["var(--da-no)", "var(--da-no-soft)"], na: ["var(--da-na)", "var(--da-na-soft)"],
@@ -14,14 +13,15 @@
     const conv = DA.state.conversations[params.id];
     if (!conv) {
       root.append(h("div", { class: "da-page" }, h("div", { class: "da-empty" },
-        h("h2", { tabindex: -1 }, `Диалога ${params.id} нет в базе`),
+        h("h2", { tabindex: -1 }, "Такого обращения нет в базе"),
         h("p", {}, "Возможно, набор ещё не загружен."),
-        h("a", { class: "da-btn", href: "#/" }, "К списку диалогов"))));
+        h("a", { class: "da-btn", href: "#/" }, "К списку обращений"))));
       return;
     }
     const cid = conv.conversation_id;
     const isCall = conv.channel === "voice call";
     let ev = DA.state.evaluations[cid] || null;
+    const CL = () => (ev ? DA.checklist(ev.checklistVersion) : DA.activeChecklist());
     let openId = params.query.criterion || null;
     let running = false;
     const timers = [];
@@ -50,7 +50,7 @@
         const bubble = h("div", { class: "da-bubble" + (long ? " is-clamped" : "") }, t.text);
         node = h("div", { class: `da-turn r-${t.speaker}`, "data-idx": i, tabindex: -1 },
           h("div", { class: "da-turn-meta" },
-            h("span", {}, `#${i}`), h("b", {}, DA.speakerLabel[t.speaker]), h("time", {}, DA.tx.clock(t.timestamp)),
+            h("b", {}, DA.speakerLabel[t.speaker]), h("time", {}, DA.tx.clock(t.timestamp)),
             i === firstOp ? h("span", { class: "da-first" }, "Первый ответ оператора") : null),
           bubble,
           long ? h("button", { class: "da-more", type: "button", onclick: (e) => { bubble.classList.toggle("is-clamped"); e.target.textContent = bubble.classList.contains("is-clamped") ? "Показать полностью" : "Свернуть"; } }, "Показать полностью") : null,
@@ -64,8 +64,7 @@
 
     const player = isCall ? h("div", { class: "da-player" },
       h("a", { class: "da-play", href: conv.audio_url, target: "_blank", rel: "noopener", "aria-label": "Слушать запись звонка" }, DA.icon("play")),
-      h("div", {}, h("div", {}, h("b", {}, "Запись звонка"), ` ${DA.fmt.duration(DA.tx.duration(conv))}`),
-        h("div", { class: "da-small da-muted" }, "Откроется плеер организаторов. Встроенный плеер с перемоткой к репликам появится вместе с бэкендом"))) : null;
+      h("div", {}, h("b", {}, "Запись звонка"), h("div", { class: "da-small da-muted" }, DA.fmt.duration(DA.tx.duration(conv))))) : null;
 
     transcript.append(...[bracket, player, turnsBox].filter(Boolean));
 
@@ -159,7 +158,7 @@
       top.append(h("div", { class: "da-total-row" }, totalBox,
         h("div", { class: "da-eval-meta" },
           h("span", {}, `Чек-лист, версия ${ev.checklistVersion}`),
-          h("span", {}, `Модель: ${ev.model}`),
+          ev.checklistVersion !== DA.activeChecklist().version ? h("span", {}, `Активна версия ${DA.activeChecklist().version}`) : null,
           h("span", {}, running ? "Модель читает диалог" : `Оценено ${DA.fmt.ago(ev.minutesAgo || 0)} за ${ev.durationSec} с`))));
 
       if (ev.grossFlagged) {
@@ -256,7 +255,7 @@
         for (const e of it.evidence) {
           const t = conv.transcript[e.turnIdx];
           const q = h("button", { class: "da-quote", type: "button", onclick: () => jumpTo(e.turnIdx, tone) },
-            h("small", {}, `#${e.turnIdx} ${DA.speakerLabel[t.speaker]} ${DA.tx.clock(t.timestamp)}`, e.kind === "expected_here" ? h("em", {}, "Здесь ожидалось действие") : null),
+            h("small", {}, `${DA.speakerLabel[t.speaker]}, ${DA.tx.clock(t.timestamp)}`, e.kind === "expected_here" ? h("em", {}, "Здесь ожидалось действие") : null),
             h("q", {}, e.quote));
           setTone(q, tone);
           list.append(q);
@@ -265,7 +264,7 @@
       } else if (it.answer !== "na" && c.type !== "flag") body.append(h("p", { class: "da-small da-muted" }, "Модель не привела реплику"));
       if (it.checkedRange) {
         body.append(h("div", {}, h("button", { class: "da-turnchip", type: "button", onclick: () => jumpTo(it.checkedRange.fromIdx, tone) },
-          `Проверено #${it.checkedRange.fromIdx}–${it.checkedRange.toIdx}`)));
+          `Проверенный участок ${DA.tx.clock(conv.transcript[it.checkedRange.fromIdx].timestamp)}–${DA.tx.clock(conv.transcript[it.checkedRange.toIdx].timestamp)}`)));
       }
       body.append(ruleBlock(c, it));
 
@@ -318,7 +317,7 @@
     function evaluate(btn) {
       const fresh = DA.freshEvaluation(cid);
       if (!fresh) {
-        DA.toast("Для этого диалога пока нет ответов модели. Оценка заработает после подключения бэкенда", btn);
+        DA.toast("Оценка этого диалога появится чуть позже", btn);
         return;
       }
       const prevTotal = ev && ev.total;
@@ -371,7 +370,7 @@
     function appealDrawer(c, it, anchor) {
       let proposed = null;
       const err = h("div", { class: "da-error", hidden: true });
-      const ta = h("textarea", { class: "da-textarea", placeholder: "Например: оператор представился во второй реплике, реплика #9" });
+      const ta = h("textarea", { class: "da-textarea", placeholder: "Например: оператор представился во втором сообщении" });
       const left = h("span", { class: "da-hint" });
       const prev = h("div", { class: "da-preview-total", hidden: true });
       const upd = () => {
@@ -427,7 +426,7 @@
       }
       reason.addEventListener("input", refresh);
       const d = DA.drawer({
-        title: "Решение по апелляции", subtitle: `${c.title}, диалог ${cid}`,
+        title: "Решение по апелляции", subtitle: `${c.title}, обращение № ${DA.convNumber(cid)}`,
         body: [
           h("div", { class: "da-block" }, h("div", { class: "da-label" }, "Правило"), h("p", { class: "da-rule", style: { margin: 0 } }, c.description)),
           h("div", { class: "da-block" }, h("div", { class: "da-label" }, "Оценка модели"),
@@ -458,11 +457,11 @@
     const durSec = DA.tx.duration(conv);
     root.append(h("div", { class: "da-page" },
       h("div", { class: "da-card-head" },
-        h("a", { class: "da-back", href: "#/", "aria-label": "К списку диалогов" }, DA.icon("back")),
-        h("h1", { class: "da-h1", tabindex: -1 }, cid),
-        h("span", { class: "da-chip" }, conv.language),
-        h("span", { class: "da-chip" }, DA.icon(isCall ? "phone" : "message"), isCall ? "Звонок" : "Чат"),
-        h("span", { class: "da-muted da-small" }, `${conv.transcript.length} ${DA.fmt.plural(conv.transcript.length, ["реплика", "реплики", "реплик"])}, ${DA.fmt.duration(durSec)}`),
+        h("a", { class: "da-back", href: "#/", "aria-label": "К списку обращений" }, DA.icon("back")),
+        h("h1", { class: "da-h1", tabindex: -1, title: cid }, `Обращение № ${DA.convNumber(cid)}`),
+        h("span", { class: "da-chip" }, DA.langLabel[conv.language]),
+        h("span", { class: "da-chip" }, DA.icon(isCall ? "phone" : "message"), DA.channelLabel(conv)),
+        h("span", { class: "da-muted da-small" }, `${DA.fmt.dateTime(DA.tx.startedAt(conv))}, длительность ${DA.fmt.duration(durSec)}`),
         h("div", { class: "da-card-actions" }, evalBtn)),
       h("div", { class: "da-card-grid" }, transcript, panel)));
 
