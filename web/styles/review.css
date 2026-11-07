@@ -234,6 +234,9 @@
 @keyframes rv-nav-in { from { opacity: 0; transform: translateX(-10px); } }
 
 /* ---------- Узкий экран ---------- */
+@media (min-width: 1281px) {
+  .rv-evidence { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: auto; overscroll-behavior: contain; padding: 2px; margin: -2px; }
+}
 @media (max-width: 1280px) {
   .rv-body { grid-template-columns: 1fr; }
 }

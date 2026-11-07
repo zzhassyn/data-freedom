@@ -517,7 +517,7 @@
     if (opinion) dispute.append(opinion.node);
     const node = h("article", { class: "rv-work", "data-id": appeal.id }, head,
       h("div", { class: "rv-body" },
-        h("div", { class: "rv-col" }, dialogue, rule),
+        h("div", { class: "rv-col rv-evidence" }, dialogue, rule),
         h("div", { class: "rv-col" }, dispute, decision ? decision.node : outcomeBlock(appeal, c))));
     node.decision = decision;
     node.dispose = () => { decision?.dispose(); opinion?.dispose(); };
