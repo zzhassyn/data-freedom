@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from app import llm_switch, translation_service
+from app.errors import JudgeError
 from app.extras import translation
 from app.models import Conversation, Usage
 from starlette.requests import Request
@@ -388,3 +389,47 @@ def test_stt_changed_while_request_runs_rejects_old_result(seeded_client, monkey
         response = future.result(timeout=3)
     assert response.status_code == 409
     assert response.json()['error']['code'] == 'stale_source'
+
+
+def _synthetic_long_source(count=59):
+    return translation_service.TranslationSource('RU', [
+        translation_service.SourceTurn(100 + index * 3, 'operator' if index % 2 else 'client',
+                                       f'Реплика {index}: [Имя скрыто], код [Код скрыт].')
+        for index in range(count)
+    ])
+
+
+def test_provider_schema_stays_small_for_a_59_turn_transcript(seeded_client, monkeypatch):
+    calls = _provider(seeded_client, monkeypatch)
+    for count in (1, 59):
+        source = _synthetic_long_source(count)
+        result = asyncio.run(translation_service.translate(source, 'EN', seeded_client.app.state.settings))
+        validated = translation_service.validate_turns(result.turns, source)
+        assert [turn['idx'] for turn in validated] == [turn.idx for turn in source.transcript]
+        assert len(validated) == count
+        assert all('[Имя скрыто]' in turn['text'] and '[Код скрыт]' in turn['text'] for turn in validated)
+    assert len(calls) == 2
+    schemas = [call['response_format']['json_schema'] for call in calls]
+    assert schemas[0] == schemas[1]  # Neither grammar size nor constraints grow with turn count.
+    assert schemas[1]['strict'] is True
+    turns = schemas[1]['schema']['properties']['turns']
+    assert 'minItems' not in turns and 'maxItems' not in turns
+    assert turns['items']['properties']['idx'] == {'type': 'integer'}
+    assert turns['items']['required'] == ['idx', 'text']
+    assert len(json.loads(calls[1]['messages'][1]['content'])['turns']) == 59
+
+
+@pytest.mark.parametrize('defect', ['missing', 'duplicate', 'unknown', 'redaction'])
+def test_long_response_still_requires_exact_ids_count_and_masks(defect):
+    source = _synthetic_long_source()
+    translated = [{'idx': turn.idx, 'text': 'EN: ' + turn.text} for turn in source.transcript]
+    if defect == 'missing':
+        translated.pop()
+    elif defect == 'duplicate':
+        translated[-1] = dict(translated[0])  # Length remains correct, identity does not.
+    elif defect == 'unknown':
+        translated[-1]['idx'] = 99999
+    elif defect == 'redaction':
+        translated[-1]['text'] = translated[-1]['text'].replace('[Код скрыт]', '[Code hidden]')
+    with pytest.raises(JudgeError):
+        translation_service.validate_turns(translated, source)

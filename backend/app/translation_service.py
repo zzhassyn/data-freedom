@@ -107,9 +107,11 @@ async def translate(conversation, target_language, settings):
                 'type': 'object', 'additionalProperties': False,
                 'properties': {
                     'targetLanguage': {'type': 'string', 'enum': [target_language]},
-                    'turns': {'type': 'array', 'minItems': len(turns), 'maxItems': len(turns),
+                    # Keep provider grammar constant-size for long calls. Exact
+                    # IDs/count and preserved masks are enforced by validate_turns.
+                    'turns': {'type': 'array',
                               'items': {'type': 'object', 'additionalProperties': False,
-                                        'properties': {'idx': {'type': 'integer', 'enum': [turn['idx'] for turn in turns]},
+                                        'properties': {'idx': {'type': 'integer'},
                                                        'text': {'type': 'string'}},
                                         'required': ['idx', 'text']}},
                 },
