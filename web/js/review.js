@@ -103,6 +103,7 @@
     const k = tone === "flag" ? "gross" : tone;
     node.style.setProperty("--lit", `var(--da-${k})`);
     node.style.setProperty("--lit-soft", `var(--da-${k}-soft)`);
+    node.style.setProperty("--lit-ink", `var(--da-${k}-on-soft, var(--da-bubble-ink, var(--da-text)))`);
   }
 
   function waited(a) {

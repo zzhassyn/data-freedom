@@ -589,6 +589,23 @@ body[data-sidebar="closed"] .da-side-link .da-count { position: absolute; top: 4
 :root[data-role="reviewer"] .da-side .da-seg button[aria-pressed="true"],
 :root[data-role="reviewer"] .da-side .da-locale-option:hover,
 :root[data-role="reviewer"] .da-side-link[aria-current="page"] { color: var(--da-on-brand); }
+:root[data-role="reviewer"] .da-seg-thumb,
+:root[data-role="reviewer"] .da-player-speed button[aria-pressed="true"],
+:root[data-role="reviewer"] .rv-new .da-seg button[aria-pressed="true"] { background: var(--da-brand); color: var(--da-on-brand); }
+:root[data-role="reviewer"] .da-seg button[aria-pressed="true"] { color: var(--da-on-brand); }
+:root[data-role="reviewer"] .da-bubble { color: var(--da-bubble-ink); }
+:root[data-role="reviewer"] .r-operator > .da-bubble { color: var(--da-operator-ink); }
+:root[data-role="reviewer"] .da-turn.is-lit > .da-bubble { color: var(--lit-ink, var(--da-bubble-ink)); }
+:root[data-role="reviewer"] .da-pill.t-yes,
+:root[data-role="reviewer"] .da-ins-ok { color: var(--da-yes-on-soft); }
+:root[data-role="reviewer"] .da-pill.t-partial,
+:root[data-role="reviewer"] .da-cr-mark.is-appeal { color: var(--da-partial-on-soft); }
+:root[data-role="reviewer"] .da-pill.t-no,
+:root[data-role="reviewer"] .da-cr-mark.is-check,
+:root[data-role="reviewer"] .da-gap.is-long { color: var(--da-no-on-soft); }
+:root[data-role="reviewer"] .da-pill.t-na { color: var(--da-na-on-soft); }
+:root[data-role="reviewer"] .da-pill.t-flag { color: var(--da-gross-on-soft); }
+:root[data-role="reviewer"] .da-ribbon { --da-yes: #8de5a3; --da-partial: #ffd078; --da-no: #ffac95; --da-gross: #ffb7c4; }
 :root[data-role="reviewer"] .rv-head,
 :root[data-role="reviewer"] .da-page-head > .da-h1,
 :root[data-role="reviewer"] .da-card-head > .da-h1 { color: var(--da-shell-text); }
@@ -619,6 +636,9 @@ body[data-sidebar="closed"] .da-side-link .da-count { position: absolute; top: 4
 :root[data-role="reviewer"] .da-input::placeholder,
 :root[data-role="reviewer"] .da-textarea::placeholder { color: var(--da-text-3); opacity: 1; }
 :root[data-role="reviewer"] .da-filter-chip:hover { background: var(--da-surface-3); }
+:root[data-role="reviewer"] .da-switch i { background: var(--da-line); }
+:root[data-role="reviewer"] .da-switch input:checked + i { background: var(--da-brand); }
+:root[data-role="reviewer"] .da-switch input:checked + i::after { background: var(--da-on-brand); }
 :root[data-role="reviewer"] .rv-q-item[aria-current="true"] { box-shadow: inset 0 0 0 1px var(--da-line-strong); }
 :root[data-role="reviewer"] .da-scrim,
 :root[data-role="reviewer"] .da-side-scrim { background: rgb(0 25 14 / 0.48); }
