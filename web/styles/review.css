@@ -89,7 +89,8 @@
 .rv-scale li.is-picked { background: var(--da-surface); color: var(--da-text); box-shadow: var(--da-shadow-rest); }
 .rv-scale li.is-new { background: var(--da-brand-soft); color: var(--da-text); }
 .rv-scale li.is-new small { display: none; }
-.rv-scale li.is-new::after { content: "новый ответ"; grid-column: 3; grid-row: 1; font-size: 12px; font-weight: 600; color: var(--da-brand-press); }
+.rv-scale li .rv-scale-new { display: none; }
+.rv-scale li.is-new .rv-scale-new { display: block; grid-column: 3; grid-row: 1; color: var(--da-brand-press); }
 
 /* Спор */
 .rv-dispute { grid-template-columns: 1fr; gap: 0; padding: 0; }

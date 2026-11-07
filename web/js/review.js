@@ -1,6 +1,96 @@
 /* Рабочее место проверяющего: очередь апелляций слева, разбор одной апелляции справа, список решённых. */
 (function () {
   const DA = window.DA, h = DA.h;
+  const m = (key, params) => DA.msg("review." + key, params);
+  const t = (key, params) => DA.t("review." + key, params);
+  DA.i18n.addMessages({
+    "review.justNow": { ru: "только что", kk: "жаңа ғана", en: "just now" },
+    "review.minutes": { ru: "{count} мин", kk: "{count} мин", en: "{count} min" },
+    "review.hours": { ru: "{count} ч", kk: "{count} сағ", en: "{count} hr" },
+    "review.days": { ru: { one: "{count} день", few: "{count} дня", many: "{count} дней", other: "{count} дня" }, kk: "{count} күн", en: { one: "{count} day", other: "{count} days" } },
+    "review.listen": { ru: "Слушать запись", kk: "Жазбаны тыңдау", en: "Listen to recording" },
+    "review.firstReply": { ru: "Первый ответ оператора", kk: "Оператордың алғашқы жауабы", en: "First agent reply" },
+    "review.expectedHere": { ru: "Здесь ожидалось действие", kk: "Әрекет осы жерде күтілді", en: "Action expected here" },
+    "review.expand": { ru: "Показать полностью", kk: "Толық көрсету", en: "Show in full" },
+    "review.collapse": { ru: "Свернуть", kk: "Жинау", en: "Collapse" },
+    "review.showTurns": { ru: { one: "Показать {count} реплику", few: "Показать {count} реплики", many: "Показать {count} реплик", other: "Показать {count} реплики" }, kk: "{count} репликаны көрсету", en: { one: "Show {count} turn", other: "Show {count} turns" } },
+    "review.waitingReply": { ru: "Ожидание ответа {duration}", kk: "Жауапты күту: {duration}", en: "Waiting for a reply: {duration}" },
+    "review.noEvidence": { ru: "Модель не сослалась на реплики. Откройте весь диалог, чтобы проверить ответ.", kk: "Модель репликаларға сілтеме бермеді. Жауапты тексеру үшін диалогты толық ашыңыз.", en: "The model did not cite any turns. Open the full conversation to check its answer." },
+    "review.showFragment": { ru: "Показать только фрагмент", kk: "Тек үзіндіні көрсету", en: "Show excerpt only" },
+    "review.showConversation": { ru: "Показать весь диалог", kk: "Диалогты толық көрсету", en: "Show full conversation" },
+    "review.fragment": { ru: "Фрагмент диалога", kk: "Диалог үзіндісі", en: "Conversation excerpt" },
+    "review.modelAnswer": { ru: "Ответ модели", kk: "Модельдің жауабы", en: "Model answer" },
+    "review.modelAnswerNote": { ru: "ответ модели", kk: "модель жауабы", en: "model answer" },
+    "review.newAnswerNote": { ru: "новый ответ", kk: "жаңа жауап", en: "new answer" },
+    "review.rule": { ru: "Правило критерия", kk: "Критерий ережесі", en: "Criterion rule" },
+    "review.notApplicable": { ru: "Критерий не применяется. ", kk: "Критерий қолданылмайды. ", en: "The criterion does not apply. " },
+    "review.modelScore": { ru: "Оценка модели", kk: "Модельдің бағасы", en: "Model score" },
+    "review.points": { ru: "{points} из {max} баллов", kk: "{max} ұпайдан {points}", en: "{points} of {max} points" },
+    "review.noExplanation": { ru: "Модель не оставила объяснения.", kk: "Модель түсіндірме қалдырмады.", en: "The model did not provide an explanation." },
+    "review.differentAnswers": { ru: "При двух проверках модель ответила по-разному", kk: "Екі тексеруде модель әртүрлі жауап берді", en: "The model gave different answers across two checks" },
+    "review.analystAppeal": { ru: "Апелляция аналитика", kk: "Талдаушының апелляциясы", en: "Analyst appeal" },
+    "review.proposes": { ru: "Предлагает", kk: "Ұсынысы", en: "Suggested answer" },
+    "review.submitted": { ru: "Подана {time}", kk: "Берілген уақыты: {time}", en: "Submitted {time}" },
+    "review.secondCheck": { ru: "Повторная проверка", kk: "Қайта тексеру", en: "Second review" },
+    "review.secondCheckPending": { ru: "Модель перечитывает разговор с учётом комментария", kk: "Модель пікірді ескеріп, диалогты қайта оқып жатыр", en: "The model is reviewing the conversation with the analyst’s comment" },
+    "review.retryCheck": { ru: "Повторить перепроверку", kk: "Қайта тексеруді қайталау", en: "Retry model review" },
+    "review.requestCheck": { ru: "Попросить модель перепроверить", kk: "Модельден қайта тексеруді сұрау", en: "Ask the model to review again" },
+    "review.afterCheck": { ru: "Модель после перепроверки", kk: "Қайта тексеруден кейінгі модель жауабы", en: "Model answer after review" },
+    "review.toTurn": { ru: "К реплике", kk: "Репликаға өту", en: "Go to turn" },
+    "review.agrees": { ru: "Согласна с аналитиком", kk: "Талдаушымен келіседі", en: "Agrees with the analyst" },
+    "review.keepsScore": { ru: "Остаётся при своей оценке", kk: "Бұрынғы бағасын өзгертпейді", en: "Keeps its original score" },
+    "review.checkError": { ru: "Модель не смогла перепроверить критерий. Попробуйте ещё раз", kk: "Модель критерийді қайта тексере алмады. Қайталап көріңіз", en: "The model could not review this criterion. Try again" },
+    "review.before": { ru: "Было", kk: "Бұрын", en: "Before" },
+    "review.after": { ru: "Стало", kk: "Кейін", en: "After" },
+    "review.total": { ru: "Итог", kk: "Қорытынды", en: "Total" },
+    "review.totalUnchangedFuture": { ru: "Итог не изменится", kk: "Қорытынды өзгермейді", en: "Total will stay the same" },
+    "review.totalCurrent": { ru: "Итог сейчас", kk: "Қазіргі қорытынды", en: "Current total" },
+    "review.totalRecalculated": { ru: "Итог пересчитан", kk: "Қорытынды қайта есептелді", en: "Total recalculated" },
+    "review.totalAfter": { ru: "Итог после решения", kk: "Шешімнен кейінгі қорытынды", en: "Total after the decision" },
+    "review.totalUnchanged": { ru: "Итог не изменился", kk: "Қорытынды өзгерген жоқ", en: "Total unchanged" },
+    "review.confirmScore": { ru: "Оценка верна", kk: "Баға дұрыс", en: "Score is correct" },
+    "review.confirmHint": { ru: "Ответ модели остаётся", kk: "Модельдің жауабы қалады", en: "Keep the model’s answer" },
+    "review.changeScore": { ru: "Изменить оценку", kk: "Бағаны өзгерту", en: "Change score" },
+    "review.changeHint": { ru: "Поставить другой ответ", kk: "Басқа жауапты таңдау", en: "Choose a different answer" },
+    "review.decision": { ru: "Решение", kk: "Шешім", en: "Decision" },
+    "review.newAnswer": { ru: "Новый ответ", kk: "Жаңа жауап", en: "New answer" },
+    "review.analystSuggestion": { ru: "Аналитик предложил «{answer}»", kk: "Талдаушы «{answer}» жауабын ұсынды", en: "The analyst suggested “{answer}”" },
+    "review.modelSuggestion": { ru: "После перепроверки модель предлагает «{answer}»", kk: "Қайта тексеруден кейін модель «{answer}» жауабын ұсынады", en: "After review, the model suggests “{answer}”" },
+    "review.reasonPlaceholder": { ru: "Коротко объясните решение, его увидит аналитик", kk: "Шешімді қысқаша түсіндіріңіз, оны талдаушы көреді", en: "Briefly explain your decision for the analyst" },
+    "review.reason": { ru: "Причина решения", kk: "Шешімнің себебі", en: "Reason for the decision" },
+    "review.save": { ru: "Сохранить решение", kk: "Шешімді сақтау", en: "Save decision" },
+    "review.openDecision": { ru: "Открыть принятое решение", kk: "Қабылданған шешімді ашу", en: "Open the saved decision" },
+    "review.keyConfirm": { ru: " оценка верна, ", kk: " баға дұрыс, ", en: " score is correct, " },
+    "review.keyChange": { ru: " изменить оценку, ", kk: " бағаны өзгерту, ", en: " change score, " },
+    "review.keySave": { ru: " сохранить решение", kk: " шешімді сақтау", en: " save decision" },
+    "review.charactersLeft": { ru: { one: "Ещё {count} символ", few: "Ещё {count} символа", many: "Ещё {count} символов", other: "Ещё {count} символа" }, kk: "Тағы {count} таңба қажет", en: { one: "{count} more character needed", other: "{count} more characters needed" } },
+    "review.savedChanged": { ru: "Решение сохранено, оценка изменена", kk: "Шешім сақталды, баға өзгертілді", en: "Decision saved, score changed" },
+    "review.savedConfirmed": { ru: "Решение сохранено, оценка подтверждена", kk: "Шешім сақталды, баға расталды", en: "Decision saved, score confirmed" },
+    "review.saveError": { ru: "Не удалось сохранить решение. Причина осталась в форме, повторите сохранение", kk: "Шешімді сақтау мүмкін болмады. Себебі пішінде сақталды, қайта сақтап көріңіз", en: "The decision could not be saved. Your reason is still in the form. Try saving again" },
+    "review.networkError": { ru: "Нет связи с сервером. Введённые данные сохранены в форме", kk: "Сервермен байланыс жоқ. Енгізілген деректер пішінде сақталды", en: "Cannot connect to the server. Your input is still in the form" },
+    "review.alreadyDecided": { ru: "По этой апелляции уже принято решение. Откройте его, чтобы увидеть результат", kk: "Бұл апелляция бойынша шешім қабылданған. Нәтижесін көру үшін оны ашыңыз", en: "This appeal has already been resolved. Open the saved decision to see the result" },
+    "review.decided": { ru: "Решение принято", kk: "Шешім қабылданды", en: "Decision made" },
+    "review.scoreConfirmed": { ru: "оценка подтверждена", kk: "баға расталды", en: "score confirmed" },
+    "review.openConversation": { ru: "Открыть карточку обращения", kk: "Өтініш карточкасын ашу", en: "Open conversation" },
+    "review.conversation": { ru: "Обращение № {number}", kk: "№ {number} өтініш", en: "Conversation {number}" },
+    "review.conversationNumber": { ru: "№ {number}", kk: "№ {number}", en: "#{number}" },
+    "review.waitingDecision": { ru: "Ждёт решения {time}", kk: "Шешімді күту: {time}", en: "Awaiting a decision: {time}" },
+    "review.appealResolved": { ru: "Апелляция разобрана", kk: "Апелляция қаралды", en: "Appeal resolved" },
+    "review.confirmed": { ru: "Подтверждено", kk: "Расталды", en: "Confirmed" },
+    "review.openAppeals": { ru: "Открытые апелляции", kk: "Ашық апелляциялар", en: "Open appeals" },
+    "review.waitingTitle": { ru: "Сколько апелляция ждёт решения", kk: "Апелляцияның шешім күткен уақыты", en: "Time awaiting a decision" },
+    "review.allResolved": { ru: "Все апелляции разобраны", kk: "Барлық апелляциялар қаралды", en: "All appeals resolved" },
+    "review.emptyHelp": { ru: "Новые появятся здесь, как только аналитик оспорит оценку.", kk: "Талдаушы бағаға шағымданғанда, жаңа апелляциялар осында пайда болады.", en: "New appeals will appear here when an analyst disputes a score." },
+    "review.resolvedToday": { ru: { one: "Сегодня решена {count} апелляция. Новые появятся здесь, как только аналитик оспорит оценку.", few: "Сегодня решено {count} апелляции. Новые появятся здесь, как только аналитик оспорит оценку.", many: "Сегодня решено {count} апелляций. Новые появятся здесь, как только аналитик оспорит оценку.", other: "Сегодня решено {count} апелляции. Новые появятся здесь, как только аналитик оспорит оценку." }, kk: "Бүгін {count} апелляция шешілді. Талдаушы бағаға шағымданғанда, жаңа апелляциялар осында пайда болады.", en: { one: "{count} appeal resolved today. New appeals will appear here when an analyst disputes a score.", other: "{count} appeals resolved today. New appeals will appear here when an analyst disputes a score." } },
+    "review.openResolved": { ru: "Открыть решённые", kk: "Шешілгендерді ашу", en: "Open resolved appeals" },
+    "review.notFound": { ru: "Такой апелляции нет", kk: "Мұндай апелляция жоқ", en: "Appeal not found" },
+    "review.notFoundHelp": { ru: "Возможно, обращение оценили заново и апелляция закрылась вместе со старой оценкой.", kk: "Өтініш қайта бағаланып, апелляция бұрынғы бағамен бірге жабылған болуы мүмкін.", en: "The conversation may have been evaluated again and the appeal closed with the earlier evaluation." },
+    "review.backToQueue": { ru: "Вернуться к очереди", kk: "Кезекке оралу", en: "Back to queue" },
+    "review.noneResolved": { ru: "Решённых апелляций пока нет", kk: "Әзірге шешілген апелляциялар жоқ", en: "No resolved appeals yet" },
+    "review.resolvedHelp": { ru: "Здесь появится каждое решение с причиной и новым итогом.", kk: "Әр шешім оның себебі және жаңа қорытындысымен осында көрсетіледі.", en: "Each decision will appear here with its reason and updated total." },
+    "review.resolved": { ru: "Решённые", kk: "Шешілгендер", en: "Resolved appeals" },
+    "review.decisionCount": { ru: { one: "{count} решение, сегодня {today}", few: "{count} решения, сегодня {today}", many: "{count} решений, сегодня {today}", other: "{count} решения, сегодня {today}" }, kk: "{count} шешім, бүгін {today}", en: { one: "{count} decision, {today} today", other: "{count} decisions, {today} today" } }
+  });
   const MIN_REASON = 10;
   const AROUND = 2;
   const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -14,12 +104,12 @@
 
   function waited(a) {
     const min = Math.max(0, Math.round((Date.now() - a.createdAt) / 60000));
-    if (min < 1) return "только что";
-    if (min < 60) return `${min} мин`;
+    if (min < 1) return t("justNow");
+    if (min < 60) return t("minutes", { count: min });
     const hr = Math.round(min / 60);
-    if (hr < 24) return `${hr} ч`;
+    if (hr < 24) return t("hours", { count: hr });
     const d = Math.round(hr / 24);
-    return `${d} ${DA.fmt.plural(d, ["день", "дня", "дней"])}`;
+    return t("days", { count: d });
   }
 
   /* Всё, что нужно для разбора: оценка, чек-лист той версии, по которой она сделана, критерий, обращение. */
@@ -47,7 +137,7 @@
     const toggle = h("button", { class: "da-btn is-sm", type: "button", onclick: () => { full = !full; render(true); } });
     const isCall = conv.channel === "voice call";
     const audioHref = DA.audioHref(conv);
-    const listen = isCall && audioHref ? h("a", { class: "da-btn is-sm is-text", href: audioHref, target: "_blank", rel: "noopener noreferrer" }, DA.icon("play", 16), "Слушать запись") : null;
+    const listen = isCall && audioHref ? h("a", { class: "da-btn is-sm is-text", href: audioHref, target: "_blank", rel: "noopener noreferrer" }, DA.icon("play", 16), m("listen")) : null;
 
     function bubbleText(text, quote) {
       const k = quote ? text.indexOf(quote) : -1;
@@ -66,11 +156,11 @@
         const bubble = h("div", { class: "da-bubble" + (long ? " is-clamped" : "") }, bubbleText(turn.text, focused ? opinionFocus.quote : ev && ev.quote));
         node = h("div", { class: `da-turn r-${turn.speaker}` },
           h("div", { class: "da-turn-meta" },
-            h("b", {}, DA.speakerLabel[turn.speaker]), h("time", {}, DA.tx.clock(turn.timestamp)),
-            i === firstOp ? h("span", { class: "da-first" }, "Первый ответ оператора") : null,
-            ev && ev.kind === "expected_here" ? h("span", { class: "rv-expected" }, "Здесь ожидалось действие") : null),
+            h("b", {}, DA.msg(() => DA.speakerLabel[turn.speaker])), h("time", {}, DA.tx.clock(turn.timestamp)),
+            i === firstOp ? h("span", { class: "da-first" }, m("firstReply")) : null,
+            ev && ev.kind === "expected_here" ? h("span", { class: "rv-expected" }, m("expectedHere")) : null),
           bubble,
-          long ? h("button", { class: "da-more", type: "button", onclick: (e) => { bubble.classList.toggle("is-clamped"); e.target.textContent = bubble.classList.contains("is-clamped") ? "Показать полностью" : "Свернуть"; } }, "Показать полностью") : null);
+          long ? h("button", { class: "da-more", type: "button", onclick: (e) => { bubble.classList.toggle("is-clamped"); DA.i18n.bindText(e.currentTarget, bubble.classList.contains("is-clamped") ? m("expand") : m("collapse")); } }, m("expand")) : null);
       }
       if (ev) { node.classList.add("is-lit"); paint(node, tone); }
       node.dataset.turnIdx = turn.idx ?? i;
@@ -81,14 +171,15 @@
     function skipNode(from, to) {
       const n = to - from;
       return h("button", { class: "rv-skip", type: "button", onclick: () => { for (let j = from; j < to; j++) shown.add(j); render(true, from, to); } },
-        `Показать ${n} ${DA.fmt.plural(n, ["реплику", "реплики", "реплик"])}`);
+        m("showTurns", { count: n }));
     }
     /* Скрытые участки сворачиваются в кнопку, раскрытые реплики появляются на её месте. */
     function render(animate, from, to) {
       const nodes = [];
       for (let i = 0; i < t.length;) {
         if (full || shown.has(i)) {
-          if (gaps[i]) nodes.push(h("div", { class: "da-gap" + (gaps[i] >= 180 ? " is-long" : "") }, DA.icon("clock"), `Ожидание ответа ${DA.fmt.duration(gaps[i])}`));
+          const gapDuration = gaps[i];
+          if (gapDuration) nodes.push(h("div", { class: "da-gap" + (gapDuration >= 180 ? " is-long" : "") }, DA.icon("clock"), m("waitingReply", () => ({ duration: DA.fmt.duration(gapDuration) }))));
           const node = turnNode(i);
           if (animate && (from == null || (i >= from && i < to)) && !evidence.has(i)) node.classList.add("rv-in");
           nodes.push(node);
@@ -100,14 +191,14 @@
         if (anchors.length) nodes.push(skipNode(i, j));
         i = j;
       }
-      if (!anchors.length && !full) nodes.push(h("p", { class: "rv-note" }, "Модель не сослалась на реплики. Откройте весь диалог, чтобы проверить ответ."));
+      if (!anchors.length && !full) nodes.push(h("p", { class: "rv-note" }, m("noEvidence")));
       box.replaceChildren(...nodes);
-      toggle.textContent = full ? "Показать только фрагмент" : "Показать весь диалог";
+      DA.i18n.bindText(toggle, full ? m("showFragment") : m("showConversation"));
       toggle.setAttribute("aria-expanded", String(full));
     }
     render(false);
-    const panel = h("section", { class: "rv-panel rv-dialog", "aria-label": "Фрагмент диалога" },
-      h("div", { class: "rv-panel-head" }, h("h2", { class: "rv-h2" }, "Фрагмент диалога"), h("div", { class: "rv-panel-actions" }, listen, toggle)),
+    const panel = h("section", { class: "rv-panel rv-dialog", "aria-label": m("fragment") },
+      h("div", { class: "rv-panel-head" }, h("h2", { class: "rv-h2" }, m("fragment")), h("div", { class: "rv-panel-actions" }, listen, toggle)),
       box);
     /* Ссылка повторного мнения раскрывает нужный участок того же снимка диалога. */
     panel.jumpTo = function (entry, nextTone) {
@@ -127,11 +218,12 @@
   /* ---------- Правило критерия ---------- */
   function ruleBlock(c, modelAnswer) {
     const steps = c.scale ? c.scale.map((s) => h("li", { class: s.value === modelAnswer ? "is-picked" : "", "data-value": s.value },
-      h("b", {}, s.value), h("span", {}, s.description), s.value === modelAnswer ? h("small", {}, "ответ модели") : null)) : [];
-    const node = h("section", { class: "rv-panel is-quiet rv-rule", "aria-label": "Правило критерия" },
-      h("h2", { class: "rv-h2" }, "Правило критерия"),
+      h("b", {}, s.value), h("span", {}, s.description), s.value === modelAnswer ? h("small", {}, m("modelAnswerNote")) : null,
+      h("small", { class: "rv-scale-new" }, m("newAnswerNote")))) : [];
+    const node = h("section", { class: "rv-panel is-quiet rv-rule", "aria-label": m("rule") },
+      h("h2", { class: "rv-h2" }, m("rule")),
       h("p", {}, c.description),
-      c.naAllowed ? h("p", { class: "rv-na" }, h("b", {}, "Критерий не применяется. "), c.naCondition) : null,
+      c.naAllowed ? h("p", { class: "rv-na" }, h("b", {}, m("notApplicable")), c.naCondition) : null,
       steps.length ? h("ol", { class: "rv-scale" }, steps) : null);
     node.mark = (value) => steps.forEach((li) => li.classList.toggle("is-new", value != null && +li.dataset.value === value && value !== modelAnswer));
     return node;
@@ -143,47 +235,47 @@
     const answer = appeal.originalAnswer;
     return h("section", { class: "rv-panel rv-dispute" },
       h("div", { class: "rv-side" },
-        h("h2", { class: "rv-h2" }, "Оценка модели"),
+        h("h2", { class: "rv-h2" }, m("modelScore")),
         h("div", { class: "rv-answer" }, DA.answerPill(answer, c),
-          c.type !== "flag" && answer !== "na" ? h("span", { class: "da-small da-muted" }, `${Math.round(shown.points)} из ${Math.round(shown.effectiveWeight)} баллов`) : null),
-        h("p", {}, answer === "na" ? item.naReason : item.explanation || "Модель не оставила объяснения."),
-        item.needsReview ? h("p", { class: "rv-warn" }, DA.icon("alert", 15), "При двух проверках модель ответила по-разному") : null),
+          c.type !== "flag" && answer !== "na" ? h("span", { class: "da-small da-muted" }, m("points", { points: Math.round(shown.points), max: Math.round(shown.effectiveWeight) })) : null),
+        h("p", {}, answer === "na" ? item.naReason : item.explanation || m("noExplanation")),
+        item.needsReview ? h("p", { class: "rv-warn" }, DA.icon("alert", 15), m("differentAnswers")) : null),
       h("div", { class: "rv-side" },
-        h("h2", { class: "rv-h2" }, "Апелляция аналитика"),
-        appeal.proposedAnswer != null ? h("div", { class: "rv-answer" }, h("span", { class: "da-small da-muted" }, "Предлагает"), DA.answerPill(appeal.proposedAnswer, c)) : null,
+        h("h2", { class: "rv-h2" }, m("analystAppeal")),
+        appeal.proposedAnswer != null ? h("div", { class: "rv-answer" }, h("span", { class: "da-small da-muted" }, m("proposes")), DA.answerPill(appeal.proposedAnswer, c)) : null,
         h("p", { class: "rv-comment" }, appeal.comment),
-        h("span", { class: "da-small da-muted" }, `Подана ${DA.fmt.dateTime(appeal.createdAt).toLowerCase()}`)));
+        h("span", { class: "da-small da-muted" }, m("submitted", () => ({ time: DA.fmt.dateTime(appeal.createdAt) })))));
   }
 
   /* Повторная проверка помогает человеку выбрать ответ, но не принимает решение. */
   function secondOpinionBlock(appeal, c, conv, hooks) {
     if (!DA.backendAvailable || (appeal.status !== "open" && !appeal.secondOpinion)) return null;
-    const node = h("section", { class: "rv-side rv-opinion", "aria-label": "Повторная проверка" });
+    const node = h("section", { class: "rv-side rv-opinion", "aria-label": m("secondCheck") });
     const controller = new AbortController();
     let opinion = appeal.secondOpinion || null, busy = false, disposed = false, error = "", returnFocus = false;
     function render() {
       node.setAttribute("aria-busy", String(busy));
       if (busy) {
-        node.replaceChildren(h("p", { class: "da-thinking rv-opinion-pending", role: "status" }, "Модель перечитывает разговор с учётом комментария"));
+        node.replaceChildren(h("p", { class: "da-thinking rv-opinion-pending", role: "status" }, m("secondCheckPending")));
         return;
       }
       if (!opinion) {
-        const button = h("button", { class: "da-btn is-sm rv-opinion-request", type: "button", onclick: request }, DA.icon("refresh", 16), error ? "Повторить перепроверку" : "Попросить модель перепроверить");
+        const button = h("button", { class: "da-btn is-sm rv-opinion-request", type: "button", onclick: request }, DA.icon("refresh", 16), error ? m("retryCheck") : m("requestCheck"));
         node.replaceChildren(...[error ? h("p", { class: "da-error rv-opinion-error", role: "alert" }, error) : null, button].filter(Boolean));
         if (returnFocus && document.activeElement === document.body) button.focus({ preventScroll: true });
         return;
       }
-      const heading = h("h2", { class: "rv-h2", tabindex: -1 }, "Модель после перепроверки");
+      const heading = h("h2", { class: "rv-h2", tabindex: -1 }, m("afterCheck"));
       const quotes = (opinion.evidence || []).map((entry) => {
         const turn = conv.transcript.find((item, index) => (item.idx ?? index) === entry.turnIdx);
         if (!turn || !entry.quote || !turn.text.includes(entry.quote)) return null;
         return h("button", { class: "rv-opinion-quote", type: "button", onclick: () => hooks.jump(entry, DA.tone(opinion.answer, c)) },
           h("span", { class: "rv-opinion-quote-text" }, entry.quote),
-          h("span", { class: "rv-opinion-quote-meta" }, `${DA.speakerLabel[turn.speaker]}, ${DA.tx.clock(turn.timestamp)}`, h("span", {}, "К реплике", DA.icon("chevron", 13))));
+          h("span", { class: "rv-opinion-quote-meta" }, DA.msg(() => `${DA.speakerLabel[turn.speaker]}, ${DA.tx.clock(turn.timestamp)}`), h("span", {}, m("toTurn"), DA.icon("chevron", 13))));
       });
       node.replaceChildren(heading,
-        h("div", { class: "rv-answer" }, DA.answerPill(opinion.answer, c), h("span", { class: "rv-opinion-verdict" + (opinion.agreesWithAppeal ? " is-agree" : ""), role: "status" }, opinion.agreesWithAppeal ? "Согласна с аналитиком" : "Остаётся при своей оценке")),
-        h("p", { class: "rv-opinion-explanation" }, opinion.explanation || "Модель не оставила объяснения."),
+        h("div", { class: "rv-answer" }, DA.answerPill(opinion.answer, c), h("span", { class: "rv-opinion-verdict" + (opinion.agreesWithAppeal ? " is-agree" : ""), role: "status" }, opinion.agreesWithAppeal ? m("agrees") : m("keepsScore"))),
+        h("p", { class: "rv-opinion-explanation" }, opinion.explanation || m("noExplanation")),
         h("div", { class: "rv-opinion-evidence" }, quotes));
       if (returnFocus && document.activeElement === document.body) heading.focus({ preventScroll: true });
     }
@@ -197,7 +289,7 @@
         opinion = result; appeal.secondOpinion = result;
         if (result.agreesWithAppeal) hooks.prefill(result.answer);
       } catch (e) {
-        if (!disposed && e.name !== "AbortError") error = e.message || "Модель не смогла перепроверить критерий. Попробуйте ещё раз";
+        if (!disposed && e.name !== "AbortError") error = e instanceof DA.ApiError ? DA.msg(() => DA.apiErrorMessage(e)) : m("checkError");
       } finally { busy = false; if (!disposed) render(); }
     }
     if (opinion?.agreesWithAppeal) hooks.prefill(opinion.answer);
@@ -210,16 +302,17 @@
     const answers = Object.fromEntries(ev.items.map((i) => [i.criterionId, i.answer]));
     const now = DA.computeScores(cl, answers);
     const label = h("span", { class: "rv-total-label" });
-    const before = h("span", {}, DA.fmt.score(ev.total));
+    let beforeTotal = ev.total;
+    const before = h("span", {}, DA.msg(() => DA.fmt.score(beforeTotal)));
     const arrow = h("span", { class: "rv-arrow", "aria-hidden": "true" }, "→");
     const after = h("span", { class: "rv-after" }, DA.fmt.score(ev.total));
     const line = h("div", { class: "rv-total-line" }, label, h("div", { class: "rv-total" }, before, arrow, after));
     const ribbonBefore = DA.ribbon(ribbonItems(cl, answers, now));
     const ribbonAfter = DA.ribbon(ribbonItems(cl, answers, now));
     for (const r of [ribbonBefore, ribbonAfter]) { const s = r.querySelector(`[data-id="${c.id}"]`); s && s.classList.add("is-changed"); }
-    const afterRow = h("div", { class: "rv-reveal" }, h("div", {}, h("div", { class: "rv-ribbon-row" }, h("span", {}, "Стало"), ribbonAfter)));
+    const afterRow = h("div", { class: "rv-reveal" }, h("div", {}, h("div", { class: "rv-ribbon-row" }, h("span", {}, m("after")), ribbonAfter)));
     const node = h("div", { class: "rv-preview", "aria-live": "polite" }, line,
-      h("div", { class: "rv-ribbons" }, h("div", { class: "rv-ribbon-row" }, h("span", {}, "Было"), ribbonBefore), afterRow));
+      h("div", { class: "rv-ribbons" }, h("div", { class: "rv-ribbon-row" }, h("span", {}, m("before")), ribbonBefore), afterRow));
     let shownAfter = ev.total;
 
     node.update = function (action, newAnswer) {
@@ -227,7 +320,7 @@
       node.classList.toggle("is-change", changing);
       afterRow.classList.toggle("is-on", changing);
       afterRow.inert = !changing;
-      label.textContent = changing ? "Итог" : action === "confirm" ? "Итог не изменится" : "Итог сейчас";
+      DA.i18n.bindText(label, changing ? m("total") : action === "confirm" ? m("totalUnchangedFuture") : m("totalCurrent"));
       if (!changing) return;
       const next = { ...answers, [c.id]: newAnswer };
       const r = DA.computeScores(cl, next);
@@ -240,8 +333,9 @@
     /* После сохранения: старый итог зачёркнут, новый отсчитывается к своему значению. */
     node.settle = function (from, result, changed) {
       const to = result.total;
-      label.textContent = changed ? "Итог пересчитан" : from !== to ? "Итог после решения" : "Итог не изменился";
-      before.textContent = DA.fmt.score(from);
+      DA.i18n.bindText(label, changed ? m("totalRecalculated") : from !== to ? m("totalAfter") : m("totalUnchanged"));
+      beforeTotal = from;
+      DA.i18n.refresh(before.firstChild);
       before.classList.toggle("rv-was", from !== to);
       node.classList.toggle("is-change", changed || from !== to);
       ribbonAfter.update(result.items.map((i) => ({ ...i, c: DA.criterionById(cl, i.criterionId) })));
@@ -263,31 +357,31 @@
 
     const choice = (value, icon, title, sub) => h("button", { class: "rv-option", type: "button", role: "radio", "aria-checked": "false", "data-value": value, onclick: () => choose(value) },
       h("span", { class: "rv-option-icon" }, DA.icon(icon)), h("span", { class: "rv-option-text" }, h("b", {}, title), h("small", {}, sub)));
-    const optConfirm = choice("confirm", "check", "Оценка верна", "Ответ модели остаётся");
-    const optChange = choice("change", "refresh", "Изменить оценку", "Поставить другой ответ");
-    const optionsBox = h("div", { class: "rv-options", role: "radiogroup", "aria-label": "Решение" }, optConfirm, optChange);
+    const optConfirm = choice("confirm", "check", m("confirmScore"), m("confirmHint"));
+    const optChange = choice("change", "refresh", m("changeScore"), m("changeHint"));
+    const optionsBox = h("div", { class: "rv-options", role: "radiogroup", "aria-label": m("decision") }, optConfirm, optChange);
 
-    const seg = DA.segmented(options.map((a) => ({ value: a, label: DA.answerText(a, c) })), newAnswer, (v) => { if (!busy && !committed) { answerTouched = true; newAnswer = v; refresh(); } }, "Новый ответ");
-    const suggestion = h("span", { class: "da-hint", hidden: appeal.proposedAnswer == null }, appeal.proposedAnswer != null ? `Аналитик предложил «${DA.answerText(appeal.proposedAnswer, c)}»` : "");
+    const seg = DA.segmented(options.map((a) => ({ value: a, label: DA.msg(() => DA.answerText(a, c)) })), newAnswer, (v) => { if (!busy && !committed) { answerTouched = true; newAnswer = v; refresh(); } }, m("newAnswer"));
+    const suggestion = h("span", { class: "da-hint", hidden: appeal.proposedAnswer == null }, appeal.proposedAnswer != null ? m("analystSuggestion", () => ({ answer: DA.answerText(appeal.proposedAnswer, c) })) : "");
     const changeBox = h("div", { class: "rv-reveal" }, h("div", {}, h("div", { class: "rv-new" },
-      h("span", { class: "rv-label" }, "Новый ответ"), seg,
+      h("span", { class: "rv-label" }, m("newAnswer")), seg,
       suggestion)));
     changeBox.inert = true;
 
-    const reason = h("textarea", { class: "da-textarea", id: "rv-reason", placeholder: "Коротко объясните решение, его увидит аналитик" });
+    const reason = h("textarea", { class: "da-textarea", id: "rv-reason", placeholder: m("reasonPlaceholder") });
     const left = h("span", { class: "da-hint rv-left" });
     reason.addEventListener("input", refresh);
-    const field = h("div", { class: "da-field" }, h("label", { for: "rv-reason" }, "Причина решения"), reason, left);
+    const field = h("div", { class: "da-field" }, h("label", { for: "rv-reason" }, m("reason")), reason, left);
 
     const prev = preview(ev, cl, c);
-    const saveBtn = h("button", { class: "da-btn is-primary rv-save", type: "button", disabled: true, onclick: () => save() }, "Сохранить решение");
+    const saveBtn = h("button", { class: "da-btn is-primary rv-save", type: "button", disabled: true, onclick: () => save() }, m("save"));
     const error = h("p", { class: "da-error rv-save-error", role: "alert", hidden: true });
-    const showDecision = h("button", { class: "da-btn is-text is-sm", type: "button", hidden: true, onclick: () => DA.route() }, "Открыть принятое решение");
-    const keys = h("p", { class: "rv-keys" }, h("kbd", {}, "1"), " оценка верна, ", h("kbd", {}, "2"), " изменить оценку, ", h("kbd", {}, "Ctrl"), "+", h("kbd", {}, "Enter"), " сохранить решение");
+    const showDecision = h("button", { class: "da-btn is-text is-sm", type: "button", hidden: true, onclick: () => DA.route() }, m("openDecision"));
+    const keys = h("p", { class: "rv-keys" }, h("kbd", {}, "1"), m("keyConfirm"), h("kbd", {}, "2"), m("keyChange"), h("kbd", {}, "Ctrl"), "+", h("kbd", {}, "Enter"), m("keySave"));
     const foot = h("div", { class: "rv-foot" }, error, showDecision, saveBtn, keys);
 
-    const node = h("section", { class: "rv-decide", "aria-label": "Решение" },
-      h("h2", { class: "rv-h2" }, "Решение"), optionsBox, changeBox, field, prev, foot);
+    const node = h("section", { class: "rv-decide", "aria-label": m("decision") },
+      h("h2", { class: "rv-h2" }, m("decision")), optionsBox, changeBox, field, prev, foot);
 
     function ready() {
       return !busy && !committed && !disposed && action != null && reason.value.trim().length >= MIN_REASON && (action === "confirm" || newAnswer != null);
@@ -303,7 +397,7 @@
     }
     function refresh() {
       const n = reason.value.trim().length;
-      left.textContent = n < MIN_REASON ? `Ещё ${MIN_REASON - n} ${DA.fmt.plural(MIN_REASON - n, ["символ", "символа", "символов"])}` : "";
+      DA.i18n.bindText(left, () => n < MIN_REASON ? t("charactersLeft", { count: MIN_REASON - n }) : "");
       prev.update(action, action === "change" ? newAnswer : null);
       hooks.rule.mark(action === "change" ? newAnswer : null);
       saveBtn.disabled = !ready();
@@ -334,12 +428,12 @@
           node.classList.add("is-saved");
           prev.settle(before, result.evaluation, changed);
           foot.replaceChildren(h("div", { class: "rv-saved", role: "status" }, h("span", { class: "rv-saved-icon" }, DA.icon("check")),
-            changed ? "Решение сохранено, оценка изменена" : "Решение сохранено, оценка подтверждена"));
+            changed ? m("savedChanged") : m("savedConfirmed")));
           hooks.saved(result.appeal.decision.action, result.appeal.decision.newAnswer);
         } else hooks.updated();
       } catch (e) {
         if (!disposed) {
-          error.textContent = e instanceof DA.ApiError ? e.message : "Не удалось сохранить решение. Причина осталась в форме, повторите сохранение";
+          DA.i18n.bindText(error, e instanceof DA.ApiError ? DA.msg(() => DA.apiErrorMessage(e)) : m("saveError"));
           error.hidden = false;
           showDecision.hidden = e.code !== "appeal_decided";
         }
@@ -358,7 +452,7 @@
     function prefill(answer) {
       if (busy || committed || disposed || answerTouched || !options.includes(answer)) return;
       newAnswer = answer; seg.setValue(answer);
-      suggestion.textContent = `После перепроверки модель предлагает «${DA.answerText(answer, c)}»`;
+      DA.i18n.bindText(suggestion, m("modelSuggestion", () => ({ answer: DA.answerText(answer, c) })));
       suggestion.hidden = false;
       refresh();
     }
@@ -368,15 +462,15 @@
   /* Решение по апелляции, которая уже закрыта: вместо формы итог разбора. */
   function outcomeBlock(appeal, c) {
     const changed = appeal.status === "changed";
-    return h("section", { class: "rv-decide is-done", "aria-label": "Решение" },
-      h("h2", { class: "rv-h2" }, "Решение принято"),
+    return h("section", { class: "rv-decide is-done", "aria-label": m("decision") },
+      h("h2", { class: "rv-h2" }, m("decided")),
       h("div", { class: "rv-answer" },
         changed ? [DA.answerPill(appeal.originalAnswer, c), h("span", { class: "rv-arrow" }, "→"), DA.answerPill(appeal.decision.newAnswer, c)]
-          : [DA.answerPill(appeal.originalAnswer, c), h("span", { class: "da-small da-muted" }, "оценка подтверждена")]),
+          : [DA.answerPill(appeal.originalAnswer, c), h("span", { class: "da-small da-muted" }, m("scoreConfirmed"))]),
       h("p", { class: "rv-comment" }, appeal.decision.reason),
-      h("div", { class: "rv-total-line" }, h("span", { class: "rv-total-label" }, changed ? "Итог" : "Итог не изменился"),
-        h("div", { class: "rv-total" }, changed && appeal.totalBefore !== appeal.totalAfter ? [h("span", { class: "rv-was" }, DA.fmt.score(appeal.totalBefore)), " "] : null, DA.fmt.score(appeal.totalAfter))),
-      h("span", { class: "da-small da-muted" }, DA.fmt.dateTime(appeal.decision.decidedAt)));
+      h("div", { class: "rv-total-line" }, h("span", { class: "rv-total-label" }, changed ? m("total") : m("totalUnchanged")),
+        h("div", { class: "rv-total" }, changed && appeal.totalBefore !== appeal.totalAfter ? [h("span", { class: "rv-was" }, DA.msg(() => DA.fmt.score(appeal.totalBefore))), " "] : null, DA.msg(() => DA.fmt.score(appeal.totalAfter)))),
+      h("span", { class: "da-small da-muted" }, DA.msg(() => DA.fmt.dateTime(appeal.decision.decidedAt))));
   }
 
   /* ---------- Рабочая область одной апелляции ---------- */
@@ -385,13 +479,13 @@
     const { c, item, conv } = ctx;
     const isOpen = appeal.status === "open";
     const tone = DA.tone(appeal.originalAnswer, c);
-    const pillBox = h("div", { class: "rv-pills", "aria-label": "Ответ модели" }, DA.answerPill(appeal.originalAnswer, c));
+    const pillBox = h("div", { class: "rv-pills", "aria-label": m("modelAnswer") }, DA.answerPill(appeal.originalAnswer, c));
     const head = h("header", { class: "rv-head" },
       h("div", { class: "rv-head-meta" },
-        h("a", { class: "rv-conv", href: `#/c/${encodeURIComponent(conv.conversation_id)}?${new URLSearchParams({ criterion: c.id, evaluation: ctx.ev.id })}`, title: "Открыть карточку обращения" }, `Обращение № ${DA.convNumber(conv.conversation_id)}`),
-        h("span", { class: "da-chip" }, DA.langLabel[conv.language]),
-        h("span", { class: "da-chip" }, DA.icon(conv.channel === "voice call" ? "phone" : "message"), DA.channelLabel(conv)),
-        h("span", { class: "da-small da-muted" }, isOpen ? `Ждёт решения ${waited(appeal)}` : "Апелляция разобрана")),
+        h("a", { class: "rv-conv", href: `#/c/${encodeURIComponent(conv.conversation_id)}?${new URLSearchParams({ criterion: c.id, evaluation: ctx.ev.id })}`, title: m("openConversation") }, m("conversation", { number: DA.convNumber(conv.conversation_id) })),
+        h("span", { class: "da-chip" }, DA.msg(() => DA.langLabel[conv.language])),
+        h("span", { class: "da-chip" }, DA.icon(conv.channel === "voice call" ? "phone" : "message"), DA.msg(() => DA.channelLabel(conv))),
+        h("span", { class: "da-small da-muted" }, isOpen ? m("waitingDecision", () => ({ time: waited(appeal) })) : m("appealResolved"))),
       h("div", { class: "rv-head-title" }, h("h1", { class: "rv-h1", tabindex: -1 }, c.title), pillBox));
 
     const rule = ruleBlock(c, appeal.originalAnswer);
@@ -407,7 +501,7 @@
             const fresh = DA.answerPill(newAnswer, c);
             fresh.classList.add("rv-pill-in");
             pillBox.append(fresh);
-          } else pillBox.append(h("span", { class: "rv-stamp rv-pill-in" }, DA.icon("check", 14), "Подтверждено"));
+          } else pillBox.append(h("span", { class: "rv-stamp rv-pill-in" }, DA.icon("check", 14), m("confirmed")));
           onSaved(appeal);
         }
       });
@@ -434,8 +528,8 @@
 
     const count = h("span", { class: "da-count" });
     const list = h("div", { class: "rv-q-list" });
-    const queue = h("nav", { class: "rv-queue", "aria-label": "Открытые апелляции" },
-      h("div", { class: "rv-queue-head" }, h("span", {}, "Открытые апелляции"), count), list);
+    const queue = h("nav", { class: "rv-queue", "aria-label": m("openAppeals") },
+      h("div", { class: "rv-queue-head" }, h("span", {}, m("openAppeals")), count), list);
     const stage = h("div", { class: "rv-stage" });
     const page = h("div", { class: "rv" }, queue, stage);
     root.append(page);
@@ -452,8 +546,8 @@
           select(a.id, "swap");
         }
       },
-      h("span", { class: "rv-q-num" }, `№ ${DA.convNumber(a.conversationId)}`),
-      h("span", { class: "rv-q-wait", title: "Сколько апелляция ждёт решения" }, waited(a)),
+      h("span", { class: "rv-q-num" }, m("conversationNumber", { number: DA.convNumber(a.conversationId) })),
+      h("span", { class: "rv-q-wait", title: m("waitingTitle") }, DA.msg(() => waited(a))),
       h("span", { class: "rv-q-crit" }, c.title));
     }
     function renderQueue() {
@@ -470,15 +564,15 @@
       const n = decidedToday();
       return h("div", { class: "rv-empty" },
         h("span", { class: "rv-empty-mark", "aria-hidden": "true" }, DA.icon("check")),
-        h("h1", { class: "da-h1", tabindex: -1 }, "Все апелляции разобраны"),
-        h("p", {}, n ? `Сегодня ${DA.fmt.plural(n, ["решена", "решено", "решено"])} ${n} ${DA.fmt.plural(n, ["апелляция", "апелляции", "апелляций"])}. Новые появятся здесь, как только аналитик оспорит оценку.` : "Новые появятся здесь, как только аналитик оспорит оценку."),
-        h("a", { class: "da-btn", href: "#/review/done" }, "Открыть решённые"));
+        h("h1", { class: "da-h1", tabindex: -1 }, m("allResolved")),
+        h("p", {}, n ? m("resolvedToday", { count: n }) : m("emptyHelp")),
+        h("a", { class: "da-btn", href: "#/review/done" }, m("openResolved")));
     }
     function notFound() {
       return h("div", { class: "rv-empty" },
-        h("h1", { class: "da-h1", tabindex: -1 }, "Такой апелляции нет"),
-        h("p", {}, "Возможно, обращение оценили заново и апелляция закрылась вместе со старой оценкой."),
-        h("a", { class: "da-btn", href: "#/review" }, "Вернуться к очереди"));
+        h("h1", { class: "da-h1", tabindex: -1 }, m("notFound")),
+        h("p", {}, m("notFoundHelp")),
+        h("a", { class: "da-btn", href: "#/review" }, m("backToQueue")));
     }
 
     /* Смена содержимого справа: старое уходит вверх, новое приходит снизу. */
@@ -556,7 +650,7 @@
     const tick = setInterval(() => {
       for (const n of list.children) {
         const a = DA.state.appeals.find((x) => x.id === n.dataset.id);
-        if (a) n.querySelector(".rv-q-wait").textContent = waited(a);
+        if (a) DA.i18n.refresh(n.querySelector(".rv-q-wait").firstChild);
       }
     }, 30000);
 
@@ -585,13 +679,13 @@
     const list = h("div", { class: "da-list" });
     if (done.length) list.append(...done.map((a) => DA.appealRow(a, { comment: false })));
     else list.append(h("div", { class: "da-empty" },
-      h("h2", {}, "Решённых апелляций пока нет"),
-      h("p", {}, "Здесь появится каждое решение с причиной и новым итогом."),
-      h("a", { class: "da-btn", href: "#/review" }, "Вернуться к очереди")));
+      h("h2", {}, m("noneResolved")),
+      h("p", {}, m("resolvedHelp")),
+      h("a", { class: "da-btn", href: "#/review" }, m("backToQueue"))));
     root.append(h("div", { class: "da-page", style: { maxWidth: "1040px" } },
       h("div", { class: "da-page-head" },
-        h("h1", { class: "da-h1", tabindex: -1 }, "Решённые"),
-        done.length ? h("span", { class: "da-muted" }, `${done.length} ${DA.fmt.plural(done.length, ["решение", "решения", "решений"])}, сегодня ${decidedToday()}`) : null),
+        h("h1", { class: "da-h1", tabindex: -1 }, m("resolved")),
+        done.length ? h("span", { class: "da-muted" }, m("decisionCount", { count: done.length, today: decidedToday() })) : null),
       list));
   };
 })();
