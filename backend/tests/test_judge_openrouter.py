@@ -1,4 +1,4 @@
-"""Mocked OpenRouter boundary tests; no provider credentials or network calls."""
+"""Mocked Gemini batch boundary; no provider credentials or live requests."""
 import asyncio
 import copy
 import json
@@ -34,12 +34,21 @@ def criteria():
     return {c['id']: Criterion.model_validate(prepare_criterion(c)) for c in body['criteria']}
 
 
-def verdict(answer='yes', confidence='high', **changes):
+def verdict(answer='yes', **changes):
     result = {'answer': answer, 'explanation': 'Оператор выполнил требуемое действие.',
               'evidence': [{'turn_idx': 1, 'quote': 'Здравствуйте, я [Имя скрыто].', 'kind': 'supports'}],
-              'checked_range': None, 'na_reason': None, 'flag_types': None, 'confidence': confidence}
+              'checked_range': None, 'na_reason': None, 'flag_types': None, 'support_status': 'supported'}
     result.update(changes)
     return result
+
+
+def wire_response(results, **changes):
+    content = results if isinstance(results, str) else json.dumps({'results': results})
+    payload = {'model': 'test/actual-model',
+               'choices': [{'finish_reason': 'stop', 'message': {'content': content}}],
+               'usage': {'prompt_tokens': 120, 'completion_tokens': 40, 'cost': .003}}
+    payload.update(changes)
+    return payload
 
 
 def install(monkeypatch, responses, **settings_changes):
@@ -60,174 +69,140 @@ def install(monkeypatch, responses, **settings_changes):
             raise response
         if callable(response):
             return response(request, body)
-        content = json.dumps(response)
-        message = ({'content': content} if 'response_format' in body else
-                   {'tool_calls': [{'id': 'synthetic-call', 'type': 'function',
-                                    'function': {'name': 'submit_verdict', 'arguments': content}}]})
-        return httpx.Response(200, json={'model': 'test/actual-model',
-            'choices': [{'finish_reason': 'stop' if 'response_format' in body else 'tool_calls', 'message': message}],
-            'usage': {'prompt_tokens': 120, 'completion_tokens': 40, 'cost': .003}})
+        ids = body['response_format']['json_schema']['schema']['properties']['results']['required']
+        results = {cid: response for cid in ids} if 'answer' in response else response
+        return httpx.Response(200, json=wire_response(results))
 
     monkeypatch.setattr(httpx, 'AsyncClient', lambda **kwargs: original(transport=httpx.MockTransport(handle), **kwargs))
     return openrouter, config, calls
 
 
-def test_forced_tool_parses_dynamic_rule_and_actual_usage(monkeypatch, source, criteria):
-    adapter, config, calls = install(monkeypatch, [verdict()])
-    result = asyncio.run(adapter.judge(source, criteria['contact']))
-    assert result.answer == 'yes' and result.model == 'test/actual-model'
-    assert result.usage.cost_usd == pytest.approx(.003) and result.usage.calls == 1
-    assert not result.needs_review
+def test_one_schema_request_returns_shared_receipt_and_zero_item_charges(monkeypatch, source, criteria):
+    adapter, config, calls = install(monkeypatch, [{'contact': verdict(), 'closing': verdict()}])
+    batch = asyncio.run(adapter.judge_batch(source, [criteria['contact'], criteria['closing']]))
+    assert set(batch.results) == {'contact', 'closing'} and not batch.errors
+    assert batch.model == 'test/actual-model' and batch.usage_known and batch.request_sent
+    assert batch.usage.calls == 1 and batch.usage.cost_usd == pytest.approx(.003)
+    assert all(result.usage.calls == result.latency_ms == 0 for result in batch.results.values())
     body, = calls
     assert body['model'] == 'test/configured-model' and body['temperature'] == 0
-    assert body['tool_choice'] == {'type': 'function', 'function': {'name': 'submit_verdict'}}
-    assert body['tools'][0]['function']['parameters']['additionalProperties'] is False
+    assert body['reasoning'] == {'effort': 'low'} and body['max_tokens'] == 8192
+    assert body['provider'] == {'only': ['google-ai-studio'], 'allow_fallbacks': False, 'require_parameters': True}
+    assert 'tools' not in body and body['response_format']['json_schema']['strict'] is True
+    sent = json.loads(body['messages'][1]['content'])
+    assert set(sent['questions']) == {'contact', 'closing'}
     assert source.transcript[1].text in body['messages'][1]['content']
-    assert criteria['contact'].description in body['messages'][1]['content']
+    assert criteria['contact'].description in sent['questions']['contact']['instructions']
 
 
-def test_invalid_quote_retries_once_with_error_and_sums_both_charges(monkeypatch, source, criteria):
-    wrong = verdict(evidence=[{'turn_idx': 1, 'quote': 'Цитата выдумана', 'kind': 'supports'}])
-    adapter, config, calls = install(monkeypatch, [wrong, verdict()])
-    result = asyncio.run(adapter.judge(source, criteria['contact']))
-    assert len(calls) == 2 and result.usage.calls == 2
-    assert result.usage.cost_usd == pytest.approx(.006)
-    assert 'Цитата модели не найдена' in calls[1]['messages'][-1]['content']
-    assert calls[0]['temperature'] == calls[1]['temperature'] == 0
-
-
-def test_repeated_invalid_answer_fails_with_usage_and_safe_message(monkeypatch, source, criteria):
-    adapter, config, calls = install(monkeypatch, [verdict(answer=123)])
-    with pytest.raises(JudgeError) as failure:
-        asyncio.run(adapter.judge(source, criteria['contact']))
-    assert len(calls) == 2 and failure.value.usage.calls == 2
-    assert failure.value.usage.cost_usd == pytest.approx(.006)
-    assert 'synthetic-key' not in str(failure.value) and 'Повторите' in str(failure.value)
-
-
-@pytest.mark.parametrize('criterion_id,first,second,review,calls_expected', [
-    ('contact', verdict(confidence='low'), None, True, 1),
-    ('contact', verdict(), None, False, 1),
-    ('contact', verdict('no', checked_range=[0, 3], evidence=[{'turn_idx': 1, 'quote': 'Здравствуйте', 'kind': 'expected_here'}]), verdict(), True, 2),
-    ('empathy', verdict('no'), None, False, 1),
-    ('consultation', verdict(20), verdict(15), True, 2),
-    ('consultation', verdict(20), verdict(20), False, 2),
-    ('dialogue', verdict(10), verdict(10, confidence='low'), True, 2),
-])
-def test_only_required_uncertainty_checks_run(monkeypatch, source, criteria, criterion_id, first, second, review, calls_expected):
-    adapter, config, calls = install(monkeypatch, [first, second or first])
-    result = asyncio.run(adapter.judge(source, criteria[criterion_id]))
-    assert result.answer == first['answer'] and result.needs_review is review
-    assert len(calls) == calls_expected and result.usage.calls == calls_expected
-    if calls_expected == 2:
-        assert calls[1]['temperature'] == .3
-        assert 'предыдущ' not in calls[1]['messages'][1]['content'].lower()
-
-
-def test_new_criterion_uses_its_rule_without_original_clarification(monkeypatch, source, criteria):
-    new = criteria['contact'].model_dump(by_alias=True)
-    new.update(id='extra-help', title='Дополнительная помощь', description='Да, если предложена дополнительная помощь.')
-    new = Criterion.model_validate(prepare_criterion(new))
-    adapter, config, calls = install(monkeypatch, [verdict(evidence=[{'turn_idx': 3, 'quote': 'Могу помочь ещё?', 'kind': 'supports'}])])
-    result = asyncio.run(adapter.judge(source, new))
-    assert result.answer == 'yes'
-    sent = json.loads(calls[0]['messages'][1]['content'])
-    assert sent['criterion']['description'] == new.description
-    assert not sent['originalCriterionClarification']
-
-
-@pytest.mark.parametrize('problem', ['bad_tool', 'truncated', 'missing_cost', 'negative_cost', 'nan_cost', 'bad_json'])
-def test_malformed_provider_response_never_becomes_success(monkeypatch, source, criteria, problem):
-    def response(request, body):
-        payload = {'model': 'test/actual-model', 'usage': {'prompt_tokens': 1, 'completion_tokens': 2, 'cost': .003},
-                   'choices': [{'finish_reason': 'tool_calls', 'message': {'tool_calls': [
-                       {'type': 'function', 'function': {'name': 'submit_verdict', 'arguments': json.dumps(verdict())}}]}}]}
-        if problem == 'bad_tool':
-            payload['choices'][0]['message']['tool_calls'][0]['function']['name'] = 'run_shell'
-        elif problem == 'truncated':
-            payload['choices'][0]['finish_reason'] = 'length'
-        elif problem == 'missing_cost':
-            del payload['usage']['cost']
-        elif problem in ('negative_cost', 'nan_cost'):
-            payload['usage']['cost'] = -.01 if problem == 'negative_cost' else 'NaN'
-        elif problem == 'bad_json':
-            payload['choices'][0]['message']['tool_calls'][0]['function']['arguments'] = '{'
-        return httpx.Response(200, json=payload)
-    adapter, config, calls = install(monkeypatch, [response])
-    with pytest.raises(JudgeError):
-        asyncio.run(adapter.judge(source, criteria['contact']))
-    assert len(calls) <= 2
-
-
-def test_http_failure_is_safe_and_has_no_automatic_paid_retry(monkeypatch, source, criteria):
-    adapter, config, calls = install(monkeypatch, [lambda request, body: httpx.Response(429, text='private body synthetic-key')])
-    with pytest.raises(JudgeError) as failure:
-        asyncio.run(adapter.judge(source, criteria['contact']))
-    assert len(calls) == 1
-    assert 'private' not in str(failure.value) and 'synthetic-key' not in str(failure.value)
-
-
-def test_missing_configuration_never_calls_provider(monkeypatch, source, criteria):
+def test_single_trial_uses_same_batch_contract_and_full_receipt(monkeypatch, source, criteria):
     adapter, config, calls = install(monkeypatch, [verdict()])
-    config.judge_model = ''
-    with pytest.raises(JudgeError, match='настро'):
-        asyncio.run(adapter.judge(source, criteria['contact']))
-    assert calls == []
-
-
-def test_schema_probe_mode_has_same_validated_contract(monkeypatch, source, criteria):
-    adapter, config, calls = install(monkeypatch, [verdict()], judge_output_mode='schema')
     result = asyncio.run(adapter.judge(source, criteria['contact']))
     assert result.answer == 'yes' and result.usage.calls == 1
-    assert 'tools' not in calls[0]
-    assert calls[0]['response_format']['json_schema']['strict'] is True
+    assert result.usage.cost_usd == pytest.approx(.003) and result.model == 'test/actual-model'
+    assert not result.needs_review
+    assert calls[0]['response_format']['json_schema']['schema']['properties']['results']['required'] == ['contact']
 
 
-@pytest.mark.parametrize('shape', ['null_choice', 'string_choice', 'null_tool', 'string_function'])
-def test_wrong_nested_shapes_retry_safely_and_preserve_billing(monkeypatch, source, criteria, shape):
-    def response(request, body):
-        choice = {'finish_reason': 'tool_calls', 'message': {'tool_calls': [
-            {'type': 'function', 'function': {'name': 'submit_verdict', 'arguments': json.dumps(verdict())}}]}}
-        if shape == 'null_choice':
-            choice = None
-        elif shape == 'string_choice':
-            choice = 'invalid'
-        elif shape == 'null_tool':
-            choice['message']['tool_calls'] = [None]
-        else:
-            choice['message']['tool_calls'][0]['function'] = 'invalid'
-        return httpx.Response(200, json={'model': 'test/actual-model', 'choices': [choice],
-                                        'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'cost': .003}})
-    adapter, config, calls = install(monkeypatch, [response])
+def test_bad_quote_keeps_other_valid_results_without_repair_or_second_charge(monkeypatch, source, criteria):
+    wrong = verdict(evidence=[{'turn_idx': 1, 'quote': 'Выдуманная цитата', 'kind': 'supports'}])
+    adapter, config, calls = install(monkeypatch, [{'contact': wrong, 'closing': verdict()}])
+    batch = asyncio.run(adapter.judge_batch(source, [criteria['contact'], criteria['closing']]))
+    assert list(batch.results) == ['closing'] and list(batch.errors) == ['contact']
+    assert 'Цитата модели не найдена' in batch.errors['contact']
+    assert batch.diagnostics['contact']['answer'] == 'yes'
+    assert batch.usage.calls == len(calls) == 1 and batch.usage.cost_usd == pytest.approx(.003)
+
+
+@pytest.mark.parametrize('criterion_id,result', [
+    ('contact', verdict(answer=True)),
+    ('contact', verdict(answer=123)),
+    ('contact', verdict(evidence=[])),
+    ('contact', verdict(evidence=[{'turn_idx': 1, 'quote': ' ', 'kind': 'supports'}])),
+    ('contact', verdict(explanation=' ')),
+    ('contact', verdict(evidence=[{'turn_idx': 9, 'quote': 'Здравствуйте', 'kind': 'supports'}])),
+    ('contact', verdict('no')),
+    ('contact', verdict('no', checked_range=[0, 0], evidence=[{'turn_idx': 1, 'quote': 'Здравствуйте', 'kind': 'expected_here'}])),
+    ('contact', verdict('no', checked_range=[3, 0])),
+    ('contact', verdict('no', checked_range=[0, 5])),
+    ('contact', verdict('na', na_reason='Не применимо')),
+    ('needs', verdict('na')),
+    ('contact', verdict(na_reason='Лишнее поле')),
+    ('contact', verdict(flag_types=[])),
+    ('gross', verdict('yes')),
+    ('gross', verdict('yes', flag_types=['invented-flag'])),
+    ('gross', verdict('no', checked_range=[0, 3], flag_types=['invented-flag'])),
+    ('contact', {**verdict(), 'confidence': 'high'}),
+])
+def test_formal_and_domain_failures_are_not_scored(monkeypatch, source, criteria, criterion_id, result):
+    adapter, config, calls = install(monkeypatch, [result])
     with pytest.raises(JudgeError) as failure:
-        asyncio.run(adapter.judge(source, criteria['contact']))
-    assert len(calls) == 2 and failure.value.usage.cost_usd == pytest.approx(.006)
+        asyncio.run(adapter.judge(source, criteria[criterion_id]))
+    assert failure.value.usage.calls == 1 and failure.value.usage_known
+    assert failure.value.request_sent and len(calls) == 1
+    assert 'synthetic-key' not in str(failure.value)
 
 
-def test_original_clarifications_follow_content_not_id_or_weight(criteria):
-    from app.judge.hints import criterion_clarification
+@pytest.mark.parametrize('support', ['unsupported', 'insufficient'])
+def test_unsubstantiated_answer_is_diagnostic_failure_with_original_explanation(monkeypatch, source, criteria, support):
+    raw = verdict(support_status=support, evidence=[], explanation='В разговоре недостаточно данных для обоснования.')
+    adapter, config, calls = install(monkeypatch, [raw])
+    batch = asyncio.run(adapter.judge_batch(source, [criteria['contact']]))
+    assert not batch.results and raw['explanation'] in batch.errors['contact']
+    assert batch.diagnostics == {'contact': {'answer': 'yes', 'supportStatus': support, 'explanation': raw['explanation']}}
+    assert batch.usage.calls == len(calls) == 1
+
+
+def test_supported_negative_and_flag_results_require_real_ranges(monkeypatch, source, criteria):
+    adapter, config, calls = install(monkeypatch, [{
+        'contact': verdict('no', checked_range=[0, 3],
+                           evidence=[{'turn_idx': 1, 'quote': 'Здравствуйте', 'kind': 'expected_here'}]),
+        'gross': verdict('no', checked_range=[0, 3]),
+        'consultation': verdict(20),
+    }])
+    batch = asyncio.run(adapter.judge_batch(source, [criteria[cid] for cid in ['contact', 'gross', 'consultation']]))
+    assert not batch.errors and len(batch.results) == 3
+    assert batch.usage.calls == len(calls) == 1  # No independent checker for scales/no.
+
+
+def test_missing_result_only_fails_that_criterion(monkeypatch, source, criteria):
+    adapter, config, calls = install(monkeypatch, [{'contact': verdict()}])
+    batch = asyncio.run(adapter.judge_batch(source, [criteria['contact'], criteria['closing']]))
+    assert set(batch.results) == {'contact'} and set(batch.errors) == {'closing'}
+    assert batch.usage.calls == len(calls) == 1
+
+
+def test_dynamic_custom_roster_and_fractional_scale_have_no_eight_rule_assumption(monkeypatch, source, criteria):
+    rules = []
+    for index in range(9):
+        rule = criteria['contact'].model_dump(by_alias=True)
+        rule.update(id=f'custom-{index}', title=f'Правило {index}', description='Да, если предложена помощь.')
+        rules.append(Criterion.model_validate(prepare_criterion(rule)))
+    adapter, config, calls = install(monkeypatch, [verdict()])
+    batch = asyncio.run(adapter.judge_batch(source, rules))
+    assert len(batch.results) == 9 and len(calls) == 1
+    sent = json.loads(calls[0]['messages'][1]['content'])
+    assert set(sent['questions']) == {rule.id for rule in rules}
+    assert all('Уточнение именно' not in question['instructions'] for question in sent['questions'].values())
+    rule = rules[0].model_dump(by_alias=True)
+    rule.update(type='scale', scale=[{'value': 0, 'description': 'Не выполнено'},
+                                    {'value': .25, 'description': 'Частично'}, {'value': 1.5, 'description': 'Полностью'}])
+    rule = Criterion.model_validate(prepare_criterion(rule))
+    schema = adapter.verdict_schema(source, rule)
+    assert set(schema['properties']['answer']['enum']) == {0, .25, 1.5}
+    assert set(adapter._choice_labels(source, rule).values()) == {0, .25, 1.5}
+
+
+def test_original_clarifications_follow_full_content_not_id_or_weight(criteria):
+    from app.judge import openrouter as adapter
     original = criteria['contact']
-    assert criterion_clarification(original)
+    assert adapter._clarification(original)
     weighted = original.model_dump(by_alias=True)
     weighted['weight'] += 4
-    assert criterion_clarification(Criterion.model_validate(prepare_criterion(weighted)))
+    assert adapter._clarification(Criterion.model_validate(prepare_criterion(weighted)))
     changed = original.model_copy(update={'description': 'Да, если клиент поздоровался.'})
-    assert not criterion_clarification(changed)  # Even a stale original contentHash cannot revive instructions.
-    changed = Criterion.model_validate(prepare_criterion(changed.model_dump(by_alias=True)))
-    assert not criterion_clarification(changed)
-
-
-@pytest.mark.parametrize('text', ['Личность клиента подтверждена.', 'Клиенттің жеке басы расталды.',
-                                'Customer identity has been verified.'])
-def test_identity_hint_accepts_only_actual_system_confirmation(source, text):
-    from app.judge.hints import build_hints
-    turn = source.transcript[0]
-    turn.text, turn.speaker = text, 'system'
-    assert build_hints(source)['identityConfirmationIdxs'] == [0]
-    turn.speaker = 'bot'
-    assert not build_hints(source)['identityConfirmed']
-    turn.speaker, turn.text = 'system', 'Личность клиента не подтверждена.'
-    assert not build_hints(source)['identityConfirmed']
+    assert not adapter._clarification(changed)
+    assert not adapter._clarification(Criterion.model_validate(prepare_criterion(changed.model_dump(by_alias=True))))
 
 
 def late_recording_source(source):
@@ -239,7 +214,7 @@ def late_recording_source(source):
     return source
 
 
-def test_contact_na_exception_is_consistent_in_schema_validator_and_scoring(monkeypatch, source, criteria):
+def test_contact_na_guard_matches_schema_validation_and_current_rule(monkeypatch, source, criteria):
     from app.evaluations import validate_judge_result
     from app.judge.hints import contact_na_allowed
     from app.scoring import validate_answer
@@ -247,36 +222,40 @@ def test_contact_na_exception_is_consistent_in_schema_validator_and_scoring(monk
     adapter, config, calls = install(monkeypatch, [verdict('na', na_reason='Приветствие не попало в запись.',
         evidence=[{'turn_idx': 0, 'quote': 'Запись началась после соединения.', 'kind': 'supports'}])])
     result = asyncio.run(adapter.judge(source, criteria['contact']))
-    criterion_dict = criteria['contact'].model_dump(by_alias=True)
-    source_dict = source.model_dump(by_alias=True)
-    validate_answer(criterion_dict, 'na', source_dict)
-    validate_judge_result(result, criterion_dict, source_dict)
-    assert result.answer == 'na' and contact_na_allowed(source_dict, criterion_dict)
-    assert 'na' in calls[0]['tools'][0]['function']['parameters']['properties']['answer']['enum']
-    assert json.loads(calls[0]['messages'][1]['content'])['contactNaAllowed'] is True
+    rule, conversation = criteria['contact'].model_dump(by_alias=True), source.model_dump(by_alias=True)
+    validate_answer(rule, 'na', conversation)
+    validate_judge_result(result, rule, conversation)
+    assert contact_na_allowed(conversation, rule)
+    schema = calls[0]['response_format']['json_schema']['schema']['properties']['results']['properties']['contact']
+    assert 'na' in schema['properties']['answer']['enum']
+    assert 'contactNaAllowed=true' in json.loads(calls[0]['messages'][1]['content'])['questions']['contact']['instructions']
     with pytest.raises(ApiError):
-        validate_answer(criterion_dict, 'na')
+        validate_answer(rule, 'na')
+    with pytest.raises(ApiError):
+        validate_answer({**rule, 'description': 'Да, если оператор отвечает на вопрос.'}, 'na', conversation)
     source.channel = 'agent chat'
-    with pytest.raises(ApiError):
-        validate_answer(criterion_dict, 'na', source.model_dump(by_alias=True))
-    source.channel = 'voice call'
-    changed = dict(criterion_dict, description='Да, если оператор отвечает на вопрос.')
-    with pytest.raises(ApiError):
-        validate_answer(changed, 'na', source.model_dump(by_alias=True))
-
-
-def test_later_recording_event_does_not_excuse_first_operator_turn(source, criteria):
-    from app.judge.hints import build_hints, contact_na_allowed
-    source = late_recording_source(source)
-    source.transcript[0].text = 'Агент присоединился к разговору с клиентом.'
-    source.transcript[2].speaker = 'system'
-    source.transcript[2].text = 'Запись началась.'
-    assert not build_hints(source)['midRecordingCall']
     assert not contact_na_allowed(source, criteria['contact'])
 
 
-def test_pause_hints_do_not_count_bot_as_operator_or_reset_unanswered_client(source):
+@pytest.mark.parametrize('text', ['Личность клиента подтверждена.', 'Клиенттің жеке басы расталды.',
+                                'Customer identity has been verified.'])
+def test_identity_hint_only_uses_actual_system_confirmation(source, text):
     from app.judge.hints import build_hints
+    turn = source.transcript[0]
+    turn.text, turn.speaker = text, 'system'
+    assert build_hints(source)['identityConfirmationIdxs'] == [0]
+    turn.speaker = 'bot'
+    assert not build_hints(source)['identityConfirmed']
+    turn.speaker, turn.text = 'system', 'Личность клиента не подтверждена.'
+    assert not build_hints(source)['identityConfirmed']
+
+
+def test_later_recording_and_bot_reply_do_not_change_contextual_hints(source, criteria):
+    from app.judge.hints import build_hints, contact_na_allowed
+    late = late_recording_source(source)
+    late.transcript[0].text = 'Агент присоединился к разговору с клиентом.'
+    late.transcript[2].speaker, late.transcript[2].text = 'system', 'Запись началась.'
+    assert not build_hints(late)['midRecordingCall'] and not contact_na_allowed(late, criteria['contact'])
     source.transcript[1].speaker = 'bot'
     source.transcript[2].t_sec = 6
     hint = build_hints(source)
@@ -284,65 +263,71 @@ def test_pause_hints_do_not_count_bot_as_operator_or_reset_unanswered_client(sou
     assert hint['longestClientOperatorPause'] == {'clientIdx': 0, 'operatorIdx': 3, 'seconds': 9}
 
 
-def _install_queue_provider(seeded_client, monkeypatch, broken_contact=False):
-    from app import llm_switch
-
+@pytest.mark.parametrize('problem,known', [
+    ('bad_json', True), ('null_choice', True), ('null_message', True), ('unexpected_id', True),
+    ('extra_envelope_key', True), ('duplicate_key', True), ('missing_model', True),
+    ('missing_cost', False), ('negative_cost', False), ('nan_cost', False), ('bool_tokens', False),
+])
+def test_malformed_wire_never_succeeds_and_keeps_known_billing(monkeypatch, source, criteria, problem, known):
     def response(request, body):
-        sent = json.loads(body['messages'][1]['content'])
-        criterion = sent['criterion']
-        operator = next(t for t in sent['conversation']['transcript'] if t['speaker'] == 'operator')
-        answer = (max(s['value'] for s in criterion['scale']) if criterion['type'] == 'scale'
-                  else 'no' if criterion['type'] == 'flag' else 'yes')
-        result = verdict(answer, evidence=[{'turn_idx': operator['idx'], 'quote': operator['text'][:80], 'kind': 'supports'}])
-        if broken_contact and criterion['id'] == 'contact':
-            result['evidence'][0]['quote'] = 'Этой строки нет в исходном диалоге.'
-        return httpx.Response(200, json={'model': 'test/actual-model',
-            'choices': [{'finish_reason': 'tool_calls', 'message': {'tool_calls': [
-                {'type': 'function', 'function': {'name': 'submit_verdict', 'arguments': json.dumps(result)}}]}}],
-            'usage': {'prompt_tokens': 10, 'completion_tokens': 5, 'cost': .003}})
+        payload = wire_response({'contact': verdict()})
+        if problem == 'bad_json':
+            payload['choices'][0]['message']['content'] = '{'
+        elif problem == 'null_choice':
+            payload['choices'] = [None]
+        elif problem == 'null_message':
+            payload['choices'][0]['message'] = None
+        elif problem == 'unexpected_id':
+            payload = wire_response({'not-requested': verdict()})
+        elif problem == 'extra_envelope_key':
+            payload['choices'][0]['message']['content'] = json.dumps({'results': {'contact': verdict()}, 'extra': 1})
+        elif problem == 'duplicate_key':
+            payload['choices'][0]['message']['content'] = '{"results":{"contact":{},"contact":{}}}'
+        elif problem == 'missing_model':
+            del payload['model']
+        elif problem == 'missing_cost':
+            del payload['usage']['cost']
+        elif problem in {'negative_cost', 'nan_cost'}:
+            payload['usage']['cost'] = -.01 if problem == 'negative_cost' else 'NaN'
+        elif problem == 'bool_tokens':
+            payload['usage']['prompt_tokens'] = True
+        return httpx.Response(200, json=payload)
     adapter, config, calls = install(monkeypatch, [response])
-    monkeypatch.setenv('JUDGE', 'openrouter')
-    app_settings = seeded_client.app.state.settings
-    for field in ('judge', 'judge_model', 'judge_temperature', 'judge_output_mode', 'openrouter_api_key'):
-        setattr(app_settings, field, getattr(config, field))
-    llm_switch.configure('openrouter', app_settings)
-    return adapter, app_settings, calls
+    with pytest.raises(JudgeError) as caught:
+        asyncio.run(adapter.judge_batch(source, [criteria['contact']]))
+    assert len(calls) == 1 and caught.value.usage_known is known and caught.value.request_sent
+    if known:
+        assert caught.value.usage.cost_usd == pytest.approx(.003) and caught.value.usage.calls == 1
+    else:
+        assert caught.value.usage is None
 
 
-def test_failed_criterion_keeps_all_billed_attempts_in_evaluation_and_health(seeded_client, monkeypatch):
-    from tests.helpers import evaluate
-    adapter, config, calls = _install_queue_provider(seeded_client, monkeypatch, broken_contact=True)
-    result, = evaluate(seeded_client)
-    assert result['status'] == 'failed' and result['total'] is None
-    failed = next(item for item in result['items'] if item['criterionId'] == 'contact')
-    assert failed['status'] == 'failed' and failed['usage']['calls'] == 2
-    assert failed['usage']['costUsd'] == pytest.approx(.006)
-    assert failed['model'] == 'test/actual-model'
-    assert result['usage']['calls'] == len(calls) == 11
-    assert result['usage']['costUsd'] == pytest.approx(.033)
-    with seeded_client.app.state.db.transaction() as conn:
-        cost, count = conn.execute("SELECT SUM(cost_usd),SUM(calls) FROM model_calls WHERE kind='evaluation'").fetchone()
-    assert cost == pytest.approx(.033) and count == 11
+@pytest.mark.parametrize('status', [400, 401, 429, 503])
+def test_http_status_is_safe_and_queue_never_retries_or_invents_free_usage(monkeypatch, source, criteria, status):
+    from app.evaluations import EvaluationQueue
+    adapter, config, calls = install(monkeypatch, [lambda request, body: httpx.Response(status, text='private body synthetic-key')])
+    queue = EvaluationQueue(None, config)
+    with pytest.raises(JudgeError, match=f'HTTP {status}') as caught:
+        asyncio.run(queue._invoke_with_retries(adapter.judge_batch, (source, [criteria['contact']]), {}))
+    assert len(calls) == 1 and caught.value.usage is None and not caught.value.usage_known
+    assert not hasattr(caught.value, 'status_code') and not hasattr(caught.value, 'response')
+    assert 'private' not in str(caught.value) and 'synthetic-key' not in str(caught.value)
 
 
-def test_real_judge_never_reuses_fake_and_preserves_item_model_on_valid_reuse(seeded_client, monkeypatch):
-    from tests.helpers import evaluate
-    fake, = evaluate(seeded_client)
-    assert fake['model'] == 'fake'
-    adapter, config, calls = _install_queue_provider(seeded_client, monkeypatch)
-    real, = evaluate(seeded_client, reuse=True)
-    assert real['status'] == 'done' and len(calls) == 10
-    assert all(not item['reused'] and item['model'] == 'test/actual-model' for item in real['items'])
-    cached, = evaluate(seeded_client, reuse=True)
-    assert len(calls) == 10 and cached['usage']['calls'] == 0
-    assert all(item['reused'] and item['model'] == 'test/actual-model' for item in cached['items'])
-    config.judge_model = 'test/other-configured-model'
-    changed, = evaluate(seeded_client, reuse=True)
-    assert len(calls) == 20 and all(not item['reused'] for item in changed['items'])
+@pytest.mark.parametrize('failure,expected', [
+    (httpx.ReadTimeout('private timeout synthetic-key'), 'время ожидания'),
+    (httpx.ConnectError('private connection synthetic-key'), 'Сбой соединения'),
+    (asyncio.TimeoutError('private deadline synthetic-key'), 'время ожидания'),
+])
+def test_transport_failure_has_unknown_billing_and_no_paid_retry(monkeypatch, source, criteria, failure, expected):
+    adapter, config, calls = install(monkeypatch, [failure])
+    with pytest.raises(JudgeError, match=expected) as caught:
+        asyncio.run(adapter.judge(source, criteria['contact']))
+    assert len(calls) == 1 and caught.value.usage is None and caught.value.request_sent
+    assert 'private' not in str(caught.value) and 'synthetic-key' not in str(caught.value)
 
 
 def _delay_mock_requests(monkeypatch, delay):
-    """Delay the mocked transport without sending a request outside the test."""
     factory = httpx.AsyncClient
     started, cancelled, deadlines = [], [], []
 
@@ -350,14 +335,11 @@ def _delay_mock_requests(monkeypatch, delay):
         def __init__(self, **kwargs):
             deadlines.append(kwargs['timeout'].read)
             self.client = factory(**kwargs)
-
         async def __aenter__(self):
             await self.client.__aenter__()
             return self
-
         async def __aexit__(self, *args):
             return await self.client.__aexit__(*args)
-
         async def post(self, *args, **kwargs):
             started.append(True)
             try:
@@ -366,203 +348,132 @@ def _delay_mock_requests(monkeypatch, delay):
             except asyncio.CancelledError:
                 cancelled.append(True)
                 raise
-
     monkeypatch.setattr(httpx, 'AsyncClient', DelayedClient)
     return started, cancelled, deadlines
 
 
-def test_request_can_use_more_than_one_quarter_of_the_operation_budget(monkeypatch, source, criteria):
+def test_one_request_uses_full_bounded_budget(monkeypatch, source, criteria):
     adapter, config, calls = install(monkeypatch, [verdict()], model_timeout=.4)
     started, cancelled, deadlines = _delay_mock_requests(monkeypatch, .12)
-    result = asyncio.run(adapter.judge(source, criteria['contact']))
-    assert result.answer == 'yes' and result.usage.calls == 1
+    assert asyncio.run(adapter.judge(source, criteria['contact'])).usage.calls == 1
     assert len(calls) == len(started) == 1 and not cancelled
     assert .3 < deadlines[0] < config.model_timeout
 
 
-def test_shared_deadline_cancels_later_check_and_preserves_prior_usage(monkeypatch, source, criteria):
-    adapter, config, calls = install(monkeypatch, [verdict(20)], model_timeout=.3)
-    started, cancelled, deadlines = _delay_mock_requests(monkeypatch, .18)
-    with pytest.raises(JudgeError, match='время ожидания') as failure:
-        asyncio.run(adapter.judge(source, criteria['consultation']))
-    assert len(started) == 2 and len(cancelled) == 1
-    assert len(calls) == 1  # The incomplete request has no returned usage to invent.
-    assert 0 < deadlines[1] < deadlines[0] - .12
-    assert failure.value.usage.calls == 1 and failure.value.usage.cost_usd == pytest.approx(.003)
-    assert failure.value.model == 'test/actual-model'
-    assert not hasattr(failure.value, 'status_code') and not hasattr(failure.value, 'response')
-
-
-@pytest.mark.parametrize('status', [400, 401, 429, 503])
-def test_http_status_is_safe_and_queue_does_not_retry_transport(monkeypatch, source, criteria, status):
-    from app.evaluations import EvaluationQueue
-    adapter, config, calls = install(monkeypatch, [
-        lambda request, body: httpx.Response(status, text='private body synthetic-key')])
-    queue = EvaluationQueue(None, config)
-    with pytest.raises(JudgeError, match=f'HTTP {status}') as failure:
-        asyncio.run(queue._invoke_with_retries(adapter.judge, (source, criteria['contact']), {}))
-    assert len(calls) == 1 and failure.value.usage.calls == 0
-    assert 'private' not in str(failure.value) and 'synthetic-key' not in str(failure.value)
-
-
-@pytest.mark.parametrize('failure,expected', [
-    (httpx.ReadTimeout('private timeout synthetic-key'), 'время ожидания'),
-    (httpx.ConnectError('private connection synthetic-key'), 'Сбой соединения'),
-    (asyncio.TimeoutError('private deadline synthetic-key'), 'время ожидания'),
-])
-def test_transport_failure_categories_are_distinct_and_safe(monkeypatch, source, criteria, failure, expected):
-    adapter, config, calls = install(monkeypatch, [failure])
-    with pytest.raises(JudgeError, match=expected) as caught:
+def test_deadline_cancels_single_request_without_retry_or_fabricated_receipt(monkeypatch, source, criteria):
+    adapter, config, calls = install(monkeypatch, [verdict()], model_timeout=.1)
+    started, cancelled, deadlines = _delay_mock_requests(monkeypatch, .2)
+    with pytest.raises(JudgeError, match='время ожидания') as caught:
         asyncio.run(adapter.judge(source, criteria['contact']))
-    assert len(calls) == 1 and caught.value.usage.calls == 0
-    assert 'private' not in str(caught.value) and 'synthetic-key' not in str(caught.value)
+    assert len(started) == len(cancelled) == 1 and not calls
+    assert caught.value.usage is None and caught.value.request_sent
 
 
-def test_http_failure_after_paid_primary_keeps_its_usage(monkeypatch, source, criteria):
-    adapter, config, calls = install(monkeypatch, [verdict(20),
-        lambda request, body: httpx.Response(503, text='private body synthetic-key')])
-    with pytest.raises(JudgeError, match='HTTP 503') as failure:
-        asyncio.run(adapter.judge(source, criteria['consultation']))
-    assert len(calls) == 2
-    assert failure.value.usage.calls == 1 and failure.value.usage.cost_usd == pytest.approx(.003)
-    assert failure.value.model == 'test/actual-model'
-
-
-@pytest.mark.parametrize('timeout', [0, -1, float('inf'), float('nan')])
-def test_nonpositive_or_unbounded_timeout_cannot_send_request(monkeypatch, source, criteria, timeout):
-    adapter, config, calls = install(monkeypatch, [verdict()])
-    config.model_timeout = timeout
-    with pytest.raises(JudgeError, match='Время ожидания'):
-        asyncio.run(adapter.judge(source, criteria['contact']))
-    assert calls == []
-
-
-def test_configured_output_capacity_and_shared_timeout(monkeypatch, source, criteria):
-    adapter, config, calls = install(monkeypatch, [verdict()], judge_max_tokens=12288, model_timeout=180)
-    result = asyncio.run(adapter.judge(source, criteria['contact']))
-    assert calls[0]['max_tokens'] == 12288 and result.answer == 'yes'
-    assert 'reasoning' not in calls[0] and calls[0]['temperature'] == config.judge_temperature
-
-
-@pytest.mark.parametrize('mode', ['tool', 'schema'])
-def test_output_limit_is_distinct_billed_and_not_blindly_retried(monkeypatch, source, criteria, caplog, mode):
-    def truncated(request, body):
+def test_output_limit_is_billed_distinct_and_not_retried_or_logged_as_content(monkeypatch, source, criteria, caplog):
+    def response(request, body):
         return httpx.Response(200, json={'model': 'test/actual-model',
-            'choices': [{'finish_reason': 'length', 'native_finish_reason': 'MAX_TOKENS',
-                         'message': {'content': None, 'reasoning': 'private reasoning synthetic-key'}}],
+            'choices': [{'finish_reason': 'length', 'message': {'content': None, 'reasoning': 'private reasoning synthetic-key'}}],
             'usage': {'prompt_tokens': 100, 'completion_tokens': 8188, 'cost': .031,
                       'completion_tokens_details': {'reasoning_tokens': 8100}}})
-    adapter, config, calls = install(monkeypatch, [truncated], judge_output_mode=mode)
-    with pytest.raises(JudgeError, match='ограничения длины') as failure:
+    adapter, config, calls = install(monkeypatch, [response])
+    with pytest.raises(JudgeError, match='ограничения длины') as caught:
         asyncio.run(adapter.judge(source, criteria['contact']))
-    assert len(calls) == 1 and calls[0]['max_tokens'] == 8192
-    assert failure.value.failure_reason == 'output_limit'
-    assert failure.value.usage.calls == 1 and failure.value.usage.cost_usd == pytest.approx(.031)
+    assert len(calls) == 1 and caught.value.failure_reason == 'output_limit'
+    assert caught.value.usage.calls == 1 and caught.value.usage.cost_usd == pytest.approx(.031)
     assert '"finishReason": "length"' in caplog.text and '"reasoningTokens": 8100' in caplog.text
     assert 'private reasoning' not in caplog.text and 'synthetic-key' not in caplog.text
 
 
-def test_verification_output_limit_keeps_primary_and_failed_check_billing(monkeypatch, source, criteria):
-    def truncated(request, body):
-        return httpx.Response(200, json={'model': 'test/actual-model',
-            'choices': [{'finish_reason': 'length', 'message': {}}],
-            'usage': {'prompt_tokens': 100, 'completion_tokens': 8190, 'cost': .03}})
-    adapter, config, calls = install(monkeypatch, [verdict(20), truncated])
-    with pytest.raises(JudgeError) as failure:
-        asyncio.run(adapter.judge(source, criteria['consultation']))
-    assert len(calls) == 2 and failure.value.usage.calls == 2
-    assert failure.value.usage.cost_usd == pytest.approx(.033)
-
-
-@pytest.mark.parametrize('changes', [{'judge_max_tokens': 0}, {'judge_max_tokens': 32769},
+@pytest.mark.parametrize('change', [
+    {'judge_model': ''}, {'judge_max_tokens': 0}, {'judge_max_tokens': 32769},
     {'judge_max_tokens': True}, {'model_timeout': 0}, {'model_timeout': float('nan')},
-    {'model_timeout': float('inf')}, {'model_timeout': 601}])
-def test_output_and_timeout_configuration_is_bounded(changes):
-    with pytest.raises(ValueError):
-        Settings(**changes)
+    {'model_timeout': float('inf')}, {'model_timeout': 601},
+])
+def test_invalid_configuration_fails_before_request_with_known_zero_usage(monkeypatch, source, criteria, change):
+    adapter, config, calls = install(monkeypatch, [verdict()])
+    for key, value in change.items():
+        setattr(config, key, value)
+    with pytest.raises(JudgeError) as caught:
+        asyncio.run(adapter.judge(source, criteria['contact']))
+    assert not calls and not caught.value.request_sent and caught.value.usage_known
+    assert caught.value.usage.calls == 0
 
 
-def test_runtime_environment_output_and_timeout_configuration(monkeypatch):
-    monkeypatch.setenv('JUDGE_MAX_TOKENS', '12288')
-    monkeypatch.setenv('MODEL_TIMEOUT_SECONDS', '240')
-    settings = Settings()
-    assert settings.judge_max_tokens == 12288 and settings.model_timeout == 240
+def test_empty_batch_and_duplicate_criteria_never_send_request(monkeypatch, source, criteria):
+    adapter, config, calls = install(monkeypatch, [verdict()])
+    empty = asyncio.run(adapter.judge_batch(source, []))
+    assert not empty.request_sent and empty.usage.calls == 0
+    with pytest.raises(JudgeError):
+        asyncio.run(adapter.judge_batch(source, [criteria['contact'], criteria['contact']]))
+    assert not calls
 
 
-def test_semantic_identity_certifies_only_the_two_audited_legacy_sources(monkeypatch):
+def test_semantic_identity_is_new_and_excludes_transport_budgets_and_legacy_mode():
     from app.judge import openrouter as adapter
     config = Settings(judge_model='google/gemini-3.8-flash', judge_output_mode='tool', judge_temperature=0)
     adapter.configure(config)
-    current = adapter.cache_identity()
-    expected = {'openrouter:9a47a940cb23dedc251d3c4938c60110a6f0711485abae2f8765dc315c10c426',
-                'openrouter:c7470595bba2a87ff4bfaaa0ef72cfc71d46496be47efa35cd228a85705c6537'}
-    assert current.startswith('openrouter:v2:')
-    assert adapter.compatible_cache_identities() == {current, *expected}
-    # Earlier hints were different, so a genuine model label alone is not enough.
-    assert 'openrouter:c4d1c553f52413d5dfd8b7c370db07fa14d7e9ffb8723027e554c0892bff485c' not in adapter.compatible_cache_identities()
-    config.judge_max_tokens, config.model_timeout = 16384, 300
-    assert adapter.cache_identity() == current
-    assert adapter.compatible_cache_identities() == {current, *expected}
-
-
-@pytest.mark.parametrize('field,value', [('judge_model', 'test/another-model'),
-    ('judge_output_mode', 'schema'), ('judge_temperature', .1)])
-def test_semantic_configuration_change_revokes_legacy_compatibility(field, value):
-    from app.judge import openrouter as adapter
-    config = Settings(judge_model='google/gemini-3.8-flash', judge_output_mode='tool', judge_temperature=0)
-    adapter.configure(config)
-    previous = adapter.cache_identity()
-    setattr(config, field, value)
-    assert adapter.cache_identity() != previous
+    identity = adapter.cache_identity()
+    assert identity.startswith('openrouter:batch-v3:')
+    assert adapter.compatible_cache_identities() == {identity}
+    config.judge_max_tokens, config.model_timeout, config.judge_output_mode = 16384, 300, 'schema'
+    assert adapter.cache_identity() == identity
+    config.judge_model = 'test/other-model'
+    assert adapter.cache_identity() != identity
     assert adapter.compatible_cache_identities() == {adapter.cache_identity()}
 
 
-def test_prompt_or_semantic_contract_change_revokes_legacy_compatibility(monkeypatch, tmp_path):
+def test_prompt_changes_invalidate_judge_but_preserve_unrelated_ai_cache(monkeypatch, tmp_path):
     from app.judge import openrouter as adapter
-    adapter.configure(Settings(judge_model='google/gemini-3.8-flash', judge_output_mode='tool', judge_temperature=0))
-    previous = adapter.cache_identity()
+    from app.ai import openrouter as ai
+    config = Settings(judge_model='google/gemini-3.8-flash', judge_temperature=0)
+    adapter.configure(config)
+    ai.configure(config)
+    before, ai_before = adapter.cache_identity(), ai.cache_identity()
     for path in adapter._PROMPTS.glob('*.md'):
-        (tmp_path / path.name).write_text(path.read_text(encoding='utf-8'), encoding='utf-8')
+        (tmp_path / path.name).write_bytes(path.read_bytes())
     monkeypatch.setattr(adapter, '_PROMPTS', tmp_path)
-    assert adapter.cache_identity() == previous
+    assert adapter.cache_identity() == before
     path = tmp_path / 'system.md'
-    path.write_text(path.read_text(encoding='utf-8') + '\nChanged rule.', encoding='utf-8')
-    assert adapter.cache_identity() != previous
-    assert adapter.compatible_cache_identities() == {adapter.cache_identity()}
+    path.write_text(path.read_text(encoding='utf-8') + '\nChanged semantic policy.', encoding='utf-8')
+    assert adapter.cache_identity() != before and ai.cache_identity() == ai_before
 
 
-def test_domain_validation_or_policy_change_revokes_legacy_compatibility(monkeypatch):
+def test_domain_validation_policy_temperature_and_answer_contract_change_identity(monkeypatch):
     from app import evaluations
     from app.judge import openrouter as adapter
-    adapter.configure(Settings(judge_model='google/gemini-3.8-flash', judge_output_mode='tool', judge_temperature=0))
+    config = Settings(judge_model='google/gemini-3.8-flash', judge_temperature=0)
+    adapter.configure(config)
+    previous = adapter.cache_identity()
+    config.judge_temperature = .1
+    assert adapter.cache_identity() != previous
     previous = adapter.cache_identity()
 
     def changed_validation(*args, **kwargs):
         return None
-
     monkeypatch.setattr(evaluations, 'validate_judge_result', changed_validation)
     assert adapter.cache_identity() != previous
-    assert adapter.compatible_cache_identities() == {adapter.cache_identity()}
-    validation_identity = adapter.cache_identity()
-    monkeypatch.setattr(adapter, '_SEMANTIC_CONTRACT_VERSION', 'changed-policy')
-    assert adapter.cache_identity() != validation_identity
-    assert adapter.compatible_cache_identities() == {adapter.cache_identity()}
-    policy_identity = adapter.cache_identity()
-    monkeypatch.setattr(adapter, 'Answer', str)
-    assert adapter.cache_identity() != policy_identity
-    assert adapter.compatible_cache_identities() == {adapter.cache_identity()}
-
-
-def test_hints_change_revokes_legacy_compatibility(monkeypatch):
-    from app.judge import openrouter as adapter
-    adapter.configure(Settings(judge_model='google/gemini-3.8-flash', judge_output_mode='tool', judge_temperature=0))
     previous = adapter.cache_identity()
-    original_read = Path.read_text
-
-    def changed_hint(path, *args, **kwargs):
-        content = original_read(path, *args, **kwargs)
-        return content + '\n# Changed hint semantics' if path.name == 'hints.py' else content
-
-    monkeypatch.setattr(Path, 'read_text', changed_hint)
+    monkeypatch.setattr(adapter, '_SEMANTIC_CONTRACT_VERSION', 'changed-policy')
     assert adapter.cache_identity() != previous
-    assert adapter.compatible_cache_identities() == {adapter.cache_identity()}
+    previous = adapter.cache_identity()
+    monkeypatch.setattr(adapter, 'Answer', str)
+    assert adapter.cache_identity() != previous
+
+
+def test_hints_change_invalidates_judge_identity(monkeypatch):
+    from app.judge import openrouter as adapter
+    adapter.configure(Settings(judge_model='google/gemini-3.8-flash'))
+    before = adapter.cache_identity()
+    original = Path.read_text
+
+    def changed(path, *args, **kwargs):
+        text = original(path, *args, **kwargs)
+        return text + '\n# changed hint semantics' if path.name == 'hints.py' else text
+    monkeypatch.setattr(Path, 'read_text', changed)
+    assert adapter.cache_identity() != before
+
+
+def test_real_alias_exports_identical_batch_provider():
+    from app import judge
+    from app.judge import openrouter
+    assert judge.judge_batch is openrouter.judge_batch and judge.judge is openrouter.judge

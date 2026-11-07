@@ -331,10 +331,10 @@ class Database:
         with self._using(conn) as c:
             c.execute('DELETE FROM ai_cache WHERE kind=? AND key=?', (kind, key))
 
-    def record_usage(self, usage, latency_ms=0, kind='extra'):
+    def record_usage(self, usage, latency_ms=0, kind='extra', conn=None):
         if hasattr(usage, 'model_dump'):
             usage = usage.model_dump(by_alias=True)
-        with self.transaction() as c:
+        with self._using(conn) as c:
             c.execute('INSERT INTO model_calls(kind,input_tokens,output_tokens,cost_usd,calls,latency_ms,created_at) VALUES(?,?,?,?,?,?,?)', (kind, usage.get('inputTokens',0), usage.get('outputTokens',0), usage.get('costUsd',0), usage.get('calls',0), latency_ms, utcnow()))
 
 

@@ -193,6 +193,7 @@ class Evaluation(ApiModel):
     status: Literal['queued', 'running', 'done', 'failed']
     model: str
     usage: Usage
+    usage_incomplete: bool = False
     needs_review_count: int
     started_at: Optional[str] = None
     finished_at: Optional[str] = None

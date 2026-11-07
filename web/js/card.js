@@ -75,6 +75,8 @@
     "card.evaluatedAgo": { ru: "Оценено {ago}", kk: "{ago} бағаланды", en: "Evaluated {ago}" },
     "card.evaluatedDuration": { ru: "Оценено {ago} за {seconds} с", kk: "{ago}, {seconds} с ішінде бағаланды", en: "Evaluated {ago} in {seconds}s" },
     "card.evaluationCost": { ru: "Стоимость оценки: {cost}", kk: "Бағалау құны: {cost}", en: "Evaluation cost: {cost}" },
+    "card.knownEvaluationCost": { ru: "Известный расход: {cost}", kk: "Белгілі шығын: {cost}", en: "Known cost: {cost}" },
+    "card.incompleteEvaluationCost": { ru: "Есть вызов без данных о стоимости", kk: "Құны туралы дерек жоқ сұрау бар", en: "One or more requests have no cost data" },
     "card.evaluationUsage": { ru: "Запросы: {calls} · Токены на входе: {input} · На выходе: {output}", kk: "Сұраулар: {calls} · Кіріс токендері: {input} · Шығыс токендері: {output}", en: "Requests: {calls} · Input tokens: {input} · Output tokens: {output}" },
     "card.grossError": { ru: "Грубая ошибка", kk: "Өрескел қате", en: "Serious violation" },
     "card.naSubject": { ru: ({count}) => `${["", "Один", "Два", "Три", "Четыре"][count] || count} ${DA.fmt.plural(count, ["критерий к этому разговору не относится", "критерия к этому разговору не относятся", "критериев к этому разговору не относятся"])}`, kk: "Бұл диалогқа {count} критерий қолданылмайды", en: { one: "One criterion does not apply to this conversation", other: "{count} criteria do not apply to this conversation" } },
@@ -156,7 +158,7 @@
     let ev = cardContext.ev;
     const evaluationSignature = (value) => value ? JSON.stringify([value.id, value.conversationId, value.checklistVersion,
       value.transcriptHash, value.stale, value.status, value.total, value.originalTotal, value.grossFlagged,
-      value.sections, value.items, value.usage, value.durationSec, value.minutesAgo]) : null;
+      value.sections, value.items, value.usage, value.usageIncomplete, value.durationSec, value.minutesAgo]) : null;
     let renderedEvaluationSignature = null;
     const CL = () => (ev ? DA.checklist(ev.checklistVersion) : DA.activeChecklist());
     let openId = params.query.criterion || null;
@@ -603,9 +605,10 @@
             title: m("evaluationUsage", () => {
               const count = (value) => Number.isFinite(value) && value >= 0 ? new Intl.NumberFormat(DA.fmt.locale()).format(value) : "—";
               return { calls: count(ev.usage.calls), input: count(ev.usage.inputTokens), output: count(ev.usage.outputTokens) };
-            }) }, m("evaluationCost", () => ({ cost: new Intl.NumberFormat(DA.fmt.locale(), {
+            }) }, m(ev.usageIncomplete === true ? "knownEvaluationCost" : "evaluationCost", () => ({ cost: new Intl.NumberFormat(DA.fmt.locale(), {
               style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 6
-            }).format(ev.usage.costUsd) }))) : null)));
+            }).format(ev.usage.costUsd) }))) : null,
+          ev.usageIncomplete === true ? h("span", { class: "da-eval-cost-note" }, m("incompleteEvaluationCost")) : null)));
 
       if (ev.grossFlagged) {
         const g = ev.items.find((i) => DA.criterionById(CL(), i.criterionId).type === "flag");

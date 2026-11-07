@@ -9,6 +9,8 @@ import copy
 import itertools
 import logging
 import re
+import time
+import uuid
 from datetime import datetime
 from typing import Any, Callable
 
@@ -218,14 +220,21 @@ class EvaluationQueue:
                 if self.background_guard:
                     self.background_guard(conn)
                 evaluation = self.db.get_evaluation(evaluation["id"], conn)
+                interrupted = set()
+                for attempt in evaluation.get('_batchCalls', []):
+                    if attempt['status'] == 'running':
+                        interrupted.update(attempt['criterionIds'])
+                        attempt.update(status='interrupted', finishedAt=utcnow())
                 for item in evaluation["items"]:
                     if item["status"] == "running":
-                        if getattr(self.settings, 'worker_mode', 'standalone') == 'worker':
+                        if (getattr(self.settings, 'worker_mode', 'standalone') == 'worker'
+                                or item['criterionId'] in interrupted):
                             item.update(status="failed", explanation="Обработка прервалась. Повторите критерий.")
                         else:
                             item["status"] = "pending"
                 evaluation["status"] = "queued"
                 evaluation["total"] = None
+                self._aggregate(evaluation)
                 self.db.save_evaluation(evaluation, conn)
             self._schedule(evaluation["id"])
         # A process can stop between final criterion persistence and job update.
@@ -414,13 +423,16 @@ class EvaluationQueue:
                 raise JudgeError("Транскрипт изменился; запустите новую оценку")
             criteria = {criterion["id"]: criterion for criterion in checklist["criteria"]}
             pending = [item["criterionId"] for item in evaluation["items"] if item["status"] in {"pending", "running"}]
-            outcomes = await asyncio.gather(*[
-                self._run_criterion(evaluation_id, criteria[criterion_id], conversation)
-                for criterion_id in pending
-            ], return_exceptions=True)
-            for outcome in outcomes:
-                if isinstance(outcome, BaseException):
-                    raise outcome
+            if callable(getattr(llm_switch.get_judge(), 'judge_batch', None)):
+                await self._run_batch(evaluation_id, [criteria[criterion_id] for criterion_id in pending], conversation)
+            else:
+                outcomes = await asyncio.gather(*[
+                    self._run_criterion(evaluation_id, criteria[criterion_id], conversation)
+                    for criterion_id in pending
+                ], return_exceptions=True)
+                for outcome in outcomes:
+                    if isinstance(outcome, BaseException):
+                        raise outcome
             with self.db.transaction() as conn:
                 if self.background_guard:
                     self.background_guard(conn)
@@ -494,6 +506,159 @@ class EvaluationQueue:
                 )
                 return item, model
         return None
+
+    async def _run_batch(self, evaluation_id: str, criteria: list[dict], conversation: dict) -> None:
+        """One provider receipt for the rules that cannot be reused safely.
+
+        A durable in-flight marker precedes the HTTP call. A process interruption
+        never silently resends a possibly paid batch, including standalone mode.
+        """
+        evaluation = self.db.get_evaluation(evaluation_id)
+        requested = []
+        for criterion in criteria:
+            reusable = None
+            if evaluation.get('_reuse') and evaluation.get('_retryCriterion') != criterion['id']:
+                reusable = self._find_reusable(evaluation, criterion)
+            if reusable:
+                item, model = reusable
+                self._save_item(evaluation_id, criterion['id'], item, model)
+            else:
+                requested.append(criterion)
+        if not requested:
+            return
+        source = Conversation.model_validate(conversation)
+        rules = [Criterion.model_validate(criterion) for criterion in requested]
+        attempt_id = uuid.uuid4().hex
+        started = None
+        began = False
+        invoked = False
+
+        async def compatible_batch(source, rules):
+            nonlocal began, invoked, started
+            started = time.monotonic()
+            # Check again when the queued call actually obtains a provider slot.
+            with self.db.transaction() as conn:
+                if self.background_guard:
+                    self.background_guard(conn)
+                latest = self.db.get_evaluation(evaluation_id, conn)
+                require_current_judge_compatibility(latest)
+                provider = llm_switch.get_judge()
+                if not callable(getattr(provider, 'judge_batch', None)):
+                    raise ApiError('provider_changed', 'Способ оценки изменился. Запустите новую оценку', 409)
+                ids = [criterion['id'] for criterion in requested]
+                latest.setdefault('_batchCalls', []).append({
+                    'id': attempt_id, 'criterionIds': ids, 'status': 'running',
+                    'startedAt': utcnow(), 'finishedAt': None, 'usage': None,
+                    'usageKnown': False, 'requestSent': True, 'model': latest['model'],
+                    'latencyMs': None,
+                })
+                for item in latest['items']:
+                    if item['criterionId'] in ids:
+                        item['status'] = 'running'
+                self._aggregate(latest)
+                self.db.save_evaluation(latest, conn)
+            began = True
+            self._refresh_jobs(evaluation_id)
+            invoked = True
+            try:
+                return await provider.judge_batch(source, rules)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # Returning the failure keeps the generic provider gate from
+                # retrying even a raw HTTP 429: this durable batch gets one POST.
+                return exc
+
+        receipt = None
+        failure = None
+        try:
+            receipt = await self.call_model(compatible_batch, source, rules)
+            if isinstance(receipt, Exception):
+                failure, receipt = receipt, None
+        except asyncio.CancelledError:
+            # The persisted marker makes recovery conservative about billing.
+            raise
+        except Exception as exc:
+            failure = exc
+        if not began:
+            # Identity/fencing can fail before any HTTP attempt. Do not create a
+            # fabricated receipt or turn a stale owner into a permitted writer.
+            for criterion in requested:
+                self._save_item(evaluation_id, criterion['id'], {
+                    'status': 'failed', 'explanation': self._batch_failure_message(failure),
+                })
+            return
+        self._complete_batch(evaluation_id, attempt_id, requested, conversation,
+                             receipt=receipt, failure=failure,
+                             elapsed_ms=round((time.monotonic() - started) * 1000),
+                             request_attempted=invoked)
+
+    @staticmethod
+    def _batch_failure_message(error) -> str:
+        if isinstance(error, (asyncio.TimeoutError, TimeoutError)):
+            return 'Модель не ответила вовремя. Повторите критерий.'
+        if isinstance(error, JudgeError):
+            return str(error)
+        if isinstance(error, ApiError) and error.code == 'provider_changed':
+            return error.message
+        return 'Не удалось проверить ответ модели. Повторите критерий.'
+
+    def _complete_batch(self, evaluation_id, attempt_id, criteria, conversation, *, receipt=None,
+                        failure=None, elapsed_ms=0, request_attempted=True):
+        """Commit results and the one shared charge atomically and idempotently."""
+        raw_usage = getattr(receipt if receipt is not None else failure, 'usage', None)
+        if not request_attempted:
+            raw_usage = Usage()
+        usage = None if raw_usage is None else Usage.model_validate(raw_usage).model_dump(by_alias=True)
+        model = getattr(receipt if receipt is not None else failure, 'model', '')
+        latency = getattr(receipt if receipt is not None else failure, 'latency_ms', elapsed_ms)
+        request_sent = getattr(receipt if receipt is not None else failure, 'request_sent', request_attempted)
+        results = getattr(receipt, 'results', {}) if receipt is not None else {}
+        errors = getattr(receipt, 'errors', {}) if receipt is not None else {}
+        diagnostics = dict(getattr(receipt, 'diagnostics', {}) if receipt is not None else {})
+        changes = {}
+        for criterion in criteria:
+            cid = criterion['id']
+            item = empty_item(criterion)
+            if cid in results and cid not in errors:
+                try:
+                    raw = results[cid]
+                    result = raw if isinstance(raw, JudgeResult) else JudgeResult.model_validate(raw)
+                    validate_judge_result(result, criterion, conversation)
+                    item = result_to_item(result, criterion)
+                except (ValueError, TypeError, ValidationError, ApiError, JudgeError) as exc:
+                    errors = {**errors, cid: self._batch_failure_message(exc)}
+            if cid not in results or cid in errors:
+                item.update(status='failed', explanation=errors.get(cid) or self._batch_failure_message(failure))
+            # Shared usage and wall time belong to the batch receipt. There is
+            # no measured token or timing split between its individual rules.
+            item.update(usage=zero_usage(), latencyMs=None, model=model or item.get('model'))
+            changes[cid] = item
+        with self.db.transaction() as conn:
+            if self.background_guard:
+                self.background_guard(conn)
+            evaluation = self.db.get_evaluation(evaluation_id, conn)
+            attempt = next(entry for entry in evaluation.get('_batchCalls', []) if entry['id'] == attempt_id)
+            if attempt['status'] != 'running':
+                return False
+            attempt.update(status='failed' if failure or any(item['status'] == 'failed' for item in changes.values()) else 'done',
+                           finishedAt=utcnow(), usage=usage, usageKnown=usage is not None,
+                           requestSent=request_sent, model=model or attempt['model'], latencyMs=latency)
+            if diagnostics:
+                attempt['diagnostics'] = diagnostics
+            if usage is not None and usage['calls']:
+                self.db.record_usage(usage, latency_ms=latency or 0, kind='evaluation', conn=conn)
+            for item in evaluation['items']:
+                if item['criterionId'] in changes:
+                    previous_usage = item.get('usage')
+                    item.update(changes[item['criterionId']])
+                    item['usage'] = previous_usage or zero_usage()
+            if model:
+                evaluation['model'] = model
+            self._aggregate(evaluation)
+            self.db.save_evaluation(evaluation, conn)
+        self._refresh_jobs(evaluation_id)
+        return True
 
     async def _run_criterion(self, evaluation_id: str, criterion: dict, conversation: dict) -> None:
         evaluation = self.db.get_evaluation(evaluation_id)
@@ -571,7 +736,13 @@ class EvaluationQueue:
 
     @staticmethod
     def _aggregate(evaluation: dict) -> None:
-        evaluation["usage"] = sum_usage(i.get("usage") for i in evaluation["items"] if not i.get("reused"))
+        usage = [i.get('usage') for i in evaluation['items'] if not i.get('reused')]
+        batches = evaluation.get('_batchCalls', [])
+        usage.extend(attempt['usage'] for attempt in batches if attempt.get('usageKnown'))
+        evaluation['usage'] = sum_usage(usage)
+        if batches:
+            evaluation['usageIncomplete'] = any(attempt.get('requestSent') and not attempt.get('usageKnown')
+                                                for attempt in batches)
         evaluation["needsReviewCount"] = sum(bool(i.get("needsReview")) for i in evaluation["items"] if i["status"] == "done")
 
     def _refresh_jobs(self, evaluation_id: str) -> None:
@@ -580,6 +751,8 @@ class EvaluationQueue:
 
     def _refresh_job(self, job_id: str) -> dict:
         with self.db.transaction() as conn:
+            if self.background_guard:
+                self.background_guard(conn)
             job = self.db.get_job(job_id, conn)
             usages = []
             for item in job["items"]:

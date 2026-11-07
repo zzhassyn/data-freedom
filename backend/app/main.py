@@ -187,14 +187,22 @@ def create_app(settings=None, *, providers=None, background_guard=None):
             evaluations = db.all_evaluations(conn)
             metrics = conn.execute("SELECT AVG(CASE WHEN kind='evaluation' THEN latency_ms END) AS avg_ms, SUM(cost_usd) AS cost FROM model_calls").fetchone()
         visible = [ev for ev in evaluations if is_evaluation_visible(ev)]
-        costs = [ev['usage']['costUsd'] for ev in visible if ev['status'] == 'done']
+        costs = [ev['usage']['costUsd'] for ev in visible if ev['status'] == 'done' and not ev.get('usageIncomplete')]
         average_ms = metrics['avg_ms'] or 0
         if not llm_switch.has_provider_overrides():
             timings = [item['latencyMs'] for ev in visible
                        for item in ev['items'] if not item.get('reused') and item.get('latencyMs') is not None
                        and (item.get('usage') or {}).get('calls', 0) > 0]
             average_ms = sum(timings) / len(timings) if timings else 0
-        return dict(ok=True, model=cached['model'], modelOnline=cached['online'], avgCriterionMs=round(average_ms, 2), avgEvaluationCostUsd=sum(costs)/len(costs) if costs else 0, totalCostUsd=metrics['cost'] or 0)
+        batch_timings = [attempt['latencyMs'] for ev in visible for attempt in ev.get('_batchCalls', [])
+                         if attempt.get('latencyMs') is not None and attempt.get('requestSent')
+                         and attempt.get('status') in {'done', 'failed'}]
+        return dict(ok=True, model=cached['model'], modelOnline=cached['online'],
+                    avgCriterionMs=round(average_ms, 2),
+                    avgBatchMs=round(sum(batch_timings) / len(batch_timings), 2) if batch_timings else None,
+                    avgEvaluationCostUsd=sum(costs)/len(costs) if costs else 0,
+                    totalCostUsd=metrics['cost'] or 0,
+                    totalCostIncomplete=any(ev.get('usageIncomplete') for ev in visible))
 
     application.mount('/', StaticFiles(directory=str(BASE_DIR.parent / 'web'), html=True), name='web')
     return application

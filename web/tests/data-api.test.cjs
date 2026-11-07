@@ -331,6 +331,29 @@ test('server normalization preserves authoritative totals, null sections, stable
   assert.ok(calls.length > before);
 });
 
+test('optional incomplete usage survives normalization, refresh and an appeal decision without inventing cost', async () => {
+  const { DA, cl, ev } = fixtureServer();
+  assert.equal(Object.hasOwn(DA.data.normalizeEvaluation(ev), 'usageIncomplete'), false);
+  const knownUsage = { inputTokens: 100, outputTokens: 20, calls: 1, costUsd: 0.002 };
+  const incomplete = { ...ev, usage: knownUsage, usageIncomplete: true };
+  DA.api.bootstrap = async () => screenSnapshot(cl, incomplete);
+  await DA.data.prepare('card', { id: source.id });
+  assert.equal(DA.state.evaluations.fixture.usageIncomplete, true);
+  assert.deepEqual(json(DA.state.evaluations.fixture.usage), knownUsage);
+  const a = { id: 'ap_incomplete_usage', evaluationId: ev.id, conversationId: source.id, criterionId: cl.criteria[0].id,
+    status: 'open', evaluation: incomplete, conversation: source };
+  DA.state.appeals = [a];
+  DA.api.decideAppeal = async () => ({ appeal: { ...a, status: 'confirmed',
+    decision: { action: 'confirm', reason: 'Проверено по реплике' } }, evaluation: incomplete });
+  await DA.data.decideAppeal(a.id, 'confirm', null, 'Проверено по реплике');
+  assert.equal(DA.state.evaluations.fixture.usageIncomplete, true);
+  assert.equal(DA.data.appealContext(a.id).ev.usageIncomplete, true);
+  assert.deepEqual(json(DA.state.evaluations.fixture.usage), knownUsage);
+  DA.api.bootstrap = async () => screenSnapshot(cl, { ...incomplete, usageIncomplete: false });
+  await DA.data.refresh();
+  assert.equal(DA.state.evaluations.fixture.usageIncomplete, false);
+});
+
 test('server preferences retain UI choices and remove legacy browser domain data', () => {
   const legacy = { role: 'reviewer', sidebar: 'closed', conversations: { obsolete: { transcript: [] } },
     evaluations: { obsolete: { id: 'old-demo' } }, checklists: [{ id: 'old-demo' }], jobs: { obsolete: {} } };
