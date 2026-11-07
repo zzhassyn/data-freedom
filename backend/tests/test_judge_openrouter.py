@@ -302,7 +302,7 @@ def _install_queue_provider(seeded_client, monkeypatch, broken_contact=False):
             'usage': {'prompt_tokens': 10, 'completion_tokens': 5, 'cost': .003}})
     adapter, config, calls = install(monkeypatch, [response])
     monkeypatch.setenv('JUDGE', 'openrouter')
-    llm_switch.configure('openrouter', .001, config)
+    llm_switch.configure('openrouter', config)
     return adapter, config, calls
 
 
@@ -336,3 +336,98 @@ def test_real_judge_never_reuses_fake_and_preserves_item_model_on_valid_reuse(se
     config.judge_model = 'test/other-configured-model'
     changed, = evaluate(seeded_client, reuse=True)
     assert len(calls) == 20 and all(not item['reused'] for item in changed['items'])
+
+
+def _delay_mock_requests(monkeypatch, delay):
+    """Delay the mocked transport without sending a request outside the test."""
+    factory = httpx.AsyncClient
+    started, cancelled, deadlines = [], [], []
+
+    class DelayedClient:
+        def __init__(self, **kwargs):
+            deadlines.append(kwargs['timeout'].read)
+            self.client = factory(**kwargs)
+
+        async def __aenter__(self):
+            await self.client.__aenter__()
+            return self
+
+        async def __aexit__(self, *args):
+            return await self.client.__aexit__(*args)
+
+        async def post(self, *args, **kwargs):
+            started.append(True)
+            try:
+                await asyncio.sleep(delay)
+                return await self.client.post(*args, **kwargs)
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
+
+    monkeypatch.setattr(httpx, 'AsyncClient', DelayedClient)
+    return started, cancelled, deadlines
+
+
+def test_request_can_use_more_than_one_quarter_of_the_operation_budget(monkeypatch, source, criteria):
+    adapter, config, calls = install(monkeypatch, [verdict()], model_timeout=.4)
+    started, cancelled, deadlines = _delay_mock_requests(monkeypatch, .12)
+    result = asyncio.run(adapter.judge(source, criteria['contact']))
+    assert result.answer == 'yes' and result.usage.calls == 1
+    assert len(calls) == len(started) == 1 and not cancelled
+    assert .3 < deadlines[0] < config.model_timeout
+
+
+def test_shared_deadline_cancels_later_check_and_preserves_prior_usage(monkeypatch, source, criteria):
+    adapter, config, calls = install(monkeypatch, [verdict(20)], model_timeout=.3)
+    started, cancelled, deadlines = _delay_mock_requests(monkeypatch, .18)
+    with pytest.raises(JudgeError, match='время ожидания') as failure:
+        asyncio.run(adapter.judge(source, criteria['consultation']))
+    assert len(started) == 2 and len(cancelled) == 1
+    assert len(calls) == 1  # The incomplete request has no returned usage to invent.
+    assert 0 < deadlines[1] < deadlines[0] - .12
+    assert failure.value.usage.calls == 1 and failure.value.usage.cost_usd == pytest.approx(.003)
+    assert failure.value.model == 'test/actual-model'
+    assert not hasattr(failure.value, 'status_code') and not hasattr(failure.value, 'response')
+
+
+@pytest.mark.parametrize('status', [400, 401, 429, 503])
+def test_http_status_is_safe_and_queue_does_not_retry_transport(monkeypatch, source, criteria, status):
+    from app.evaluations import EvaluationQueue
+    adapter, config, calls = install(monkeypatch, [
+        lambda request, body: httpx.Response(status, text='private body synthetic-key')])
+    queue = EvaluationQueue(None, config)
+    with pytest.raises(JudgeError, match=f'HTTP {status}') as failure:
+        asyncio.run(queue._invoke_with_retries(adapter.judge, (source, criteria['contact']), {}))
+    assert len(calls) == 1 and failure.value.usage.calls == 0
+    assert 'private' not in str(failure.value) and 'synthetic-key' not in str(failure.value)
+
+
+@pytest.mark.parametrize('failure,expected', [
+    (httpx.ReadTimeout('private timeout synthetic-key'), 'время ожидания'),
+    (httpx.ConnectError('private connection synthetic-key'), 'Сбой соединения'),
+    (asyncio.TimeoutError('private deadline synthetic-key'), 'время ожидания'),
+])
+def test_transport_failure_categories_are_distinct_and_safe(monkeypatch, source, criteria, failure, expected):
+    adapter, config, calls = install(monkeypatch, [failure])
+    with pytest.raises(JudgeError, match=expected) as caught:
+        asyncio.run(adapter.judge(source, criteria['contact']))
+    assert len(calls) == 1 and caught.value.usage.calls == 0
+    assert 'private' not in str(caught.value) and 'synthetic-key' not in str(caught.value)
+
+
+def test_http_failure_after_paid_primary_keeps_its_usage(monkeypatch, source, criteria):
+    adapter, config, calls = install(monkeypatch, [verdict(20),
+        lambda request, body: httpx.Response(503, text='private body synthetic-key')])
+    with pytest.raises(JudgeError, match='HTTP 503') as failure:
+        asyncio.run(adapter.judge(source, criteria['consultation']))
+    assert len(calls) == 2
+    assert failure.value.usage.calls == 1 and failure.value.usage.cost_usd == pytest.approx(.003)
+    assert failure.value.model == 'test/actual-model'
+
+
+@pytest.mark.parametrize('timeout', [0, -1, float('inf'), float('nan')])
+def test_nonpositive_or_unbounded_timeout_cannot_send_request(monkeypatch, source, criteria, timeout):
+    adapter, config, calls = install(monkeypatch, [verdict()], model_timeout=timeout)
+    with pytest.raises(JudgeError, match='Время ожидания'):
+        asyncio.run(adapter.judge(source, criteria['contact']))
+    assert calls == []

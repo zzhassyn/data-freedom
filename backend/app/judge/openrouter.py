@@ -147,7 +147,13 @@ async def judge(conversation: Conversation, criterion: Criterion) -> JudgeResult
     mode = getattr(settings, 'judge_output_mode', 'tool')
     if mode not in ('tool', 'schema'):
         raise OpenRouterJudgeError('Формат ответа модели не настроен')
+    if not math.isfinite(settings.model_timeout) or settings.model_timeout <= 0:
+        raise OpenRouterJudgeError('Время ожидания модели оценки не настроено')
     started = time.monotonic()
+    # Finish inside the queue's outer deadline so we can return prior billed
+    # usage on timeout instead of losing it to the queue's cancellation.
+    deadline = started + settings.model_timeout - min(.5, settings.model_timeout * .05)
+    timeout_message = 'Истекло время ожидания сервиса оценки. Повторите критерий позже'
     usage = Usage()
     models = []
     messages = _messages(conversation, criterion)
@@ -172,19 +178,29 @@ async def judge(conversation: Conversation, criterion: Criterion) -> JudgeResult
                     'name': 'submit_verdict', 'description': 'Submit the evidence-based verdict for this criterion.',
                     'strict': True, 'parameters': schema}}]
                 body['tool_choice'] = {'type': 'function', 'function': {'name': 'submit_verdict'}}
-            # At most four HTTP attempts (primary + repair, independent check +
-            # repair) fit inside the shared queue's overall operation deadline.
-            deadline = max(.05, settings.model_timeout / 4 - .1)
+            # The existing primary/repair/check attempts share one finite budget.
+            # Reserve no fixed quarter for calls that may never be needed.
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise fail(timeout_message)
             try:
-                async with httpx.AsyncClient(timeout=httpx.Timeout(deadline, connect=min(15, deadline)),
+                async with httpx.AsyncClient(timeout=httpx.Timeout(remaining, connect=min(15, remaining)),
                                              follow_redirects=False, trust_env=False) as client:
                     response = await asyncio.wait_for(client.post(
                         'https://openrouter.ai/api/v1/chat/completions', json=body,
-                        headers={'Authorization': 'Bearer ' + settings.openrouter_api_key}), timeout=deadline)
+                        headers={'Authorization': 'Bearer ' + settings.openrouter_api_key}), timeout=remaining)
                 response.raise_for_status()
-            except (httpx.HTTPError, asyncio.TimeoutError) as exc:
+            except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
+                raise fail(timeout_message) from exc
+            except httpx.HTTPStatusError as exc:
+                # Preserve only the status, never provider bodies, URLs or keys.
+                # Do not expose status_code/response on our error: the shared
+                # queue would otherwise automatically retry a wrapped HTTP 429.
+                raise fail(f'Сервис оценки вернул ошибку HTTP {exc.response.status_code}. '
+                           'Повторите критерий позже') from exc
+            except httpx.HTTPError as exc:
                 # No transport retry: the outcome of a paid call may be unknown.
-                raise fail('Сервис оценки не ответил. Повторите критерий позже') from exc
+                raise fail('Сбой соединения с сервисом оценки. Повторите критерий позже') from exc
             try:
                 payload = response.json()
                 billed = _usage(payload)
@@ -217,17 +233,23 @@ async def judge(conversation: Conversation, criterion: Criterion) -> JudgeResult
                     'Предыдущий ответ не прошёл проверку сервера: ' + error +
                     '. Заново оцени исходные данные. Исправь только эту ошибку; верни полный структурный ответ.'}]
 
-    result, confidence = await one(settings.judge_temperature)
-    result.needs_review = confidence == 'low'
-    omitted_action = result.answer == 'no' and (
-        result.checked_range is not None or any(e.kind == 'expected_here' for e in result.evidence))
-    if criterion.type == 'scale' or omitted_action:
-        verification, verification_confidence = await one(.3)
-        result.needs_review |= verification.answer != result.answer or verification_confidence == 'low'
-    result.usage = usage
-    result.model = ', '.join(models)
-    result.latency_ms = round((time.monotonic() - started) * 1000)
-    return result
+    async def complete():
+        result, confidence = await one(settings.judge_temperature)
+        result.needs_review = confidence == 'low'
+        omitted_action = result.answer == 'no' and (
+            result.checked_range is not None or any(e.kind == 'expected_here' for e in result.evidence))
+        if criterion.type == 'scale' or omitted_action:
+            verification, verification_confidence = await one(.3)
+            result.needs_review |= verification.answer != result.answer or verification_confidence == 'low'
+        result.usage = usage
+        result.model = ', '.join(models)
+        result.latency_ms = round((time.monotonic() - started) * 1000)
+        return result
+
+    try:
+        return await asyncio.wait_for(complete(), timeout=max(0, deadline - time.monotonic()))
+    except asyncio.TimeoutError as exc:
+        raise fail(timeout_message) from exc
 
 
 async def second_opinion(conversation, criterion, original, appeal_comment):
