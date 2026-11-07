@@ -30,6 +30,7 @@ class Settings:
     judge_model: str = field(default_factory=lambda: os.getenv('JUDGE_MODEL', '').strip())
     judge_temperature: float = field(default_factory=lambda: float(os.getenv('JUDGE_TEMPERATURE', '0')))
     judge_output_mode: str = field(default_factory=lambda: os.getenv('JUDGE_OUTPUT_MODE', 'tool'))
+    judge_max_tokens: int = field(default_factory=lambda: int(os.getenv('JUDGE_MAX_TOKENS', '8192')))
     ai_model: str = field(default_factory=lambda: os.getenv('AI_MODEL', '').strip() or os.getenv('JUDGE_MODEL', '').strip())
     llm_base_url: str = field(default_factory=lambda: os.getenv('LLM_BASE_URL', 'https://api.openai.com/v1'))
     llm_api_key: str = field(default_factory=lambda: os.getenv('LLM_API_KEY', ''))
@@ -46,7 +47,7 @@ class Settings:
     stt_price_per_sec: float = field(default_factory=lambda: float(os.getenv('STT_PRICE_PER_SEC', '0.0000611')))
     stt_concurrency: int = field(default_factory=lambda: int(os.getenv('STT_CONCURRENCY', '3')))
     stt_keep_raw: bool = field(default_factory=lambda: env_bool('STT_KEEP_RAW', False))
-    model_timeout: float = 90.0
+    model_timeout: float = field(default_factory=lambda: float(os.getenv('MODEL_TIMEOUT_SECONDS', '180')))
 
     def __post_init__(self):
         hosts = self.audio_allowed_hosts
@@ -59,6 +60,10 @@ class Settings:
             raise ValueError('JUDGE_TEMPERATURE должен быть от 0 до 2')
         if self.judge_output_mode not in {'tool', 'schema'}:
             raise ValueError('JUDGE_OUTPUT_MODE должен быть tool или schema')
+        if type(self.judge_max_tokens) is not int or not 1024 <= self.judge_max_tokens <= 32768:
+            raise ValueError('JUDGE_MAX_TOKENS должен быть целым числом от 1024 до 32768')
+        if not math.isfinite(self.model_timeout) or not 0 < self.model_timeout <= 600:
+            raise ValueError('MODEL_TIMEOUT_SECONDS должен быть конечным числом больше 0 и не больше 600')
         if not 1 <= self.judge_concurrency <= 128:
             raise ValueError('JUDGE_CONCURRENCY должен быть от 1 до 128')
         if not 1 <= self.stt_concurrency <= 16:

@@ -1,14 +1,17 @@
 """Bounded OpenRouter judge: one criterion, validated evidence, actual billed usage."""
 import asyncio
 import hashlib
+import inspect
 import json
+import logging
 import math
+import re
 import time
 from pathlib import Path
 from typing import Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, TypeAdapter, ValidationError
 
 from app.errors import ApiError, JudgeError
 from app.models import Answer, Conversation, Criterion, JudgeResult, Usage
@@ -17,6 +20,9 @@ from .hints import build_hints, contact_na_allowed, criterion_clarification
 IS_FAKE = False
 _settings = None
 _PROMPTS = Path(__file__).with_name('prompts')
+_COMPATIBILITY = Path(__file__).with_name('cache-compatibility.json')
+_SEMANTIC_CONTRACT_VERSION = 'verdict-primary-with-independent-check-v1'
+logger = logging.getLogger(__name__)
 
 
 def configure(settings):
@@ -29,13 +35,48 @@ def configured_model():
 
 
 def cache_identity():
-    """Invalidate derived answers after a provider, model or instruction change."""
-    parts = [configured_model(), getattr(_settings, 'judge_output_mode', 'tool'),
-             str(getattr(_settings, 'judge_temperature', 0)),
-             Path(__file__).read_text(encoding='utf-8'),
-             Path(__file__).with_name('hints.py').read_text(encoding='utf-8')]
-    parts.extend(path.read_text(encoding='utf-8') for path in sorted(_PROMPTS.glob('*.md')))
-    return 'openrouter:' + hashlib.sha256('\n'.join(parts).encode('utf-8')).hexdigest()
+    """Meaning and validation define reuse; transport budgets do not change a verdict."""
+    from app.evaluations import validate_judge_result
+    from app.scoring import validate_answer
+
+    contract = {
+        'version': _SEMANTIC_CONTRACT_VERSION,
+        'model': configured_model(),
+        'outputMode': getattr(_settings, 'judge_output_mode', 'tool'),
+        'temperature': float(getattr(_settings, 'judge_temperature', 0)),
+        'verificationTemperature': .3,
+        'verdictContract': inspect.getsource(_Evidence) + '\n' + inspect.getsource(_Verdict),
+        'answerSchema': TypeAdapter(Answer).json_schema(),
+        'schemaBuilder': inspect.getsource(verdict_schema),
+        'messageBuilder': inspect.getsource(_messages),
+        'domainValidation': inspect.getsource(validate_judge_result) + '\n' + inspect.getsource(validate_answer),
+        'hints': Path(__file__).with_name('hints.py').read_text(encoding='utf-8'),
+        'prompts': {path.name: path.read_text(encoding='utf-8') for path in sorted(_PROMPTS.glob('*.md'))},
+    }
+    encoded = json.dumps(contract, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
+    return 'openrouter:v2:' + hashlib.sha256(encoded.encode('utf-8')).hexdigest()
+
+
+def compatible_cache_identities():
+    """Accept only audited exact legacy fingerprints for this semantic contract.
+
+    Stored provenance is never rewritten. An unknown old implementation, changed
+    prompt, model, temperature, schema or hint set receives no compatibility.
+    """
+    current = cache_identity()
+    identities = {current}
+    try:
+        records = json.loads(_COMPATIBILITY.read_text(encoding='utf-8'))
+        if records.get('version') != 1:
+            return identities
+        for legacy, record in records.get('identities', {}).items():
+            if (re.fullmatch(r'openrouter:[0-9a-f]{64}', legacy)
+                    and isinstance(record, dict) and record.get('semanticIdentity') == current
+                    and re.fullmatch(r'[0-9a-f]{40}', record.get('sourceCommit', ''))):
+                identities.add(legacy)
+    except (OSError, ValueError, TypeError, AttributeError):
+        logger.warning('Judge cache compatibility metadata is unavailable or invalid')
+    return identities
 
 
 class OpenRouterJudgeError(JudgeError):
@@ -45,6 +86,10 @@ class OpenRouterJudgeError(JudgeError):
         self.usage = usage or Usage()
         self.latency_ms = latency_ms
         self.model = model
+
+
+class _OutputLimitError(ValueError):
+    """A truncated completion cannot be repaired by repeating the same budget."""
 
 
 class _Evidence(BaseModel):
@@ -122,6 +167,8 @@ def _completion(payload, mode):
     choice = choices[0]
     if not isinstance(choice, dict) or not isinstance(choice.get('message'), dict):
         raise ValueError('invalid_choice')
+    if choice.get('finish_reason') == 'length':
+        raise _OutputLimitError('output_limit')
     if mode == 'schema':
         if choice.get('finish_reason') != 'stop':
             raise ValueError('incomplete')
@@ -140,6 +187,27 @@ def _completion(payload, mode):
     return _Verdict.model_validate(json.loads(raw))
 
 
+def _failure_metadata(payload, conversation, criterion, phase, attempt, max_tokens, reason, error=None):
+    """Only protocol enums/counts, never provider content or hidden reasoning."""
+    choices = payload.get('choices')
+    choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+    usage = payload.get('usage') or {}
+    details = usage.get('completion_tokens_details') or {}
+    reasoning = details.get('reasoning_tokens') if isinstance(details, dict) else None
+    finish = choice.get('finish_reason')
+    native = choice.get('native_finish_reason')
+    result = {'conversationId': conversation.id, 'criterionId': criterion.id, 'phase': phase,
+              'attempt': attempt + 1, 'reason': reason, 'maxTokens': max_tokens,
+              'finishReason': finish if isinstance(finish, str) and finish in {'stop', 'tool_calls', 'length', 'content_filter', 'error'} else 'other',
+              'nativeFinishReason': native if isinstance(native, str) and native in {'STOP', 'MAX_TOKENS', 'SAFETY', 'RECITATION',
+                  'OTHER', 'MALFORMED_FUNCTION_CALL', 'UNEXPECTED_TOOL_CALL', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII'} else None,
+              'outputTokens': usage.get('completion_tokens'),
+              'reasoningTokens': reasoning if type(reasoning) is int and reasoning >= 0 else None}
+    if isinstance(error, ValidationError):
+        result['validationTypes'] = sorted({item['type'] for item in error.errors(include_input=False, include_context=False)})
+    return result
+
+
 async def judge(conversation: Conversation, criterion: Criterion) -> JudgeResult:
     settings = _settings
     if settings is None or not settings.openrouter_api_key or not settings.judge_model:
@@ -147,8 +215,11 @@ async def judge(conversation: Conversation, criterion: Criterion) -> JudgeResult
     mode = getattr(settings, 'judge_output_mode', 'tool')
     if mode not in ('tool', 'schema'):
         raise OpenRouterJudgeError('Формат ответа модели не настроен')
-    if not math.isfinite(settings.model_timeout) or settings.model_timeout <= 0:
+    if not math.isfinite(settings.model_timeout) or not 0 < settings.model_timeout <= 600:
         raise OpenRouterJudgeError('Время ожидания модели оценки не настроено')
+    max_tokens = getattr(settings, 'judge_max_tokens', 8192)
+    if type(max_tokens) is not int or not 1024 <= max_tokens <= 32768:
+        raise OpenRouterJudgeError('Лимит длины ответа модели оценки не настроен')
     started = time.monotonic()
     # Finish inside the queue's outer deadline so we can return prior billed
     # usage on timeout instead of losing it to the queue's cancellation.
@@ -163,12 +234,12 @@ async def judge(conversation: Conversation, criterion: Criterion) -> JudgeResult
         return OpenRouterJudgeError(message, usage.model_copy(), round((time.monotonic() - started) * 1000),
                                     ', '.join(models) or settings.judge_model)
 
-    async def one(temperature):
+    async def one(temperature, phase):
         nonlocal usage
         retry_messages = list(messages)
         for attempt in range(2):
             body = {'model': settings.judge_model, 'messages': retry_messages, 'temperature': temperature,
-                    'max_tokens': 4096, 'stream': False, 'usage': {'include': True},
+                    'max_tokens': max_tokens, 'stream': False, 'usage': {'include': True},
                     'provider': {'require_parameters': True}}
             if mode == 'schema':
                 body['response_format'] = {'type': 'json_schema', 'json_schema': {
@@ -224,7 +295,15 @@ async def judge(conversation: Conversation, criterion: Criterion) -> JudgeResult
                 validate_judge_result(result, criterion.model_dump(by_alias=True),
                                       conversation.model_dump(by_alias=True))
                 return result, verdict.confidence
+            except _OutputLimitError as exc:
+                logger.warning('judge_response_failure %s', json.dumps(_failure_metadata(
+                    payload, conversation, criterion, phase, attempt, max_tokens, 'output_limit'), ensure_ascii=False))
+                failure = fail('Ответ модели оборвался из-за ограничения длины. Повторите критерий позже')
+                failure.failure_reason = 'output_limit'
+                raise failure from exc
             except (ValueError, TypeError, KeyError, IndexError, ValidationError, ApiError, JudgeError) as exc:
+                logger.warning('judge_response_failure %s', json.dumps(_failure_metadata(
+                    payload, conversation, criterion, phase, attempt, max_tokens, 'invalid_verdict', exc), ensure_ascii=False))
                 error = str(exc) if isinstance(exc, JudgeError) else (
                     exc.message if isinstance(exc, ApiError) else 'Ответ не соответствует требуемой JSON-схеме')
                 if attempt:
@@ -234,12 +313,12 @@ async def judge(conversation: Conversation, criterion: Criterion) -> JudgeResult
                     '. Заново оцени исходные данные. Исправь только эту ошибку; верни полный структурный ответ.'}]
 
     async def complete():
-        result, confidence = await one(settings.judge_temperature)
+        result, confidence = await one(settings.judge_temperature, 'primary')
         result.needs_review = confidence == 'low'
         omitted_action = result.answer == 'no' and (
             result.checked_range is not None or any(e.kind == 'expected_here' for e in result.evidence))
         if criterion.type == 'scale' or omitted_action:
-            verification, verification_confidence = await one(.3)
+            verification, verification_confidence = await one(.3, 'verification')
             result.needs_review |= verification.answer != result.answer or verification_confidence == 'low'
         result.usage = usage
         result.model = ', '.join(models)

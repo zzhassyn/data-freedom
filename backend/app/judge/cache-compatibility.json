@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "rationale": "Exact legacy implementation fingerprints audited against the v2 semantic contract. Only transport deadlines, failure reporting, billing retention and output capacity differ. Prompts, hints, verdict fields, model, tool mode, temperatures and primary/check policy are unchanged. Keep original database identities as provenance; this file permits reuse, not relabelling.",
+  "identities": {
+    "openrouter:9a47a940cb23dedc251d3c4938c60110a6f0711485abae2f8765dc315c10c426": {
+      "semanticIdentity": "openrouter:v2:502de0041c5db4d5b064ab716fced9f2dd870d4e4c75575e042dd49cbecb462b",
+      "sourceCommit": "1be7aaa4066656cf91ef840eb09e73f4ffdcc01c",
+      "audit": "Recomputed the legacy fingerprint. Diff to aea5d63 changes only deadlines and error/accounting handling; prompts, hints and validation are unchanged."
+    },
+    "openrouter:c7470595bba2a87ff4bfaaa0ef72cfc71d46496be47efa35cd228a85705c6537": {
+      "semanticIdentity": "openrouter:v2:502de0041c5db4d5b064ab716fced9f2dd870d4e4c75575e042dd49cbecb462b",
+      "sourceCommit": "aea5d63b31388ff598d90e40eadb4474429d718f",
+      "audit": "Recomputed the legacy fingerprint. The v2 patch changes capacity, deadlines, truncation diagnosis and identity representation without changing verdict semantics."
+    }
+  }
+}

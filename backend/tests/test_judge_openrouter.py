@@ -430,7 +430,139 @@ def test_http_failure_after_paid_primary_keeps_its_usage(monkeypatch, source, cr
 
 @pytest.mark.parametrize('timeout', [0, -1, float('inf'), float('nan')])
 def test_nonpositive_or_unbounded_timeout_cannot_send_request(monkeypatch, source, criteria, timeout):
-    adapter, config, calls = install(monkeypatch, [verdict()], model_timeout=timeout)
+    adapter, config, calls = install(monkeypatch, [verdict()])
+    config.model_timeout = timeout
     with pytest.raises(JudgeError, match='Время ожидания'):
         asyncio.run(adapter.judge(source, criteria['contact']))
     assert calls == []
+
+
+def test_configured_output_capacity_and_shared_timeout(monkeypatch, source, criteria):
+    adapter, config, calls = install(monkeypatch, [verdict()], judge_max_tokens=12288, model_timeout=180)
+    result = asyncio.run(adapter.judge(source, criteria['contact']))
+    assert calls[0]['max_tokens'] == 12288 and result.answer == 'yes'
+    assert 'reasoning' not in calls[0] and calls[0]['temperature'] == config.judge_temperature
+
+
+@pytest.mark.parametrize('mode', ['tool', 'schema'])
+def test_output_limit_is_distinct_billed_and_not_blindly_retried(monkeypatch, source, criteria, caplog, mode):
+    def truncated(request, body):
+        return httpx.Response(200, json={'model': 'test/actual-model',
+            'choices': [{'finish_reason': 'length', 'native_finish_reason': 'MAX_TOKENS',
+                         'message': {'content': None, 'reasoning': 'private reasoning synthetic-key'}}],
+            'usage': {'prompt_tokens': 100, 'completion_tokens': 8188, 'cost': .031,
+                      'completion_tokens_details': {'reasoning_tokens': 8100}}})
+    adapter, config, calls = install(monkeypatch, [truncated], judge_output_mode=mode)
+    with pytest.raises(JudgeError, match='ограничения длины') as failure:
+        asyncio.run(adapter.judge(source, criteria['contact']))
+    assert len(calls) == 1 and calls[0]['max_tokens'] == 8192
+    assert failure.value.failure_reason == 'output_limit'
+    assert failure.value.usage.calls == 1 and failure.value.usage.cost_usd == pytest.approx(.031)
+    assert '"finishReason": "length"' in caplog.text and '"reasoningTokens": 8100' in caplog.text
+    assert 'private reasoning' not in caplog.text and 'synthetic-key' not in caplog.text
+
+
+def test_verification_output_limit_keeps_primary_and_failed_check_billing(monkeypatch, source, criteria):
+    def truncated(request, body):
+        return httpx.Response(200, json={'model': 'test/actual-model',
+            'choices': [{'finish_reason': 'length', 'message': {}}],
+            'usage': {'prompt_tokens': 100, 'completion_tokens': 8190, 'cost': .03}})
+    adapter, config, calls = install(monkeypatch, [verdict(20), truncated])
+    with pytest.raises(JudgeError) as failure:
+        asyncio.run(adapter.judge(source, criteria['consultation']))
+    assert len(calls) == 2 and failure.value.usage.calls == 2
+    assert failure.value.usage.cost_usd == pytest.approx(.033)
+
+
+@pytest.mark.parametrize('changes', [{'judge_max_tokens': 0}, {'judge_max_tokens': 32769},
+    {'judge_max_tokens': True}, {'model_timeout': 0}, {'model_timeout': float('nan')},
+    {'model_timeout': float('inf')}, {'model_timeout': 601}])
+def test_output_and_timeout_configuration_is_bounded(changes):
+    with pytest.raises(ValueError):
+        Settings(**changes)
+
+
+def test_runtime_environment_output_and_timeout_configuration(monkeypatch):
+    monkeypatch.setenv('JUDGE_MAX_TOKENS', '12288')
+    monkeypatch.setenv('MODEL_TIMEOUT_SECONDS', '240')
+    settings = Settings()
+    assert settings.judge_max_tokens == 12288 and settings.model_timeout == 240
+
+
+def test_semantic_identity_certifies_only_the_two_audited_legacy_sources(monkeypatch):
+    from app.judge import openrouter as adapter
+    config = Settings(judge_model='google/gemini-3.8-flash', judge_output_mode='tool', judge_temperature=0)
+    adapter.configure(config)
+    current = adapter.cache_identity()
+    expected = {'openrouter:9a47a940cb23dedc251d3c4938c60110a6f0711485abae2f8765dc315c10c426',
+                'openrouter:c7470595bba2a87ff4bfaaa0ef72cfc71d46496be47efa35cd228a85705c6537'}
+    assert current.startswith('openrouter:v2:')
+    assert adapter.compatible_cache_identities() == {current, *expected}
+    # Earlier hints were different, so a genuine model label alone is not enough.
+    assert 'openrouter:c4d1c553f52413d5dfd8b7c370db07fa14d7e9ffb8723027e554c0892bff485c' not in adapter.compatible_cache_identities()
+    config.judge_max_tokens, config.model_timeout = 16384, 300
+    assert adapter.cache_identity() == current
+    assert adapter.compatible_cache_identities() == {current, *expected}
+
+
+@pytest.mark.parametrize('field,value', [('judge_model', 'test/another-model'),
+    ('judge_output_mode', 'schema'), ('judge_temperature', .1)])
+def test_semantic_configuration_change_revokes_legacy_compatibility(field, value):
+    from app.judge import openrouter as adapter
+    config = Settings(judge_model='google/gemini-3.8-flash', judge_output_mode='tool', judge_temperature=0)
+    adapter.configure(config)
+    previous = adapter.cache_identity()
+    setattr(config, field, value)
+    assert adapter.cache_identity() != previous
+    assert adapter.compatible_cache_identities() == {adapter.cache_identity()}
+
+
+def test_prompt_or_semantic_contract_change_revokes_legacy_compatibility(monkeypatch, tmp_path):
+    from app.judge import openrouter as adapter
+    adapter.configure(Settings(judge_model='google/gemini-3.8-flash', judge_output_mode='tool', judge_temperature=0))
+    previous = adapter.cache_identity()
+    for path in adapter._PROMPTS.glob('*.md'):
+        (tmp_path / path.name).write_text(path.read_text(encoding='utf-8'), encoding='utf-8')
+    monkeypatch.setattr(adapter, '_PROMPTS', tmp_path)
+    assert adapter.cache_identity() == previous
+    path = tmp_path / 'system.md'
+    path.write_text(path.read_text(encoding='utf-8') + '\nChanged rule.', encoding='utf-8')
+    assert adapter.cache_identity() != previous
+    assert adapter.compatible_cache_identities() == {adapter.cache_identity()}
+
+
+def test_domain_validation_or_policy_change_revokes_legacy_compatibility(monkeypatch):
+    from app import evaluations
+    from app.judge import openrouter as adapter
+    adapter.configure(Settings(judge_model='google/gemini-3.8-flash', judge_output_mode='tool', judge_temperature=0))
+    previous = adapter.cache_identity()
+
+    def changed_validation(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(evaluations, 'validate_judge_result', changed_validation)
+    assert adapter.cache_identity() != previous
+    assert adapter.compatible_cache_identities() == {adapter.cache_identity()}
+    validation_identity = adapter.cache_identity()
+    monkeypatch.setattr(adapter, '_SEMANTIC_CONTRACT_VERSION', 'changed-policy')
+    assert adapter.cache_identity() != validation_identity
+    assert adapter.compatible_cache_identities() == {adapter.cache_identity()}
+    policy_identity = adapter.cache_identity()
+    monkeypatch.setattr(adapter, 'Answer', str)
+    assert adapter.cache_identity() != policy_identity
+    assert adapter.compatible_cache_identities() == {adapter.cache_identity()}
+
+
+def test_hints_change_revokes_legacy_compatibility(monkeypatch):
+    from app.judge import openrouter as adapter
+    adapter.configure(Settings(judge_model='google/gemini-3.8-flash', judge_output_mode='tool', judge_temperature=0))
+    previous = adapter.cache_identity()
+    original_read = Path.read_text
+
+    def changed_hint(path, *args, **kwargs):
+        content = original_read(path, *args, **kwargs)
+        return content + '\n# Changed hint semantics' if path.name == 'hints.py' else content
+
+    monkeypatch.setattr(Path, 'read_text', changed_hint)
+    assert adapter.cache_identity() != previous
+    assert adapter.compatible_cache_identities() == {adapter.cache_identity()}

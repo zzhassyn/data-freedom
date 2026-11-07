@@ -67,6 +67,34 @@ def is_evaluation_visible(evaluation: dict) -> bool:
                 or is_real_model(evaluation.get("model")))
 
 
+def reusable_judge_identities(target_identity) -> set[str]:
+    """Permit only provider-certified migrations into its current identity.
+
+    An older running evaluation can still reuse an exact matching provenance;
+    it cannot borrow the current provider's migration permission.
+    """
+    if not isinstance(target_identity, str) or not target_identity.startswith('openrouter:'):
+        return set()
+    allowed = {target_identity}
+    provider = llm_switch.get_judge()
+    current = provider.cache_identity() if hasattr(provider, 'cache_identity') else None
+    if target_identity == current and hasattr(provider, 'compatible_cache_identities'):
+        certified = provider.compatible_cache_identities()
+        allowed.update(identity for identity in certified
+                       if isinstance(identity, str) and identity.startswith('openrouter:'))
+    return allowed
+
+
+def require_current_judge_compatibility(evaluation: dict) -> None:
+    """Do not attach a fresh verdict with changed semantics to old provenance."""
+    if llm_switch.has_provider_overrides():
+        return
+    provider = llm_switch.get_judge()
+    current = provider.cache_identity() if hasattr(provider, 'cache_identity') else None
+    if evaluation.get('_judgeIdentity') not in reusable_judge_identities(current):
+        raise ApiError('provider_changed', 'Настройки модели изменились. Запустите новую оценку диалога.', 409)
+
+
 def require_evaluation_visible(evaluation: dict) -> None:
     if not is_evaluation_visible(evaluation):
         raise ApiError("provider_changed",
@@ -316,6 +344,7 @@ class EvaluationQueue:
                 raise ApiError("not_found", f"Критерий {criterion_id} не найден в оценке", 404)
             if item["status"] != "failed":
                 raise ApiError("criterion_not_failed", "Повтор доступен только для критерия с ошибкой", 409)
+            require_current_judge_compatibility(evaluation)
             item.update(status="pending", explanation=None, answer=None, reused=False)
             evaluation.update(status="queued", total=None, finishedAt=None, durationMs=None)
             # A retry must invoke the provider for the failed step, even if a
@@ -392,6 +421,7 @@ class EvaluationQueue:
 
     def _find_reusable(self, evaluation: dict, criterion: dict):
         real = not llm_switch.has_provider_overrides()
+        allowed_identities = reusable_judge_identities(evaluation.get('_judgeIdentity')) if real else set()
         for previous in self.db.all_evaluations():
             if previous["id"] == evaluation["id"] or previous["conversationId"] != evaluation["conversationId"]:
                 continue
@@ -399,7 +429,7 @@ class EvaluationQueue:
                 continue
             if real and not is_evaluation_visible(previous):
                 continue
-            if real and previous.get("_judgeIdentity") != evaluation.get("_judgeIdentity"):
+            if real and previous.get("_judgeIdentity") not in allowed_identities:
                 continue
             old_criterion = next((
                 c for c in self.db.get_checklist(previous["checklistId"])["criteria"]
@@ -437,8 +467,14 @@ class EvaluationQueue:
             model = None
             result = None
             try:
+                async def compatible_judge(source, rule):
+                    # Check when a worker actually starts, including resumed
+                    # jobs and work that waited behind another provider call.
+                    require_current_judge_compatibility(evaluation)
+                    return await llm_switch.get_judge().judge(source, rule)
+
                 raw = await self.call_model(
-                    llm_switch.get_judge().judge,
+                    compatible_judge,
                     Conversation.model_validate(conversation), Criterion.model_validate(criterion),
                 )
                 result = raw if isinstance(raw, JudgeResult) else JudgeResult.model_validate(raw)
@@ -460,9 +496,11 @@ class EvaluationQueue:
                     model = getattr(exc, "model", None) or model
                     item["latencyMs"] = getattr(exc, "latency_ms", None)
                 if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
-                    message = "Модель не ответила за 90 секунд. Повторите критерий."
+                    message = "Модель не ответила вовремя. Повторите критерий."
                 elif isinstance(exc, JudgeError):
                     message = str(exc)
+                elif isinstance(exc, ApiError) and exc.code == 'provider_changed':
+                    message = exc.message
                 elif isinstance(exc, (ValidationError, ApiError)):
                     message = "Модель вернула недопустимый ответ. Повторите критерий."
                     logger.warning("Неверный ответ модели в %s/%s: %s", evaluation_id, criterion["id"], type(exc).__name__)
