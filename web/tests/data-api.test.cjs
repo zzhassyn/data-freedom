@@ -102,6 +102,9 @@ test('STT and AI requests encode IDs, pass refresh separately and send JSON on m
     assert.equal(calls[index].opts.body, '{}');
   }
   assert.deepEqual(timers, [30000, 30000, 30000, 120000, 120000, 120000, 120000]);
+  await DA.api.retryTranscription('call /1', { force: true });
+  assert.equal(calls.at(-1).url, '/api/conversations/call%20%2F1/transcription/retry');
+  assert.deepEqual(JSON.parse(calls.at(-1).opts.body), { force: true });
 });
 
 test('second opinion and reviewer decision preserve each other in either response order', async () => {
@@ -405,6 +408,70 @@ test('server batch sends one POST and returns its accepted identity before any p
   assert.equal(job.usage.calls, 0);
   assert.equal(DA.state.evaluations.fixture.id, done.id);
   assert.equal(posts, 1);
+});
+
+test('adopting an accepted import job needs no request and retains IDs when a followup read fails', async () => {
+  const { DA, context } = fixtureServer();
+  let requests = 0;
+  context.fetch = async () => { requests++; throw new TypeError('offline'); };
+  const accepted = { jobId: 'job_import', evaluationIds: { new_call: 'ev_import' }, checklistId: 'cl_3', checklistVersion: 3, reuse: false };
+  const adopted = await DA.data.adoptBatch(accepted);
+  assert.equal(requests, 0);
+  assert.equal(adopted.job.checklistVersion, 3);
+  assert.equal(DA.state.evaluations.new_call.id, 'ev_import');
+  assert.equal(DA.state.jobs.job_import.items[0].evaluationId, 'ev_import');
+  await assert.rejects(DA.data.getJob(accepted.jobId), (error) => error.code === 'network');
+  const again = await DA.data.adoptBatch(accepted);
+  assert.equal(requests, 1, 'adopting again never resubmits or reloads the accepted job');
+  assert.equal(again.job.startedAt, adopted.job.startedAt);
+  assert.deepEqual(json(again.evaluationIds), accepted.evaluationIds);
+});
+
+test('re-adopting an old job preserves its progress and a newer evaluation while tracking both jobs', async () => {
+  const { DA, ev, cl } = fixtureServer();
+  await DA.data.prepare('registry', { refresh: true });
+  const accepted = { jobId: 'job_import_done', evaluationIds: { fixture: ev.id }, checklistId: cl.id, checklistVersion: cl.version, reuse: false };
+  const adopted = await DA.data.adoptBatch(accepted);
+  assert.equal(adopted.job.status, 'done');
+  assert.equal(adopted.job.items[0].total, 93.75);
+  assert.equal(adopted.job.durationSec, 1.25);
+  let posts = 0;
+  DA.api.startEvaluation = async () => { posts++; return { jobId: 'job_explicit_redo', evaluationIds: { fixture: 'ev_newer' } }; };
+  const newer = await DA.data.startBatch(['fixture'], { reuse: false });
+  const repeated = await DA.data.adoptBatch(accepted);
+  assert.equal(posts, 1, 'only the explicit redo submits work');
+  assert.equal(repeated.job.status, 'done');
+  assert.equal(repeated.job.items[0].total, 93.75);
+  assert.equal(DA.state.evaluations.fixture.id, newer.evaluationIds.fixture);
+  assert.deepEqual(Object.keys(DA.state.jobs).sort(), ['job_explicit_redo', 'job_import_done']);
+});
+
+test('adopting a second job cannot discard the first job completion or submit extra work', async () => {
+  const { DA, ev, cl } = fixtureServer();
+  await DA.data.prepare('registry', { refresh: true });
+  const done = { ...ev, id: 'ev_auto_first' };
+  await DA.data.adoptBatch({ jobId: 'job_auto_first', evaluationIds: { new_call: done.id }, checklistId: cl.id, checklistVersion: cl.version });
+  done.conversationId = 'new_call';
+  let release, reads = 0, posts = 0;
+  DA.api.startEvaluation = async () => { posts++; throw new Error('unexpected POST'); };
+  DA.api.getJob = async () => {
+    reads++;
+    return { id: 'job_auto_first', status: 'done', total: 1, done: 1, failed: 0, startedAt: '2026-11-01T10:00:00Z',
+      items: [{ conversationId: done.conversationId, evaluationId: done.id, status: 'done' }] };
+  };
+  DA.api.getEvaluation = () => release ? Promise.resolve(done) : new Promise((resolve) => { release = resolve; });
+  const watching = DA.data.watchJob('job_auto_first');
+  while (!release) await new Promise((resolve) => setImmediate(resolve));
+  await DA.data.adoptBatch({ jobId: 'job_auto_second', evaluationIds: { another_call: 'ev_auto_second' }, checklistId: cl.id, checklistVersion: cl.version });
+  release(done);
+  const completed = await watching;
+  assert.equal(completed.status, 'done');
+  assert.equal(DA.state.evaluations.new_call.status, 'done');
+  assert.equal(DA.state.evaluations.new_call.total, 93.75);
+  assert.equal(DA.state.jobs.job_auto_first.status, 'done');
+  assert.equal(DA.state.jobs.job_auto_second.status, 'running');
+  assert.equal(reads, 2, 'a changed revision re-reads the existing job before stopping its watcher');
+  assert.equal(posts, 0);
 });
 
 test('local batch evaluates only known fixtures, reports unknown records and retries only failures', async () => {

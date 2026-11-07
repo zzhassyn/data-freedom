@@ -822,6 +822,47 @@
     })).finally(() => { localWorkers.delete(job.id); syncLocalJob(job); });
     localWorkers.set(job.id, work);
   }
+  function registerBatch(started, cl, options, replaceCurrent) {
+    const opts = options || {}, ids = Object.keys(started.evaluationIds);
+    const cached = DA.state.jobs[started.jobId];
+    if (cached) return { ...started, evaluationIds: Object.fromEntries(cached.items.map((item) => [item.conversationId, item.evaluationId])), job: jobSnapshot(cached) };
+    epoch.value++;
+    const items = ids.map((cid) => {
+      const id = started.evaluationIds[cid], current = DA.state.evaluations[cid];
+      const ev = current?.id === id ? current : DA.state.evaluationHistory[id] || emptyEvaluation(id, cid, cl, DA.state.conversations[cid]);
+      DA.state.evaluationHistory[id] = ev;
+      if (replaceCurrent || !current || current.id === id) {
+        if (current && current.id !== id) DA.state.evaluationHistory[current.id] = current;
+        DA.state.evaluations[cid] = ev;
+        const row = summaries.get(cid);
+        if (row) row.lastEvaluation = { id, status: ev.status };
+      }
+      return { conversationId: cid, evaluationId: id, status: ev.status };
+    });
+    const done = items.filter((item) => item.status === "done").length;
+    const failed = items.filter((item) => item.status === "failed").length;
+    const starts = items.map((item) => DA.state.evaluationHistory[item.evaluationId]).map((ev) =>
+      time(ev.startedAt) ?? (ev.finishedAt && ev.durationMs != null ? time(ev.finishedAt) - ev.durationMs : null)).filter(Number.isFinite);
+    const job = { id: started.jobId, status: done + failed === ids.length ? failed ? "failed" : "done" : "running",
+      total: ids.length, done, failed, startedAt: started.startedAt || opts.startedAt || new Date(starts.length ? Math.min(...starts) : Date.now()).toISOString(), finishedAt: null,
+      checklistVersion: cl.version, reuse: started.reuse ?? opts.reuse ?? false, usage: zeroUsage(), items };
+    jobMetadata.set(job.id, { checklistVersion: cl.version, reuse: job.reuse });
+    DA.state.jobs[job.id] = job;
+    if (!server()) { DA.save(); runLocalBatch(job); }
+    emit("da:evaluations-changed");
+    return { ...started, job: jobSnapshot(job) };
+  }
+  async function adoptBatch(started, options) {
+    ensureMode();
+    const entries = Object.entries(started?.evaluationIds || {});
+    if (typeof started?.jobId !== "string" || !started.jobId || !entries.length
+      || entries.some(([cid, id]) => !cid || typeof id !== "string" || !id)) throw failure("invalid_response", "Не удалось прочитать пакет оценок");
+    const opts = options || {};
+    const requested = started.checklistId ?? started.checklistVersion ?? opts.checklistId ?? opts.checklistVersion;
+    const cl = (requested == null ? DA.activeChecklist() : versionBy(requested))
+      || { id: started.checklistId || opts.checklistId || null, version: started.checklistVersion || opts.checklistVersion || null, criteria: [] };
+    return registerBatch(started, cl, opts, false);
+  }
   async function startBatch(conversationIds, options) {
     ensureMode();
     const opts = options || {}, ids = [...new Set(conversationIds)];
@@ -837,27 +878,7 @@
       const suffix = Date.now() + "_" + ++localSequence;
       started = { jobId: "job_local_" + suffix, evaluationIds: Object.fromEntries(ids.map((id, index) => [id, "ev_local_" + suffix + "_" + index])) };
     }
-    epoch.value++;
-    ids.forEach((cid) => {
-      const current = DA.state.evaluations[cid];
-      if (current) DA.state.evaluationHistory[current.id] = current;
-      const ev = emptyEvaluation(started.evaluationIds[cid], cid, cl, DA.state.conversations[cid]);
-      DA.state.evaluations[cid] = ev;
-      DA.state.evaluationHistory[ev.id] = ev;
-      const row = summaries.get(cid);
-      if (row) row.lastEvaluation = { id: ev.id, status: "queued" };
-    });
-    const job = { id: started.jobId, status: "running", total: ids.length, done: 0, failed: 0,
-      startedAt: new Date().toISOString(), finishedAt: null, checklistVersion: cl.version, reuse: opts.reuse ?? false,
-      usage: zeroUsage(), items: ids.map((cid) => ({ conversationId: cid, evaluationId: started.evaluationIds[cid], status: "queued" })) };
-    jobMetadata.set(job.id, { checklistVersion: cl.version, reuse: job.reuse });
-    if (!server()) {
-      DA.state.jobs[job.id] = job;
-      DA.save();
-      runLocalBatch(job);
-    }
-    emit("da:evaluations-changed");
-    return { ...started, job: jobSnapshot(job) };
+    return registerBatch(started, cl, opts, true);
   }
   async function getJob(id, options) {
     ensureMode();
@@ -878,6 +899,9 @@
       const ev = cached && item.status !== "running" && cached.status === item.status ? evaluation(cached) : evaluation(await DA.api.getEvaluation(item.evaluationId, options));
       return [item.evaluationId, ev];
     })).map(([evaluationId, ev]) => [evaluationId, retainEvaluationProgress(ev)]);
+    if (options?.signal?.aborted) throw new DOMException("Действие прервано", "AbortError");
+    // Завершённый пакет должен попасть в общее состояние до остановки опроса.
+    if (epoch.value !== revision) return getJob(id, options);
     if (epoch.value === revision && !options?.signal?.aborted) loaded.forEach(([, ev]) => {
       DA.state.evaluationHistory[ev.id] = ev;
       const current = DA.state.evaluations[ev.conversationId];
@@ -887,7 +911,9 @@
         updateEvaluationContexts(ev);
       }
     });
-    return jobSnapshot({ ...jobMetadata.get(id), ...raw }, new Map(loaded));
+    const snapshot = jobSnapshot({ ...jobMetadata.get(id), ...raw }, new Map(loaded));
+    if (epoch.value === revision && !options?.signal?.aborted) DA.state.jobs[id] = snapshot;
+    return snapshot;
   }
   async function watchJob(id, options) {
     const opts = options || {};
@@ -1029,7 +1055,7 @@
     return DA.state;
   }
   DA.data = { prepare, conversations, checklists, evaluation: getEvaluation, evaluations, appeals, appealContext, cardContext,
-    evaluate, watchEvaluation, retryCriterion, startBatch, getJob, watchJob, retryBatch,
+    evaluate, watchEvaluation, retryCriterion, startBatch, adoptBatch, getJob, watchJob, retryBatch,
     history, evaluationById, latestEvaluations, diffChecklists, compareChecklists, createAppeal, decideAppeal, secondOpinion, saveChecklist, activateChecklist, stats,
     invalidate, refresh: () => prepare("registry", { refresh: true }),
     normalizeConversation: conversation, normalizeEvaluation: evaluation };

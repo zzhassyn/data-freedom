@@ -95,7 +95,7 @@
     getConversation: (id, options) => request(`/conversations/${part(id)}`, options),
     getSttJobs: (filters, options) => get("/stt/jobs", filters, options),
     getTranscription: (id, options) => request(`/conversations/${part(id)}/transcription`, options),
-    retryTranscription: (id, options) => post(`/conversations/${part(id)}/transcription/retry`, {}, options),
+    retryTranscription: (id, options) => post(`/conversations/${part(id)}/transcription/retry`, options?.force === true ? { force: true } : {}, options),
     getSummary: (id, options) => aiGet(`/conversations/${part(id)}/summary`, options),
     getTranslation: (id, options) => aiGet(`/conversations/${part(id)}/translation`, options),
     listEvaluations: (id, options) => request(`/conversations/${part(id)}/evaluations`, options),
