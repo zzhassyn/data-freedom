@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from app import llm_switch
+from app.errors import JudgeError
 from tests.helpers import evaluate
 
 
@@ -29,7 +30,7 @@ def test_fake_health_has_contract_shape_and_does_not_require_credentials(client)
     assert body['avgCriterionMs'] == body['avgEvaluationCostUsd'] == 0
 
 
-def test_real_import_failure_runs_fake_but_health_reports_unavailable(client, monkeypatch):
+def test_real_import_failure_never_runs_fake_and_health_reports_unavailable(client, monkeypatch):
     original_import = llm_switch.importlib.import_module
 
     def failing_import(name):
@@ -41,9 +42,10 @@ def test_real_import_failure_runs_fake_but_health_reports_unavailable(client, mo
     monkeypatch.setattr(llm_switch.importlib, 'import_module', failing_import)
     body = client.get('/api/health').json()
     assert body['ok'] is True
-    assert body['model'] == 'fake'
+    assert body['model'] == 'не настроена'
     assert body['modelOnline'] is False
-    assert callable(llm_switch.get_judge().judge)
+    with pytest.raises(JudgeError, match='не подключён'):
+        llm_switch.get_judge()
 
 
 def test_provider_health_uses_three_second_timeout_and_twenty_second_cache(client, monkeypatch):
@@ -117,3 +119,27 @@ def test_health_averages_evaluation_cost_separately_from_ai_extras(seeded_client
     assert body['avgEvaluationCostUsd'] == pytest.approx(0.016)
     assert body['totalCostUsd'] >= 0.025
     assert body['avgCriterionMs'] < 8000
+
+
+def test_openrouter_health_checks_key_without_paid_generation(client, monkeypatch):
+    settings = client.app.state.settings
+    settings.judge = 'openrouter'
+    settings.judge_model = 'test/configured-model'
+    settings.openrouter_api_key = 'unit-test-key'
+    monkeypatch.setenv('JUDGE', 'openrouter')
+    requests = []
+    original = httpx.AsyncClient
+
+    def handle(request):
+        requests.append(request)
+        assert request.method == 'GET' and str(request.url) == 'https://openrouter.ai/api/v1/key'
+        assert not request.content
+        return httpx.Response(200, json={'data': {'label': 'private key label', 'limit_remaining': 10}})
+
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kwargs: original(transport=httpx.MockTransport(handle), **kwargs))
+    response = client.get('/api/health')
+    assert response.status_code == 200 and response.json()['modelOnline'] is True
+    assert response.json()['model'] == settings.judge_model
+    assert 'private key label' not in response.text and 'unit-test-key' not in response.text
+    client.get('/api/health')
+    assert len(requests) == 1

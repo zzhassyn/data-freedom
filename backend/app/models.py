@@ -154,6 +154,7 @@ class CriterionResult(ApiModel):
     criterion_id: str
     criterion_hash: str
     status: Literal['pending', 'running', 'done', 'failed']
+    model: Optional[str] = None
     answer: Optional[Answer] = None
     explanation: Optional[str] = None
     evidence: list[Evidence] = Field(default_factory=list)

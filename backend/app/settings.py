@@ -27,6 +27,10 @@ class Settings:
     audio_allowed_hosts: tuple[str, ...] = field(default_factory=lambda: tuple(
         os.getenv('AUDIO_ALLOWED_HOSTS', ','.join(AUDIO_ALLOWED_HOSTS)).split(',')))
     judge: str = field(default_factory=lambda: os.getenv('JUDGE', 'fake'))
+    judge_model: str = field(default_factory=lambda: os.getenv('JUDGE_MODEL', '').strip())
+    judge_temperature: float = field(default_factory=lambda: float(os.getenv('JUDGE_TEMPERATURE', '0')))
+    judge_output_mode: str = field(default_factory=lambda: os.getenv('JUDGE_OUTPUT_MODE', 'tool'))
+    ai_model: str = field(default_factory=lambda: os.getenv('AI_MODEL', '').strip() or os.getenv('JUDGE_MODEL', '').strip())
     llm_base_url: str = field(default_factory=lambda: os.getenv('LLM_BASE_URL', 'https://api.openai.com/v1'))
     llm_api_key: str = field(default_factory=lambda: os.getenv('LLM_API_KEY', ''))
     llm_model: str = field(default_factory=lambda: os.getenv('LLM_MODEL', ''))
@@ -50,8 +54,12 @@ class Settings:
         if isinstance(hosts, str):
             hosts = hosts.split(',')
         self.audio_allowed_hosts = tuple(host.strip().strip('.').lower() for host in hosts if host.strip().strip('.'))
-        if self.judge not in {'fake', 'real'}:
-            raise ValueError('JUDGE должен быть fake или real')
+        if self.judge not in {'fake', 'real', 'openrouter'}:
+            raise ValueError('JUDGE должен быть fake, real или openrouter')
+        if not math.isfinite(self.judge_temperature) or not 0 <= self.judge_temperature <= 2:
+            raise ValueError('JUDGE_TEMPERATURE должен быть от 0 до 2')
+        if self.judge_output_mode not in {'tool', 'schema'}:
+            raise ValueError('JUDGE_OUTPUT_MODE должен быть tool или schema')
         if not 1 <= self.judge_concurrency <= 128:
             raise ValueError('JUDGE_CONCURRENCY должен быть от 1 до 128')
         if self.fake_delay < 0:

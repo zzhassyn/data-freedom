@@ -6,12 +6,15 @@ from decimal import Decimal, ROUND_HALF_UP, localcontext
 from .errors import ApiError
 
 
-def validate_answer(criterion: dict, answer) -> None:
+def validate_answer(criterion: dict, answer, conversation=None) -> None:
     """Validate a model, appeal or gold answer against its checklist version."""
     title = criterion.get("title", criterion.get("id", ""))
     valid = False
     if answer == "na":
         valid = bool(criterion.get("naAllowed"))
+        if not valid and conversation is not None:
+            from .judge.hints import contact_na_allowed
+            valid = contact_na_allowed(conversation, criterion)
     elif criterion.get("type") in ("binary", "flag"):
         valid = isinstance(answer, str) and answer in ("yes", "no")
     elif criterion.get("type") == "scale":

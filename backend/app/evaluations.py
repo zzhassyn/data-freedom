@@ -58,6 +58,7 @@ def empty_item(criterion: dict) -> dict:
         "usage": None, "fraction": None, "weight": criterion["weight"],
         "effectiveWeight": 0.0, "points": 0.0, "original": None,
         "appealId": None,
+        "model": None,
     }
 
 
@@ -72,6 +73,7 @@ def result_to_item(result: JudgeResult, criterion: dict) -> dict:
         ),
         naReason=result.na_reason, flagTypes=result.flag_types,
         needsReview=result.needs_review, usage=result.usage.model_dump(by_alias=True),
+        model=result.model,
     )
     return item
 
@@ -91,7 +93,7 @@ def judge_result_from_item(item: dict, model: str = "fake") -> JudgeResult:
 
 def validate_judge_result(result: JudgeResult, criterion: dict, conversation: dict) -> None:
     """Reject malformed provider output without persisting an invented score."""
-    validate_answer(criterion, result.answer)
+    validate_answer(criterion, result.answer, conversation)
     turns = {turn["idx"]: turn for turn in conversation["transcript"]}
     for evidence in result.evidence:
         turn = turns.get(evidence.turn_idx)
@@ -224,6 +226,10 @@ class EvaluationQueue:
         conversation_ids = list(dict.fromkeys(conversation_ids))
         checklist = self.db.get_checklist(checklist_id)
         conversations = [self.db.get_conversation(id) for id in conversation_ids]
+        judge = llm_switch.get_judge()
+        fake = getattr(judge, "IS_FAKE", False)
+        model = "fake" if fake else (judge.configured_model() if hasattr(judge, "configured_model") else self.settings.llm_model)
+        identity = judge.cache_identity() if hasattr(judge, "cache_identity") else model
         job_id = None
         evaluation_ids = {}
         with self.db.transaction() as conn:
@@ -237,7 +243,7 @@ class EvaluationQueue:
                     "id": evaluation_id, "conversationId": conversation["id"],
                     "checklistId": checklist["id"], "checklistVersion": checklist["version"],
                     "transcriptHash": conversation["transcriptHash"], "status": "queued",
-                    "model": "fake" if getattr(llm_switch.get_judge(), "IS_FAKE", False) else self.settings.llm_model,
+                    "model": model, "_judgeIdentity": identity,
                     "usage": zero_usage(), "needsReviewCount": 0,
                     "startedAt": None, "finishedAt": None, "durationMs": None,
                     "items": [empty_item(c) for c in sorted(checklist["criteria"], key=lambda c: c["order"])],
@@ -342,10 +348,13 @@ class EvaluationQueue:
             self._refresh_jobs(evaluation_id)
 
     def _find_reusable(self, evaluation: dict, criterion: dict):
+        real = not getattr(llm_switch.get_judge(), "IS_FAKE", False)
         for previous in self.db.all_evaluations():
             if previous["id"] == evaluation["id"] or previous["conversationId"] != evaluation["conversationId"]:
                 continue
             if previous.get("transcriptHash") != evaluation["transcriptHash"]:
+                continue
+            if real and previous.get("_judgeIdentity") != evaluation.get("_judgeIdentity"):
                 continue
             old_criterion = next((
                 c for c in self.db.get_checklist(previous["checklistId"])["criteria"]
@@ -355,14 +364,18 @@ class EvaluationQueue:
                 continue
             source = next((i for i in previous["items"] if i["criterionId"] == criterion["id"] and i["status"] == "done"), None)
             if source is not None:
+                model = source.get("model") or previous["model"]
+                if real and (not model or "fake" in [part.strip().lower() for part in model.split(',')]):
+                    continue
                 item = copy.deepcopy(source)
                 item.update(
                     criterionHash=criterion["hash"], weight=criterion["weight"],
                     answer=(source.get("original") or {}).get("answer", source["answer"]),
                     original=None, appealId=None, fraction=None, effectiveWeight=0.0, points=0.0,
                     reused=True, usage=zero_usage(),
+                    model=model,
                 )
-                return item, previous["model"]
+                return item, model
         return None
 
     async def _run_criterion(self, evaluation_id: str, criterion: dict, conversation: dict) -> None:
@@ -394,6 +407,11 @@ class EvaluationQueue:
                 raise
             except Exception as exc:
                 item = empty_item(criterion)
+                failure_usage = getattr(exc, "usage", None) if result is None else None
+                if failure_usage is not None:
+                    failure_usage = Usage.model_validate(failure_usage).model_dump(by_alias=True)
+                    self.db.record_usage(failure_usage, latency_ms=getattr(exc, "latency_ms", 0), kind="evaluation")
+                    model = getattr(exc, "model", None) or model
                 if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
                     message = "Модель не ответила за 90 секунд. Повторите критерий."
                 elif isinstance(exc, JudgeError):
@@ -405,8 +423,8 @@ class EvaluationQueue:
                     message = "Не удалось получить ответ модели. Повторите критерий."
                     logger.exception("Ошибка модели в %s/%s", evaluation_id, criterion["id"])
                 item.update(status="failed", explanation=message)
-                if previous_usage or result is not None:
-                    item["usage"] = sum_usage([previous_usage, result.usage.model_dump(by_alias=True) if result else None])
+                if previous_usage or result is not None or failure_usage:
+                    item["usage"] = sum_usage([previous_usage, result.usage.model_dump(by_alias=True) if result else failure_usage])
         self._save_item(evaluation_id, criterion["id"], item, model)
 
     def _save_item(self, evaluation_id: str, criterion_id: str, changes: dict, model: str | None = None) -> None:
@@ -416,6 +434,7 @@ class EvaluationQueue:
             item.update(changes)
             if model:
                 evaluation["model"] = model
+                item["model"] = model
             self._aggregate(evaluation)
             self.db.save_evaluation(evaluation, conn)
         self._refresh_jobs(evaluation_id)

@@ -16,7 +16,7 @@ from starlette.exceptions import HTTPException
 
 from . import llm_switch
 from .db import Database
-from .errors import ApiError
+from .errors import ApiError, JudgeError
 from .settings import BASE_DIR, Settings
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ def create_app(settings=None):
         application.state.settings = config
         application.state.db = Database(config.db_path)
         seed_checklist(application.state.db)
-        llm_switch.configure(config.judge, config.fake_delay)
+        llm_switch.configure(config.judge, config.fake_delay, config)
         application.state.queue = EvaluationQueue(application.state.db, config)
         application.state.stt = TranscriptionQueue(application.state.db, config)
         application.state.background_tasks = set()
@@ -143,15 +143,29 @@ def create_app(settings=None):
         async with state.health_lock:
             cached = state.health_cache
             if cached is None or time.monotonic() - cached['at'] >= 20:
-                judge = llm_switch.get_judge()
+                try:
+                    judge = llm_switch.get_judge()
+                except JudgeError:
+                    judge = None
                 fake = getattr(judge, 'IS_FAKE', False)
                 online = False
                 if fake:
                     online = not llm_switch.fallback_info()['judge']
                     model = 'fake'
+                elif config.judge == 'openrouter':
+                    model = config.judge_model or 'не настроена'
+                    if judge is not None and config.openrouter_api_key and config.judge_model:
+                        try:
+                            async with httpx.AsyncClient(timeout=3, follow_redirects=False, trust_env=False) as client:
+                                response = await client.get('https://openrouter.ai/api/v1/key',
+                                    headers={'Authorization': 'Bearer ' + config.openrouter_api_key})
+                                payload = response.json() if response.is_success else None
+                                online = isinstance(payload, dict) and isinstance(payload.get('data'), dict)
+                        except (httpx.HTTPError, ValueError, asyncio.TimeoutError):
+                            online = False
                 else:
                     model = config.llm_model or 'не настроена'
-                    if config.llm_api_key and config.llm_model:
+                    if judge is not None and config.llm_api_key and config.llm_model:
                         try:
                             async with httpx.AsyncClient(timeout=3) as client:
                                 response = await asyncio.wait_for(client.post(config.llm_base_url.rstrip('/') + '/chat/completions', headers={'Authorization': 'Bearer ' + config.llm_api_key}, json={'model': config.llm_model, 'messages': [{'role': 'user', 'content': 'Reply OK'}], 'max_tokens': 1}), timeout=3)

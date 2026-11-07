@@ -133,7 +133,7 @@ async def upload_gold(request: Request):
                 continue
             try:
                 answer = _parse_answer(row["answer"])
-                validate_answer(criteria[criterion_id], answer)
+                validate_answer(criteria[criterion_id], answer, db.get_conversation(conversation_id))
             except (ValueError, ApiError):
                 skipped += 1
                 continue
@@ -168,7 +168,7 @@ def accuracy(request: Request, checklistId: str | None = None):
             continue
         answer = json.loads(row["answer"])
         try:
-            validate_answer(criteria[row["criterion_id"]], answer)
+            validate_answer(criteria[row["criterion_id"]], answer, db.get_conversation(row["conversation_id"]))
         except ApiError:
             # A later checklist can remove a formerly valid scale step or N/A.
             continue
