@@ -28,6 +28,11 @@
     recordsSaved: ["Обращения сохранены", "Өтініштер сақталды", "Conversations saved"],
     registryError: ["{error} Реестр пока не обновился.", "{error} Тізілім әлі жаңартылған жоқ.", "{error} The registry has not refreshed yet."],
     newStarted: ["Оценка новых обращений запущена.", "Жаңа өтініштерді бағалау басталды.", "Evaluation of new conversations has started."],
+    processingUnavailable: ["Обращения сохранены. Автоматическая обработка сейчас недоступна.", "Өтініштер сақталды. Автоматты өңдеу қазір қолжетімсіз.", "Conversations saved. Automatic processing is currently unavailable."],
+    processingUnavailableFeatures: ["Обращения сохранены. Автоматическая обработка сейчас недоступна: {features}.", "Өтініштер сақталды. Автоматты өңдеу қазір қолжетімсіз: {features}.", "Conversations saved. Automatic processing is currently unavailable: {features}."],
+    featureEvaluation: ["оценка", "бағалау", "evaluation"], featureSummary: ["резюме", "қысқаша мазмұн", "summary"],
+    featureTranscription: ["расшифровка звонков", "қоңырауларды мәтінге айналдыру", "call transcription"],
+    featureJoin: [" и ", " және ", " and "],
     retryEvaluation: ["Повторить запуск оценки", "Бағалауды қайта іске қосу", "Retry starting evaluation"],
     skipped: ["Повторная обработка существующих обращений пропущена.", "Бар өтініштерді қайта өңдеу өткізілді.", "Reprocessing of existing conversations was skipped."],
     reprocessStarted: ["Повторная обработка запущена: {count}.", "Қайта өңдеу басталды: {count}.", "Reprocessing started: {count}."],
@@ -53,8 +58,8 @@
     inFile: ["{count} в файле", "Файлда {count}", "{count} in the file"], otherFile: ["Выбрать другой", "Басқасын таңдау", "Choose another"],
     chats: ["Чатов", "Чаттар", "Chats"], calls: ["Звонков", "Қоңыраулар", "Calls"], new: ["Новых", "Жаңа", "New"],
     changed: ["Изменено: {count}. Обновим их; прежние оценки станут устаревшими.", "Өзгертілген: {count}. Оларды жаңартамыз; бұрынғы бағалар ескіреді.", "Changed: {count}. These conversations will be updated and previous evaluations will become outdated."],
-    newAuto: ["Новые обращения начнут оцениваться после загрузки.", "Жүктегеннен кейін жаңа өтініштерді бағалау басталады.", "New conversations will be evaluated after import."],
-    callsAuto: [" Для звонков также запустится расшифровка.", " Қоңырауларды мәтінге айналдыру да басталады.", " Calls will also be transcribed."],
+    newAuto: ["Новые обращения оцениваются автоматически, когда обработка доступна.", "Өңдеу қолжетімді болса, жаңа өтініштер автоматты түрде бағаланады.", "New conversations are evaluated automatically when processing is available."],
+    callsAuto: [" Для звонков — расшифровка, если она доступна.", " Қолжетімді болса, қоңыраулар мәтінге айналдырылады.", " Calls are also transcribed when transcription is available."],
     known: ["Уже есть в реестре без изменений: {count}. После загрузки можно обработать их заново или пропустить.", "Тізілімде өзгеріссіз бар: {count}. Жүктегеннен кейін қайта өңдеуге немесе өткізуге болады.", "Already in the registry unchanged: {count}. After import, you can process them again or skip them."],
     jsonError: ["Не удалось прочитать файл. Нужна выгрузка обращений в формате JSON.", "Файлды оқу мүмкін болмады. JSON пішіміндегі өтініштер экспорты қажет.", "Could not read the file. A JSON conversation export is required."],
     emptyFile: ["В файле нет обращений: ожидается выгрузка с полем records.", "Файлда өтініштер жоқ: records өрісі бар экспорт қажет.", "No conversations found: the export must contain a records field."],
@@ -79,6 +84,14 @@
   }
 
   const resultText = (r) => M("result", r);
+  function processingNotice(unavailable) {
+    const labels = { evaluation: "featureEvaluation", summary: "featureSummary", transcription: "featureTranscription" };
+    const features = [...new Set(Array.isArray(unavailable.features) ? unavailable.features : [])].filter((feature) => Object.hasOwn(labels, feature));
+    return features.length ? M("processingUnavailableFeatures", () => {
+      const names = features.map((feature) => T(labels[feature]));
+      return { features: names.length > 1 ? names.slice(0, -1).join(", ") + T("featureJoin") + names.at(-1) : names[0] };
+    }) : M("processingUnavailable");
+  }
 
   /* ---------- Разбор файла выгрузки ---------- */
   const validTime = (ts) => typeof ts === "string" && (/^\d+:\d{2}$/.test(ts) || (ts.includes("T") && !isNaN(Date.parse(ts.slice(0, 23) + ts.slice(-6)))));
@@ -114,16 +127,15 @@
 
   /* ---------- Окно загрузки ---------- */
   DA.openUpload = function (onDone) {
-    const backend = DA.mode === "server";
     const pane = h("div", { class: "da-up-pane" });
     const foot = h("div", { class: "da-up-foot" });
-    let tab = "file", busy = false, closed = false, ready = !backend, secondStep = false, detachStt = null;
+    let tab = "file", busy = false, closed = false, ready = false, secondStep = false, detachStt = null;
     let source = DA.state.source || { groupId: "DEV", lastSyncAt: null, lastResult: null };
     let sourceError = "", settingsOpen = false, draftGroup = source.groupId;
     const processing = new WeakMap();
 
-    const tabs = backend ? DA.segmented([{ value: "file", label: M("file") }, { value: "crm", label: M("crm") }], tab, (v) => { tab = v; show(); }, M("source")) : null;
-    if (tabs) tabs.classList.add("da-up-tabs");
+    const tabs = DA.segmented([{ value: "file", label: M("file") }, { value: "crm", label: M("crm") }], tab, (v) => { tab = v; show(); }, M("source"));
+    tabs.classList.add("da-up-tabs");
 
     const m = DA.modal({
       title: M("title"),
@@ -138,10 +150,8 @@
 
     function setBusy(on) {
       busy = on;
-      if (tabs) {
-        tabs.classList.toggle("is-locked", on);
-        tabs.querySelectorAll("button").forEach((b) => { b.disabled = on; });
-      }
+      tabs.classList.toggle("is-locked", on);
+      tabs.querySelectorAll("button").forEach((b) => { b.disabled = on; });
     }
     function swap(nodes, actions) {
       pane.replaceChildren(...[nodes].flat().filter((node) => node != null && node !== false));
@@ -151,12 +161,10 @@
     const cancelBtn = () => h("button", { class: "da-btn", type: "button", onclick: () => m.close() }, M("cancel"));
     function show() { if (!busy && !secondStep) (tab === "crm" ? crmPane : filePane)(); }
 
-    /* Режим выбран при запуске. Сбой источника не переключает его на данные браузера. */
+    /* Настройки источника берём с сервера при каждом открытии окна. */
     const initialization = (async () => {
-      if (backend) {
-        try { source = await DA.api.getSource(); draftGroup = source.groupId; DA.state.source = source; }
-        catch (e) { sourceError = errorText(e); }
-      }
+      try { source = await DA.api.getSource(); draftGroup = source.groupId; DA.state.source = source; }
+      catch (e) { sourceError = errorText(e); }
       ready = true;
       if (!closed && tab === "crm" && !busy && !secondStep) crmPane();
     })();
@@ -273,27 +281,26 @@
 
     function processingFor(result) {
       if (!processing.has(result)) processing.set(result, { result,
-        newIds: [...new Set(result.newConversationIds || [])], existingIds: [...new Set(result.existingConversationIds || [])],
+        existingIds: [...new Set(result.existingConversationIds || [])],
         newAccepted: false, newBusy: false, newError: "", choice: null, existingBusy: false, existingAccepted: false,
-        existingError: "", voiceFailures: [], voiceStarted: new Set(), sttActive: backend && result.sttQueued > 0 && !!DA.stt, view: null });
+        existingError: "", voiceFailures: [], voiceStarted: new Set(), sttActive: result.sttQueued > 0 && !!DA.stt, view: null });
       return processing.get(result);
     }
     async function startNew(work) {
-      if (work.newAccepted || work.newBusy || !(backend ? work.result.evaluationJob : work.newIds.length)) return;
+      if (work.newAccepted || work.newBusy || !work.result.evaluationJob) return;
       work.newBusy = true; work.newError = "";
       try {
-        if (backend) await DA.bulk.adopt(work.result.evaluationJob, { source: "import", reuse: false });
-        else await DA.bulk.start(work.newIds, { checklistVersion: DA.activeChecklist().version, reuse: false, source: "import", allowConcurrent: true });
+        await DA.bulk.adopt(work.result.evaluationJob, { source: "import", reuse: false });
         work.newAccepted = true;
       } catch (error) { work.newError = errorText(error); }
       finally { work.newBusy = false; if (!closed) renderProcessing(work); }
     }
     async function processExisting(work) {
       if (work.existingBusy || !work.existingIds.length) return;
-      const voices = backend ? work.existingIds.filter((id) => {
+      const voices = work.existingIds.filter((id) => {
         const conv = DA.state.conversations[id];
         return conv?.channel === "voice call" && (conv.audio_url || conv.audioUrl) && !work.voiceStarted.has(id);
-      }) : [];
+      });
       work.existingBusy = true; work.choice = "processing"; work.existingError = ""; work.voiceFailures = [];
       renderProcessing(work);
       const evaluate = async () => {
@@ -326,6 +333,7 @@
       receipt.replaceChildren(...[
         !work.sttActive ? h("p", { class: "da-up-note" }, resultText(work.result)) : null,
         work.newAccepted ? h("p", { class: "da-up-note" }, M("newStarted")) : null,
+        work.result.processingUnavailable ? h("p", { class: "da-up-note da-up-unavailable", role: "status" }, processingNotice(work.result.processingUnavailable)) : null,
         work.newError ? h("div", { class: "stt-import-error", role: "alert" }, h("p", {}, work.newError),
           h("button", { class: "da-btn", type: "button", disabled: work.newBusy, onclick: () => startNew(work) }, M("retryEvaluation"))) : null
       ].filter(Boolean));
@@ -337,7 +345,7 @@
       } else if (work.choice === "processed") {
         decision.replaceChildren(h("p", { class: "stt-import-choice" }, DA.icon("check", 17), M("reprocessStarted", () => ({ count: conversations(count) }))));
       } else {
-        const hasCalls = backend && work.existingIds.some((id) => {
+        const hasCalls = work.existingIds.some((id) => {
           const conv = DA.state.conversations[id];
           return conv?.channel === "voice call" && (conv.audio_url || conv.audioUrl);
         });
@@ -365,7 +373,7 @@
     }
     function processingView(title, work) {
       secondStep = true;
-      if (tabs) tabs.hidden = true;
+      tabs.hidden = true;
       detachStt?.(); detachStt = null;
       bind(m.panel.querySelector(".da-modal-head h2"), title);
       const receipt = h("div"), decision = h("div", { class: "stt-import-duplicates" }), stt = h("div", { class: "stt-import-progress" });
@@ -423,17 +431,8 @@
         setBusy(true); add.disabled = true; add.classList.add("is-busy");
         try {
           await initialization;
-          if (backend) {
-            const result = await DA.api.uploadConversations(r.records);
-            await finishServerImport(M("updated"), result, [...r.fresh, ...r.updated].map((rec) => rec.conversation_id));
-          } else {
-            const result = { ...DA.upsertConversations(r.records), newConversationIds: r.fresh.map((rec) => rec.conversation_id),
-              existingConversationIds: r.records.filter((rec) => !r.fresh.some((fresh) => fresh.conversation_id === rec.conversation_id)).map((rec) => rec.conversation_id) };
-            const work = processingFor(result);
-            await startNew(work);
-            onDone && onDone(result.ids);
-            if (!closed) processingView(M("updated"), work);
-          }
+          const result = await DA.api.uploadConversations(r.records);
+          await finishServerImport(M("updated"), result, [...r.fresh, ...r.updated].map((rec) => rec.conversation_id));
         } catch (e) {
           bind(error, M("fileStillSelected", () => ({ error: textOf(errorText(e)) })));
           error.hidden = false;
@@ -450,7 +449,7 @@
           s.langs.map(([l, c]) => stat(DA.msg(() => DA.langLabel[l]), c)),
           stat(M("new"), n)),
         changed ? h("p", { class: "da-up-note" }, M("changed", () => ({ count: conversations(changed) }))) : null,
-        n ? h("p", { class: "da-up-note" }, M("newAuto"), backend && r.fresh.some((rec) => rec.channel === "voice call") ? M("callsAuto") : "") : null,
+        n ? h("p", { class: "da-up-note" }, M("newAuto"), r.fresh.some((rec) => rec.channel === "voice call") ? M("callsAuto") : "") : null,
         known ? h("p", { class: "da-up-note" }, M("known", () => ({ count: conversations(known) })))
           : null,
         error

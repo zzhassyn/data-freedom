@@ -115,10 +115,9 @@
     if (snapshot?.enabled === false) return;
     const current = state();
     const missing = current.missing && waitingSince && Date.now() - waitingSince < 30000;
-    if (DA.mode === "server" && (current.allPending || missing || error && tracking)) timer = setTimeout(() => refresh(), 1000);
+    if (current.allPending || missing || error && tracking) timer = setTimeout(() => refresh(), 1000);
   }
   async function refresh(force) {
-    if (DA.mode !== "server") return state();
     if (request && !force) return state();
     clearTimeout(timer);
     request?.abort();
@@ -141,7 +140,6 @@
     return state();
   }
   async function retryItems(ids) {
-    if (DA.mode !== "server") return;
     const selected = [...new Set(ids)].filter((id) => !retrying.has(id));
     if (!selected.length) return;
     selected.forEach((id) => { retrying.add(id); retryErrors.delete(id); });
@@ -179,7 +177,6 @@
   }
   function attach(options) {
     const { pane, foot, close, receipt } = options;
-    if (DA.mode !== "server") return () => {};
     viewers++; renderFloating();
     const meter = h("div", { class: "stt-meter", role: "progressbar", "aria-label": M("progressLabel"), "aria-valuemin": "0" },
       h("span", { class: "stt-meter-done" }), h("span", { class: "stt-meter-failed" }));
@@ -268,7 +265,6 @@
     return () => { if (!alive) return; alive = false; backgroundAnimation?.cancel(); off(); viewers--; pane.classList.remove("stt-step-pane"); renderFloating(); };
   }
   function open(options) {
-    if (DA.mode !== "server") return;
     if (modal) { modal.panel.focus(); return; }
     const pane = h("div"), foot = h("div", { class: "stt-foot" });
     let detach;
@@ -295,7 +291,7 @@
   }
   function renderFloating() {
     const current = state();
-    const visible = DA.mode === "server" && tracking && !hidden && !viewers && (current.total || !current.loaded || current.error);
+    const visible = tracking && !hidden && !viewers && (current.total || !current.loaded || current.error);
     if (!visible) { floating?.remove(); floating = null; document.body.classList.remove("has-stt-panel"); return; }
     if (!floating) {
       floatLabel = h("span"); floatRing = h("span");
@@ -312,7 +308,7 @@
   }
   function subscribe(fn) { listeners.add(fn); fn(state()); return () => listeners.delete(fn); }
   function restore() {
-    if (restored || DA.mode !== "server") return Promise.resolve(state());
+    if (restored) return Promise.resolve(state());
     restored = true;
     try {
       const saved = JSON.parse(sessionStorage.getItem(KEY) || "null");
@@ -326,7 +322,7 @@
     return refresh();
   }
   function trackImport(result, options) {
-    if (DA.mode !== "server" || !result?.sttQueued) return false;
+    if (!result?.sttQueued) return false;
     if (imports.has(result)) return true;
     imports.add(result);
     tracking = true; hidden = false; completionAt = 0;

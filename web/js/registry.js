@@ -92,8 +92,7 @@
     "registry.evaluateAllHint": { ru: "Оценить все обращения без оценки во всём реестре, включая скрытые фильтрами", kk: "Сүзгілер жасырған өтініштерді қоса, бүкіл тізілімдегі бағаланбаған өтініштердің бәрін бағалау", en: "Evaluate every unrated conversation in the registry, including those hidden by filters" },
     "registry.conversation": { ru: "Обращение", kk: "Өтініш", en: "Conversation" },
     "registry.emptyTitle": { ru: "Обращений пока нет", kk: "Өтініштер әзірге жоқ", en: "No conversations yet" },
-    "registry.emptyHelp": { ru: "Загрузите выгрузку из CRM файлом или синхронизируйте обращения.", kk: "CRM жүйесінен экспортталған файлды жүктеңіз немесе өтініштерді синхрондаңыз.", en: "Upload a CRM export file or sync conversations." },
-    "registry.emptyFileHelp": { ru: "Загрузите файл выгрузки, чтобы увидеть обращения и начать оценку.", kk: "Өтініштерді көріп, бағалауды бастау үшін экспорт файлын жүктеңіз.", en: "Upload an export file to see conversations and start evaluating them." }
+    "registry.emptyHelp": { ru: "Загрузите выгрузку из CRM файлом или синхронизируйте обращения.", kk: "CRM жүйесінен экспортталған файлды жүктеңіз немесе өтініштерді синхрондаңыз.", en: "Upload a CRM export file or sync conversations." }
   });
 
   const GROUPS = [
@@ -402,7 +401,7 @@
     const allNew = h("button", { class: "da-btn is-primary da-registry-evaluate", type: "button", title: m("evaluateAllHint"), onclick: evaluateNew });
     const upload = h("button", { class: "da-btn da-registry-upload", type: "button", "aria-label": m("upload"), onclick: () => DA.openUpload(render) }, DA.icon("upload", 17), m("uploadShort"));
     const sttEntry = h("button", { class: "da-btn is-text is-sm stt-registry-open", type: "button", hidden: true, onclick: () => DA.stt?.open({ all: true }) }, DA.icon("phone", 16), m("transcriptions"));
-    const exports = DA.mode === "server" ? organizerExport() : null;
+    const exports = organizerExport();
     const rows = new Map(), stamps = new Map();
     let fresh = new Set(), animate = false, filtered = [], pageRecords = [], mounted = true, starting = false;
 
@@ -554,7 +553,7 @@
     function refreshStt() {
       if (!mounted) return;
       const current = DA.stt?.current();
-      sttEntry.hidden = DA.mode !== "server" || !current || !(current.allTotal || current.error && current.tracking);
+      sttEntry.hidden = !current || !(current.allPending || current.allFailed || current.retryPending || current.missing || current.error && current.tracking);
       rows.forEach((entry, cid) => {
         const item = DA.stt?.item(cid), stamp = item?.status || "";
         if (entry.sttStamp === stamp) return;
@@ -701,7 +700,7 @@
     const toolbar = h("div", { class: "da-registry-tools" },
       h("div", { class: "da-registry-find" }, h("div", { class: "da-search" }, DA.icon("search"), search), menu),
       allNew,
-      h("div", { class: "da-registry-filter-state" }, counter, chips, sttEntry, exports?.button));
+      h("div", { class: "da-registry-filter-state" }, counter, chips, sttEntry, exports.button));
     const table = h("table", { class: "da-table da-registry" },
         h("thead", {}, h("tr", {},
           h("th", { class: "c-select" }, pageCheck),
@@ -709,7 +708,7 @@
     const emptyState = h("div", { class: "da-registry-empty", hidden: true },
       h("div", { class: "da-empty-register", "aria-hidden": "true" },
         ...Array.from({ length: 4 }, (_, i) => h("div", { class: i ? "da-empty-register-row" : "da-empty-register-head" }, h("i"), h("i"), h("i")))),
-      h("h2", {}, m("emptyTitle")), h("p", {}, m(DA.mode === "server" ? "emptyHelp" : "emptyFileHelp")),
+      h("h2", {}, m("emptyTitle")), h("p", {}, m("emptyHelp")),
       h("button", { class: "da-btn is-primary", type: "button", onclick: () => DA.openUpload(render) }, DA.icon("upload", 18), m("upload")));
     wrap.append(toolbar, selectionBar, table, pager, emptyState);
     const headingTitle = h("h1", { class: "da-h1", tabindex: -1 }, m("title"));
@@ -734,7 +733,7 @@
       unsubscribe?.();
       unsubscribeStt?.();
       summaryLayout.disconnect();
-      exports?.destroy();
+      exports.destroy();
       window.removeEventListener("da:appeals-changed", updateCounter);
       DA.bulk?.clearSelection();
     };
