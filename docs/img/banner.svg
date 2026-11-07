@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-label="DataAvengers: контроль качества чатов и звонков поддержки">
+  <defs>
+    <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="6" height="6" fill="#eef1f4"/>
+      <line x1="0" y1="0" x2="0" y2="6" stroke="#b2bcc8" stroke-width="1.5"/>
+    </pattern>
+    <filter id="shadow" x="-10%" y="-30%" width="120%" height="160%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#1e2837" flood-opacity="0.10"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="300" rx="28" fill="#f3f5f8"/>
+  <text x="64" y="118" font-family="Segoe UI, Onest, Arial, sans-serif" font-size="64" font-weight="700" letter-spacing="-1.5" fill="#323335"><tspan fill="#00b323">Data</tspan>Avengers</text>
+  <text x="66" y="164" font-family="Segoe UI, Onest, Arial, sans-serif" font-size="24" fill="#5d6878">Оценка работы операторов поддержки Freedom Broker</text>
+  <text x="66" y="196" font-family="Segoe UI, Onest, Arial, sans-serif" font-size="24" fill="#5d6878">по чек-листу, с объяснениями, цитатами и апелляциями</text>
+
+  <g filter="url(#shadow)">
+    <rect x="720" y="60" width="416" height="180" rx="20" fill="#ffffff"/>
+  </g>
+  <text x="748" y="122" font-family="Segoe UI, Onest, Arial, sans-serif" font-size="52" font-weight="700" letter-spacing="-1.5" fill="#323335">85,71</text>
+  <text x="900" y="122" font-family="Segoe UI, Onest, Arial, sans-serif" font-size="18" fill="#8a95a3">из 100</text>
+  <g transform="translate(748 146)">
+    <rect x="0" y="0" width="46" height="22" rx="6" fill="#00b323"/>
+    <rect x="50" y="0" width="5" height="22" rx="2" fill="url(#hatch)"/>
+    <rect x="59" y="0" width="5" height="22" rx="2" fill="url(#hatch)"/>
+    <rect x="68" y="0" width="91" height="22" rx="6" fill="#00b323"/>
+    <rect x="163" y="0" width="69" height="22" rx="6" fill="#00b323"/>
+    <rect x="236" y="0" width="69" height="22" rx="6" fill="#00b323"/>
+    <rect x="309" y="0" width="46" height="22" rx="6" fill="#e7e9ee"/>
+  </g>
+  <text x="748" y="206" font-family="Segoe UI, Onest, Arial, sans-serif" font-size="15" fill="#5d6878">Ширина сегмента это вес критерия, заливка это набранные баллы</text>
+</svg>

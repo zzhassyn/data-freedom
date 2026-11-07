@@ -55,6 +55,7 @@
     "registry.searchPlaceholder": { ru: "Номер обращения или текст", kk: "Өтініш нөмірі немесе мәтін", en: "Conversation number or text" },
     "registry.search": { ru: "Поиск", kk: "Іздеу", en: "Search" },
     "registry.number": { ru: "№", kk: "№", en: "No." },
+    "registry.yesterdayAt": { ru: "Вчера, {time}", kk: "Кеше, {time}", en: "Yesterday, {time}" },
     "registry.dateTime": { ru: "Дата и время", kk: "Күні мен уақыты", en: "Date and time" },
     "registry.topic": { ru: "С чем обратились", kk: "Өтініш тақырыбы", en: "Customer request" },
     "registry.duration": { ru: "Длительность", kk: "Ұзақтығы", en: "Duration" },
@@ -145,11 +146,13 @@
     });
   }
 
-  /* Сегодняшнюю дату не повторяем в каждой строке: только время. */
+  /* Сегодняшние и вчерашние обращения подписываются словом, остальные датой. */
   function when(ms) {
     const d = new Date(ms);
     const time = d.toLocaleTimeString(DA.fmt.locale(), { hour: "2-digit", minute: "2-digit" });
-    if (d.toDateString() === new Date().toDateString()) return time;
+    if (d.toDateString() === new Date().toDateString()) return DA.t("core.todayAt", { time });
+    const y = new Date(); y.setDate(y.getDate() - 1);
+    if (d.toDateString() === y.toDateString()) return DA.t("registry.yesterdayAt", { time });
     return `${d.toLocaleDateString(DA.fmt.locale(), { day: "numeric", month: "long" })}, ${time}`;
   }
 
@@ -234,7 +237,7 @@
     const menu = DA.filterMenu(GROUPS, filter, () => { filter.batch = null; filtersChanged(); view.page = 1; render(); });
     const range = h("span", { class: "da-pager-range", "aria-live": "polite" });
     const nav = h("nav", { class: "da-pager-nav", "aria-label": m("pages") });
-    const sizes = DA.segmented(SIZES.map((n) => ({ value: n, label: String(n) })), DA.state.pageSize, (n) => {
+    const sizes = DA.dropdown(SIZES.map((n) => ({ value: n, label: String(n) })), DA.state.pageSize, (n) => {
       const first = (view.page - 1) * DA.state.pageSize;
       setPageSize(n);
       goTo(Math.floor(first / n) + 1);
@@ -459,7 +462,6 @@
           ? h("span", { class: "da-pager-gap", "aria-hidden": "true" }, "…")
           : h("button", { class: "da-pager-btn", type: "button", "data-go": String(p), "aria-label": m("page", { number: p }), "aria-current": p === view.page ? "page" : null, onclick: () => p !== view.page && goTo(p) }, p)),
         step("next", m("next"), "chevron", view.page === pages));
-      nav.hidden = pages < 2;
       if (had) {
         const same = nav.querySelector(`[data-go="${had}"]:not([disabled])`) || nav.querySelector("[aria-current]");
         same && same.focus();

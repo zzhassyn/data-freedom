@@ -271,3 +271,19 @@
   .ap-side { justify-items: start; text-align: left; }
   .rv-empty { margin-top: 24px; padding: 32px 20px; }
 }
+
+/* ---------- Раскладка «очередь сверху, диалог слева, решение справа» ---------- */
+/* Очередь полосой над рабочей областью: левая колонка больше не пустует под коротким списком. */
+.rv.has-queue { grid-template-columns: minmax(0, 1fr); }
+.rv-queue { position: static; max-height: none; display: flex; align-items: center; gap: 12px; padding: 8px; overflow: visible; }
+.rv-queue-head { flex: none; padding: 0 6px 0 10px; }
+.rv-q-list { display: flex; gap: 6px; overflow-x: auto; scroll-snap-type: x proximity; flex: 1; min-width: 0; padding: 2px; }
+.rv-q-item { flex: 0 0 236px; scroll-snap-align: start; }
+.rv-q-leave { animation-name: rv-leave-x; }
+@keyframes rv-leave-x { to { flex-basis: 0; padding-left: 0; padding-right: 0; opacity: 0; } }
+/* Диалог занимает всю высоту экрана слева, решение идёт справа сверху вниз. */
+.rv-body { grid-template-columns: minmax(0, 1fr) minmax(420px, 1fr); }
+@media (min-width: 1281px) {
+  .rv-evidence { display: flex; flex-direction: column; height: calc(100vh - 32px); }
+  .rv-evidence > .rv-panel { flex: 1; min-height: 0; overflow: auto; }
+}

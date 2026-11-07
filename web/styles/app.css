@@ -552,3 +552,29 @@ body[data-sidebar="closed"] .da-side-link .da-count { position: absolute; top: 4
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
 }
+
+/* ---------- Выпадающий список ---------- */
+.da-dd { position: relative; display: inline-block; }
+.da-dd-btn {
+  display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px 0 12px;
+  border: 1px solid var(--da-line); border-radius: var(--da-r-control); background: var(--da-surface);
+  font-weight: 550; font-variant-numeric: tabular-nums; box-shadow: var(--da-shadow-rest);
+  transition: border-color var(--da-fast), box-shadow var(--da-fast), transform 90ms var(--da-ease);
+}
+.da-dd-btn:hover { border-color: #c9cfd8; }
+.da-dd-btn:active { transform: scale(0.97); }
+.da-dd-btn .da-icon { transform: rotate(90deg); color: var(--da-text-3); transition: transform var(--da-fast); }
+.da-dd.is-open .da-dd-btn { border-color: var(--da-brand); box-shadow: 0 0 0 3px var(--da-brand-soft); }
+.da-dd.is-open .da-dd-btn .da-icon { transform: rotate(-90deg); }
+.da-dd-list {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; min-width: 100%; margin: 0; padding: 6px; list-style: none;
+  border-radius: var(--da-r-control); background: var(--da-surface); box-shadow: var(--da-shadow-overlay);
+  transform-origin: top right; animation: da-menu-in 140ms var(--da-ease); outline: none;
+}
+.da-dd.is-up .da-dd-list { top: auto; bottom: calc(100% + 6px); transform-origin: bottom right; }
+.da-dd-list li {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 34px; padding: 0 10px;
+  border-radius: 8px; cursor: pointer; font-variant-numeric: tabular-nums; transition: background var(--da-fast);
+}
+.da-dd-list li:hover, .da-dd-list li.is-active { background: var(--da-surface-2); }
+.da-dd-list li[aria-selected="true"] { color: var(--da-brand-press); font-weight: 600; }

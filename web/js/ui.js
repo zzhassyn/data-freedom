@@ -199,6 +199,34 @@
     })(t0);
   };
 
+
+  /* Ставит плашку туда, где она помещается целиком: под якорем, над ним, справа или слева.
+     Если не помещается нигде, берёт сторону с наибольшим местом и ограничивает высоту прокруткой. */
+  function placeHover(el, r) {
+    const gap = 10, pad = 12;
+    el.style.maxHeight = "";
+    const w = el.offsetWidth, hh = el.offsetHeight;
+    const space = { below: innerHeight - r.bottom - gap - pad, above: r.top - gap - pad, right: innerWidth - r.right - gap - pad, left: r.left - gap - pad };
+    const clampX = (x) => Math.max(pad, Math.min(x, innerWidth - w - pad));
+    const clampY = (y) => Math.max(pad, Math.min(y, innerHeight - el.offsetHeight - pad));
+    let side;
+    if (space.below >= hh) side = "below";
+    else if (space.above >= hh) side = "above";
+    else if (space.right >= w) side = "right";
+    else if (space.left >= w) side = "left";
+    else {
+      side = space.below >= space.above ? "below" : "above";
+      el.style.maxHeight = Math.max(160, space[side]) + "px";
+      el.style.overflow = "auto";
+    }
+    const startX = r.left + w <= innerWidth - pad ? r.left : r.right - w;
+    if (side === "below") { el.style.left = clampX(startX) + "px"; el.style.top = r.bottom + gap + "px"; }
+    if (side === "above") { el.style.left = clampX(startX) + "px"; el.style.top = r.top - gap - el.offsetHeight + "px"; }
+    if (side === "right") { el.style.left = r.right + gap + "px"; el.style.top = clampY(r.top) + "px"; }
+    if (side === "left") { el.style.left = r.left - gap - w + "px"; el.style.top = clampY(r.top) + "px"; }
+    el.dataset.side = side;
+  }
+
   /* Плашка при наведении и фокусе. build() вызывается каждый раз, чтобы показать свежие данные. */
   let hoverEl = null, hoverTimer = null;
   DA.hoverCard = function (anchor, build) {
@@ -208,11 +236,7 @@
         hide(true);
         hoverEl = DA.h("div", { class: "da-hovercard", role: "tooltip" }, build());
         document.body.append(hoverEl);
-        const r = anchor.getBoundingClientRect(), w = hoverEl.offsetWidth, hh = hoverEl.offsetHeight;
-        const below = r.bottom + 10 + hh < innerHeight;
-        hoverEl.style.left = Math.max(12, Math.min(r.left, innerWidth - w - 12)) + "px";
-        hoverEl.style.top = (below ? r.bottom + 10 : r.top - hh - 10) + "px";
-        hoverEl.classList.toggle("is-above", !below);
+        placeHover(hoverEl, anchor.getBoundingClientRect());
       }, 160);
     }
     function hide(now) {
@@ -346,5 +370,51 @@
       (f || panel).focus();
     }, 60);
     return { close, panel };
+  };
+
+  /* Свой выпадающий список вместо нативного select. options: [{ value, label }] */
+  DA.dropdown = function (options, value, onChange, label) {
+    const text = DA.h("span", { class: "da-dd-value" });
+    const btn = DA.h("button", { class: "da-dd-btn", type: "button", "aria-haspopup": "listbox", "aria-expanded": "false", "aria-label": label || "" }, text, DA.icon("chevron", 14));
+    const list = DA.h("ul", { class: "da-dd-list", role: "listbox", tabindex: -1, hidden: true });
+    const root = DA.h("div", { class: "da-dd" }, btn, list);
+    let active = 0;
+    function draw() {
+      const cur = options.find((o) => o.value === value) || options[0];
+      text.textContent = cur.label;
+      list.replaceChildren(...options.map((o, i) => DA.h("li", {
+        role: "option", "aria-selected": String(o.value === value), class: i === active ? "is-active" : "",
+        onmousedown: (e) => e.preventDefault(), onclick: () => pick(o.value)
+      }, o.label, o.value === value ? DA.icon("check", 14) : null)));
+    }
+    function open(on) {
+      list.hidden = !on;
+      btn.setAttribute("aria-expanded", String(on));
+      root.classList.toggle("is-open", on);
+      if (on) {
+        active = Math.max(0, options.findIndex((o) => o.value === value));
+        draw();
+        const r = btn.getBoundingClientRect();
+        root.classList.toggle("is-up", r.bottom + list.offsetHeight + 12 > innerHeight);
+        list.focus();
+        document.addEventListener("mousedown", outside);
+      } else document.removeEventListener("mousedown", outside);
+    }
+    function outside(e) { if (!root.contains(e.target)) open(false); }
+    function pick(v) { open(false); btn.focus(); if (v !== value) { value = v; draw(); onChange(v); } }
+    btn.addEventListener("click", () => open(list.hidden));
+    btn.addEventListener("keydown", (e) => { if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); open(true); } });
+    list.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { open(false); btn.focus(); }
+      else if (e.key === "ArrowDown") { active = Math.min(options.length - 1, active + 1); draw(); }
+      else if (e.key === "ArrowUp") { active = Math.max(0, active - 1); draw(); }
+      else if (e.key === "Home") { active = 0; draw(); }
+      else if (e.key === "End") { active = options.length - 1; draw(); }
+      else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(options[active].value); }
+      else if (e.key === "Tab") open(false);
+    });
+    root.setValue = (v) => { value = v; draw(); };
+    draw();
+    return root;
   };
 })();
