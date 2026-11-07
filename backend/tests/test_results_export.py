@@ -207,7 +207,6 @@ def test_missing_and_failed_real_evaluations_are_attempted_once_without_reuse(ex
             return {"jobId": "export-job", "evaluationIds": evaluations}
 
     monkeypatch.setattr(llm_switch, "get_judge", lambda: SimpleNamespace(IS_FAKE=False))
-    monkeypatch.setattr(llm_switch, "fallback_info", lambda: {"judge": False})
     document, _ = asyncio.run(prepare_organizer_results(export_db, Queue(), "CONTROL", evaluate_missing=True))
     assert calls == [(["case-000", "case-001"], "cl_1", False)]
     assert all(row["status"] == "ok" for row in document["results"])
@@ -255,7 +254,6 @@ def test_running_evaluation_timeout_does_not_repeat_or_cancel(export_db, monkeyp
             pytest.fail("Existing real work should be awaited, not repeated")
 
     monkeypatch.setattr(llm_switch, "get_judge", lambda: SimpleNamespace(IS_FAKE=False))
-    monkeypatch.setattr(llm_switch, "fallback_info", lambda: {"judge": False})
     document, _ = asyncio.run(prepare_organizer_results(export_db, Queue(), "CONTROL", evaluate_missing=True, timeout_seconds=0.01))
     assert document["results"][0]["status"] == "error"
     assert "ещё выполняется" in document["results"][0]["error"]
@@ -288,7 +286,6 @@ def test_source_change_during_evaluation_prevents_export(export_db, monkeypatch)
             return {"jobId": "job", "evaluationIds": {cid: make_evaluation(export_db, cid)["id"] for cid in ids}}
 
     monkeypatch.setattr(llm_switch, "get_judge", lambda: SimpleNamespace(IS_FAKE=False))
-    monkeypatch.setattr(llm_switch, "fallback_info", lambda: {"judge": False})
     with pytest.raises(ApiError, match="изменился"):
         asyncio.run(prepare_organizer_results(export_db, Queue(), "CONTROL", evaluate_missing=True))
 

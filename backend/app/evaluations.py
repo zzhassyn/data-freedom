@@ -57,7 +57,7 @@ def is_evaluation_visible(evaluation: dict) -> bool:
     Genuine results from older models remain visible. Pending and failed real
     requests also remain visible, so configuration/provider errors can be retried.
     """
-    if llm_switch.current_mode() == "fake":
+    if llm_switch.has_provider_overrides():
         return True
     completed = [item for item in evaluation.get("items", []) if item.get("status") == "done"]
     if completed:
@@ -115,7 +115,7 @@ def result_to_item(result: JudgeResult, criterion: dict) -> dict:
     return item
 
 
-def judge_result_from_item(item: dict, model: str = "fake") -> JudgeResult:
+def judge_result_from_item(item: dict, model: str = "") -> JudgeResult:
     checked = item.get("checkedRange")
     return JudgeResult(
         answer=(item.get("original") or {}).get("answer", item["answer"]),
@@ -260,14 +260,15 @@ class EvaluationQueue:
                 await asyncio.sleep(2 ** (attempt + 1))
 
     async def submit(self, conversation_ids: list[str], checklist_id: str, reuse: bool = True) -> dict:
+        if not llm_switch.provider_configured('judge', self.settings):
+            raise ApiError('model_unavailable', 'Оценка недоступна: настройте ключ и модель OpenRouter', 503)
         if not conversation_ids:
             raise ApiError("invalid_request", "Выберите хотя бы один диалог", 400)
         conversation_ids = list(dict.fromkeys(conversation_ids))
         checklist = self.db.get_checklist(checklist_id)
         conversations = [self.db.get_conversation(id) for id in conversation_ids]
         judge = llm_switch.get_judge()
-        fake = getattr(judge, "IS_FAKE", False)
-        model = "fake" if fake else (judge.configured_model() if hasattr(judge, "configured_model") else self.settings.llm_model)
+        model = judge.configured_model() if hasattr(judge, "configured_model") else self.settings.llm_model
         identity = judge.cache_identity() if hasattr(judge, "cache_identity") else model
         job_id = None
         evaluation_ids = {}
@@ -306,6 +307,8 @@ class EvaluationQueue:
         with self.db.transaction() as conn:
             evaluation = self.db.get_evaluation(evaluation_id, conn)
             require_evaluation_visible(evaluation)
+            if not llm_switch.provider_configured('judge', self.settings):
+                raise ApiError('model_unavailable', 'Оценка недоступна: настройте ключ и модель OpenRouter', 503)
             if evaluation["status"] in {"queued", "running"}:
                 raise ApiError("evaluation_running", "Оценка ещё выполняется", 409)
             item = next((i for i in evaluation["items"] if i["criterionId"] == criterion_id), None)
@@ -388,7 +391,7 @@ class EvaluationQueue:
             self._refresh_jobs(evaluation_id)
 
     def _find_reusable(self, evaluation: dict, criterion: dict):
-        real = not getattr(llm_switch.get_judge(), "IS_FAKE", False)
+        real = not llm_switch.has_provider_overrides()
         for previous in self.db.all_evaluations():
             if previous["id"] == evaluation["id"] or previous["conversationId"] != evaluation["conversationId"]:
                 continue
@@ -545,6 +548,25 @@ async def get_job(job_id: str, request: Request):
     for item in job["items"]:
         require_evaluation_visible(db.get_evaluation(item["evaluationId"]))
     return request.app.state.queue._refresh_job(job_id)
+
+
+@router.get("/jobs")
+async def list_jobs(request: Request, status: str = "active"):
+    """Discover existing active work after reload; never submit or restart work."""
+    if status != "active":
+        raise ApiError("invalid_filter", "Доступен фильтр status=active", 400)
+    db = request.app.state.db
+    items = []
+    for job in db.all_jobs():
+        if job["status"] not in {"queued", "running"} or not job["items"]:
+            continue
+        evaluations = [db.get_evaluation(item["evaluationId"]) for item in job["items"]]
+        if not all(is_evaluation_visible(evaluation) for evaluation in evaluations):
+            continue
+        items.append({**job, "checklistId": evaluations[0]["checklistId"],
+                      "checklistVersion": evaluations[0]["checklistVersion"]})
+    items.sort(key=lambda job: (job.get("startedAt") or "", int(job["id"].split('_')[-1])), reverse=True)
+    return {"items": items}
 
 
 @router.post("/evaluations/{evaluation_id}/criteria/{criterion_id}/retry", status_code=202)

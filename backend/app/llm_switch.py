@@ -1,45 +1,39 @@
 """Select the injected ML modules without coupling HTTP routes to providers."""
 
 import importlib
-import logging
 import os
 from types import ModuleType
 
 from .errors import JudgeError
 
-logger = logging.getLogger(__name__)
-_judge = "fake"
-_fake_delay = 0.4
-_fallbacks: dict[str, bool] = {"judge": False, "ai": False}
+_judge = "openrouter"
 _settings = None
+_providers = {}
 
 
-def configure(judge: str = "fake", fake_delay: float = 0.4, settings=None) -> None:
-    global _judge, _fake_delay, _settings
+def configure(judge: str = "openrouter", settings=None, providers=None) -> None:
+    """Explicit dependency injection; normal startup supplies no provider overrides."""
+    global _judge, _settings, _providers
     _judge = judge
-    _fake_delay = fake_delay
     _settings = settings
-    _fallbacks.update(judge=False, ai=False)
+    _providers = dict(providers or {})
 
 
 def _get(kind: str) -> ModuleType:
+    if kind in _providers:
+        return _providers[kind]
     mode = current_mode()
-    if mode not in {"fake", "real", "openrouter"}:
-        raise ValueError("JUDGE должен быть fake, real или openrouter")
-    module_name = f"app.{kind}.{mode}" if mode in {"fake", "openrouter"} else f"app.{kind}"
+    if mode not in {"real", "openrouter"}:
+        raise JudgeError("JUDGE должен быть real или openrouter")
+    module_name = f"app.{kind}.openrouter" if mode == "openrouter" else f"app.{kind}"
     try:
         module = importlib.import_module(module_name)
-        _fallbacks[kind] = False
     except ImportError as exc:
         raise JudgeError("Модуль модели не подключён. Проверьте настройки сервера") from exc
-    if mode != "fake" and getattr(module, "IS_FAKE", False):
-        raise JudgeError("Настоящая модель не подключена. Проверьте настройки сервера")
-    if mode != "fake" and _settings is not None and hasattr(module, "configure"):
-        module.configure(_settings)
-    # Explicit, inspectable fake configuration; does not change provider inputs.
     if getattr(module, "IS_FAKE", False):
-        fake = importlib.import_module(f"app.{kind}.fake")
-        fake.DELAY_SECONDS = _fake_delay
+        raise JudgeError("Настоящая модель не подключена. Проверьте настройки сервера")
+    if _settings is not None and hasattr(module, "configure"):
+        module.configure(_settings)
     return module
 
 
@@ -55,5 +49,16 @@ def get_ai() -> ModuleType:
     return _get("ai")
 
 
-def fallback_info() -> dict[str, bool]:
-    return dict(_fallbacks)
+def has_provider_overrides() -> bool:
+    return bool(_providers)
+
+
+def provider_configured(kind: str, settings=None) -> bool:
+    if kind in _providers:
+        return True
+    config = settings or _settings
+    if config is None:
+        return False
+    model = (getattr(config, 'judge_model', '') if kind == 'judge' else
+             getattr(config, 'ai_model', '') or getattr(config, 'judge_model', ''))
+    return bool(getattr(config, 'openrouter_api_key', '') and model)

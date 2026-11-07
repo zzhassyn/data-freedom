@@ -4,17 +4,20 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import create_app
+from tests.helpers import create_app, use_test_providers
 from app.settings import Settings
 
 
 @pytest.fixture(autouse=True)
 def no_live_stt(monkeypatch):
     """Ordinary tests never inherit paid providers from the developer's .env."""
-    monkeypatch.setenv('JUDGE', 'fake')
+    monkeypatch.setenv('JUDGE', 'openrouter')
     monkeypatch.setenv('STT_ENABLED', 'false')
     monkeypatch.setenv('OPENROUTER_API_KEY', '')
     monkeypatch.setenv('AUTO_EVALUATE_IMPORTS', 'false')
+    use_test_providers()
+    yield
+    use_test_providers()
 
 
 @pytest.fixture
@@ -24,8 +27,7 @@ def dev_payload():
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv('JUDGE', 'fake')
-    app = create_app(Settings(db_path=str(tmp_path / 'test.sqlite'), judge='fake', fake_delay=0.001, auto_summarize=False))
+    app = create_app(Settings(db_path=str(tmp_path / 'test.sqlite'), auto_summarize=False))
     with TestClient(app) as test_client:
         yield test_client
 

@@ -294,9 +294,11 @@ def test_static_entry_assets_and_localhost_cors(client):
     assert response.status_code == 200
     assert '<html lang="ru">' in response.text
     assert 'DataAvengers' in response.text
-    for asset in ('/styles/tokens.css', '/js/core.js', '/data/mock-evaluations.js'):
+    for asset in ('/styles/tokens.css', '/js/core.js'):
         result = client.get(asset)
         assert result.status_code == 200 and result.content
+    for asset in ('/data/mock-evaluations.js', '/data/dev-data.js', '/data/checklist.js'):
+        assert client.get(asset).status_code == 404
     response = client.options('/api/conversations', headers={'Origin': 'http://localhost:4173', 'Access-Control-Request-Method': 'GET'})
     assert response.status_code == 200
     assert response.headers['access-control-allow-origin'] == 'http://localhost:4173'

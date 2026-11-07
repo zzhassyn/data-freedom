@@ -87,6 +87,15 @@ def _usage(value):
 
 
 async def _call(app, function, *args, priority=0):
+    settings = app.state.settings
+    if function is translation_service.translate:
+        configured = bool(settings.openrouter_api_key and settings.translation_model)
+    else:
+        kind = 'judge' if (getattr(function, '__module__', '').startswith('app.judge')
+                           and getattr(function, '__name__', '') != 'second_opinion') else 'ai'
+        configured = llm_switch.provider_configured(kind, settings)
+    if not configured:
+        raise ApiError('model_unavailable', 'Функция ИИ недоступна: настройте ключ и модель OpenRouter', 503)
     started = time.monotonic()
     try:
         result = await app.state.queue.call_model(function, *args, priority=priority)
@@ -148,7 +157,8 @@ def _stream_cached(app, kind, key, source_hash, factory, serialize, is_current, 
     except JudgeError as exc:
         raise ApiError("model_unavailable", str(exc), 503) from exc
     settings = app.state.settings
-    if settings.judge in {"openrouter", "real"} and not (settings.openrouter_api_key and (settings.ai_model or settings.judge_model)):
+    if (not llm_switch.has_provider_overrides() and settings.judge in {"openrouter", "real"}
+            and not (settings.openrouter_api_key and (settings.ai_model or settings.judge_model))):
         raise ApiError("model_unavailable", "Укажите ключ OpenRouter и модель в настройках сервера", 503)
     if not is_current():
         raise ApiError("stale_source", "Данные изменились. Повторите запрос", 409)
@@ -230,7 +240,7 @@ async def prefetch_summaries(app, conversation_ids):
         try:
             await _summary(app, conversation_id, priority=10)
         except ApiError as exc:
-            # Missing fake fixtures and unavailable real providers are expected here.
+            # Unavailable providers do not prevent importing or viewing records.
             logger.info("Summary unavailable for %s (%s)", conversation_id, exc.code)
 
 
@@ -254,7 +264,7 @@ async def summary(conversation_id: str, request: Request, refresh: bool = False,
 
 
 async def _completed_stream(function, *args):
-    """Explicit fake/legacy adapters may produce one terminal value without fake deltas."""
+    """Non-streaming adapters produce one terminal value without invented deltas."""
     result = await function(*args)
     yield {"type": "done", "result": result, "usage": _usage(result)}
 
@@ -289,17 +299,13 @@ async def translation(conversation_id: str, request: Request, refresh: bool = Fa
     if conversation["language"] == target_language:
         return {"turns": [{"idx": turn.idx, "text": turn.text} for turn in source.transcript], **metadata}
     settings = app.state.settings
-    if not settings.openrouter_api_key and (settings.judge != "fake" or target_language != "RU" or source_name != "canonical"):
+    if not settings.openrouter_api_key:
         raise ApiError("translation_unavailable", "Перевод на этот язык пока недоступен", 503)
 
     async def produce():
-        if settings.openrouter_api_key:
-            result, usage = await _call(app, translation_service.translate, source, target_language, settings)
-            if result.target_language != target_language:
-                raise ApiError("model_failed", "Модель вернула перевод на другой язык. Повторите через минуту", 502)
-        else:
-            # The existing ML interface promises Russian only; never relabel it.
-            result, usage = await _call(app, llm_switch.get_ai().translate, source)
+        result, usage = await _call(app, translation_service.translate, source, target_language, settings)
+        if result.target_language != target_language:
+            raise ApiError("model_failed", "Модель вернула перевод на другой язык. Повторите через минуту", 502)
         if hasattr(result, "turns"):
             turns = result.turns
         elif isinstance(result, dict):

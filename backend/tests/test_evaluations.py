@@ -270,11 +270,10 @@ def test_changed_transcript_is_not_reused(seeded_client, dev_payload, monkeypatc
 
 
 def test_queue_resumes_after_server_restart_without_repeating_done_items(tmp_path, dev_payload, monkeypatch):
-    from app.main import create_app
+    from tests.helpers import create_app
     from app.settings import Settings
 
-    settings = Settings(db_path=tmp_path / "resume.sqlite", judge="fake",
-                        fake_delay=0.001, auto_summarize=False)
+    settings = Settings(db_path=tmp_path / "resume.sqlite", auto_summarize=False)
     release = threading.Event()
     completed = Counter()
 

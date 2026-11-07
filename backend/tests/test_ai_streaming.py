@@ -9,7 +9,7 @@ from app import extras, llm_switch
 from app.db import Database
 from app.errors import ApiError, JudgeError
 from app.models import Summary, Usage
-from tests.helpers import evaluate
+from tests.helpers import evaluate, use_runtime_providers
 
 
 def lines(response):
@@ -89,8 +89,13 @@ def test_provider_identity_invalidates_summary_and_persisted_opinion(seeded_clie
 
 
 @pytest.mark.parametrize('mode', ['openrouter', 'real'])
-def test_summary_stream_missing_key_fails_before_headers(seeded_client, mode):
-    seeded_client.app.state.settings.judge = mode
+def test_summary_stream_missing_key_fails_before_headers(seeded_client, monkeypatch, mode):
+    settings = seeded_client.app.state.settings
+    settings.judge = mode
+    settings.openrouter_api_key = ''
+    settings.llm_api_key = ''
+    monkeypatch.setenv('JUDGE', mode)
+    use_runtime_providers(settings)
     response = seeded_client.get('/api/conversations/p1-ru-001/summary?stream=true')
     assert response.status_code == 503
     assert response.json()['error']['code'] == 'model_unavailable'
@@ -107,7 +112,7 @@ def test_partial_emits_before_completion_and_disconnect_cancels_provider(tmp_pat
             return await function(*args)
 
         app = SimpleNamespace(state=SimpleNamespace(db=db, queue=SimpleNamespace(call_model=invoke),
-            background_tasks=set(), settings=SimpleNamespace(judge='fake', openrouter_api_key='')))
+            background_tasks=set(), settings=SimpleNamespace(judge='openrouter', openrouter_api_key='')))
         monkeypatch.setattr(extras, '_cache_identity', lambda app, kind: 'stream-test')
 
         async def provider():
@@ -140,7 +145,7 @@ def test_source_changed_during_stream_is_never_saved(tmp_path, monkeypatch):
             return await function(*args)
 
         app = SimpleNamespace(state=SimpleNamespace(db=db, queue=SimpleNamespace(call_model=invoke),
-            background_tasks=set(), settings=SimpleNamespace(judge='fake', openrouter_api_key='')))
+            background_tasks=set(), settings=SimpleNamespace(judge='openrouter', openrouter_api_key='')))
         monkeypatch.setattr(extras, '_cache_identity', lambda app, kind: 'stream-test')
 
         async def provider():

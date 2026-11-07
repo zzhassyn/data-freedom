@@ -5,10 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from app import llm_switch
 from app.checklists import prepare_criterion
 from app.evaluations import EvaluationQueue, is_evaluation_visible, is_real_model
-from tests.helpers import evaluate
+from tests.helpers import evaluate, use_runtime_providers, use_test_providers
 
 
 def _open_appeal(client, evaluation):
@@ -33,14 +32,14 @@ def _real_record(db, evaluation, model='provider/older-real-model'):
     return record
 
 
-def test_fake_scores_and_appeals_are_hidden_everywhere_without_deleting_them(seeded_client, monkeypatch):
+def test_fixture_scores_and_appeals_are_hidden_everywhere_without_deleting_them(seeded_client):
     evaluation, = evaluate(seeded_client)
     appeal = _open_appeal(seeded_client, evaluation)
     db = seeded_client.app.state.db
     original_evaluation = copy.deepcopy(db.get_evaluation(evaluation['id']))
     original_appeal = copy.deepcopy(db.get_appeal(appeal['id']))
     job = next(job for job in db.all_jobs() if any(i['evaluationId'] == evaluation['id'] for i in job['items']))
-    monkeypatch.setenv('JUDGE', 'openrouter')
+    use_runtime_providers(seeded_client.app.state.settings)
 
     registry = seeded_client.get('/api/conversations').json()
     row = next(item for item in registry['items'] if item['id'] == evaluation['conversationId'])
@@ -77,17 +76,17 @@ def test_fake_scores_and_appeals_are_hidden_everywhere_without_deleting_them(see
         assert response.json()['error']['code'] == 'provider_changed'
     assert db.get_evaluation(evaluation['id']) == original_evaluation
     assert db.get_appeal(appeal['id']) == original_appeal
-    monkeypatch.setenv('JUDGE', 'fake')
+    use_test_providers(seeded_client.app.state.settings)
     assert seeded_client.get(f"/api/evaluations/{evaluation['id']}").status_code == 200
     assert seeded_client.get('/api/appeals').json()['counts']['open'] == 1
 
 
-def test_newer_fake_does_not_hide_genuine_older_model_history_or_appeals(seeded_client, monkeypatch):
+def test_newer_fixture_does_not_hide_genuine_older_model_history_or_appeals(seeded_client):
     first, = evaluate(seeded_client)
     real = _real_record(seeded_client.app.state.db, first)
     appeal = _open_appeal(seeded_client, real)
     latest_fake, = evaluate(seeded_client)
-    monkeypatch.setenv('JUDGE', 'openrouter')
+    use_runtime_providers(seeded_client.app.state.settings)
     registry = seeded_client.get('/api/conversations').json()
     row = next(item for item in registry['items'] if item['id'] == real['conversationId'])
     assert row['lastEvaluation']['id'] == real['id']
@@ -106,8 +105,8 @@ def test_newer_fake_does_not_hide_genuine_older_model_history_or_appeals(seeded_
 
 @pytest.mark.parametrize('model', [None, '', 'fake', 'fixture-1', 'mock/provider', 'unknown',
                                  'provider/real, unknown', 'provider/real, fake', 'provider/real, '])
-def test_unknown_or_mixed_item_models_cannot_be_laundered_by_aggregate_model(monkeypatch, model):
-    monkeypatch.setenv('JUDGE', 'openrouter')
+def test_unknown_or_mixed_item_models_cannot_be_laundered_by_aggregate_model(model):
+    use_runtime_providers()
     record = {'model': 'provider/real', '_judgeIdentity': 'openrouter:same', 'items': [
         {'status': 'done', 'model': 'provider/real'}, {'status': 'done', 'model': model}]}
     assert not is_real_model(model)
@@ -115,14 +114,14 @@ def test_unknown_or_mixed_item_models_cannot_be_laundered_by_aggregate_model(mon
     assert is_real_model('provider/first, provider/second')
 
 
-def test_pending_real_failures_remain_visible_but_legacy_fake_work_does_not_resume(seeded_client, monkeypatch):
+def test_pending_real_failures_remain_visible_but_legacy_fake_work_does_not_resume(seeded_client):
     evaluation, = evaluate(seeded_client)
     db = seeded_client.app.state.db
     record = db.get_evaluation(evaluation['id'])
     record['status'] = 'running'
     record['items'][0]['status'] = 'pending'
     db.save_evaluation(record)
-    monkeypatch.setenv('JUDGE', 'openrouter')
+    use_runtime_providers(seeded_client.app.state.settings)
     assert is_evaluation_visible({'model': '', '_judgeIdentity': 'openrouter:configured', 'items': [{'status': 'failed'}]})
     assert not is_evaluation_visible({'model': '', '_judgeIdentity': 'unknown', 'items': [{'status': 'pending'}]})
 
@@ -137,13 +136,13 @@ def test_pending_real_failures_remain_visible_but_legacy_fake_work_does_not_resu
     asyncio.run(start_and_close())
 
 
-def test_reuse_needs_item_provenance_even_when_provider_identity_matches(seeded_client, monkeypatch):
+def test_reuse_needs_item_provenance_even_when_provider_identity_matches(seeded_client):
     evaluation, = evaluate(seeded_client)
     db = seeded_client.app.state.db
     record = _real_record(db, evaluation)
     record['items'][0]['model'] = None
     db.save_evaluation(record)
-    monkeypatch.setenv('JUDGE', 'openrouter')
+    use_runtime_providers(seeded_client.app.state.settings)
     target = copy.deepcopy(record)
     target['id'] = 'ev-new-request'
     criterion = next(c for c in db.get_checklist('cl_1')['criteria'] if c['id'] == record['items'][0]['criterionId'])

@@ -7,30 +7,38 @@ import pytest
 
 from app import llm_switch
 from app.errors import JudgeError
-from tests.helpers import evaluate
+from tests.helpers import evaluate, use_runtime_providers
 
 
 def install_provider(client, monkeypatch, handler):
     settings = client.app.state.settings
+    settings.judge = 'real'
     settings.llm_base_url = 'https://model.example/v1/'
     settings.llm_api_key = 'unit-test-key'
     settings.llm_model = 'unit-test-model'
+    use_runtime_providers(settings)
+    monkeypatch.setenv('JUDGE', 'real')
     monkeypatch.setattr(llm_switch, 'get_judge', lambda: SimpleNamespace(IS_FAKE=False))
     original = httpx.AsyncClient
     monkeypatch.setattr(httpx, 'AsyncClient', lambda **kwargs: original(transport=httpx.MockTransport(handler), **kwargs))
 
 
-def test_fake_health_has_contract_shape_and_does_not_require_credentials(client):
+def test_injected_provider_health_has_contract_shape_and_is_not_reported_online(client):
     response = client.get('/api/health')
     assert response.status_code == 200
     body = response.json()
     assert {'ok', 'model', 'modelOnline', 'avgCriterionMs', 'avgEvaluationCostUsd'} <= body.keys()
-    assert body['ok'] is True and body['modelOnline'] is True
+    assert body['ok'] is True and body['modelOnline'] is False
     assert body['model'] == 'fake'
     assert body['avgCriterionMs'] == body['avgEvaluationCostUsd'] == 0
 
 
-def test_real_import_failure_never_runs_fake_and_health_reports_unavailable(client, monkeypatch):
+def test_real_import_failure_never_uses_test_provider_and_health_reports_unavailable(client, monkeypatch):
+    settings = client.app.state.settings
+    settings.judge = 'real'
+    settings.llm_model = ''
+    settings.llm_api_key = ''
+    use_runtime_providers(settings)
     original_import = llm_switch.importlib.import_module
 
     def failing_import(name):
@@ -99,9 +107,13 @@ def test_missing_real_credentials_reports_offline_without_network(client, monkey
     def forbidden(**kwargs):
         raise AssertionError('No HTTP request should be attempted without provider credentials')
 
+    settings = client.app.state.settings
+    settings.judge = 'real'
+    settings.llm_api_key = ''
+    use_runtime_providers(settings)
+    monkeypatch.setenv('JUDGE', 'real')
     monkeypatch.setattr(llm_switch, 'get_judge', lambda: SimpleNamespace(IS_FAKE=False))
     monkeypatch.setattr(httpx, 'AsyncClient', forbidden)
-    client.app.state.settings.llm_api_key = ''
     response = client.get('/api/health')
     assert response.status_code == 200
     assert response.json()['modelOnline'] is False
@@ -126,6 +138,7 @@ def test_openrouter_health_checks_key_without_paid_generation(client, monkeypatc
     settings.judge = 'openrouter'
     settings.judge_model = 'test/configured-model'
     settings.openrouter_api_key = 'unit-test-key'
+    use_runtime_providers(settings)
     monkeypatch.setenv('JUDGE', 'openrouter')
     requests = []
     original = httpx.AsyncClient

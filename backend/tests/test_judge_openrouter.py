@@ -302,8 +302,11 @@ def _install_queue_provider(seeded_client, monkeypatch, broken_contact=False):
             'usage': {'prompt_tokens': 10, 'completion_tokens': 5, 'cost': .003}})
     adapter, config, calls = install(monkeypatch, [response])
     monkeypatch.setenv('JUDGE', 'openrouter')
-    llm_switch.configure('openrouter', config)
-    return adapter, config, calls
+    app_settings = seeded_client.app.state.settings
+    for field in ('judge', 'judge_model', 'judge_temperature', 'judge_output_mode', 'openrouter_api_key'):
+        setattr(app_settings, field, getattr(config, field))
+    llm_switch.configure('openrouter', app_settings)
+    return adapter, app_settings, calls
 
 
 def test_failed_criterion_keeps_all_billed_attempts_in_evaluation_and_health(seeded_client, monkeypatch):

@@ -4,10 +4,11 @@ import io
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from app import llm_switch
+from app import llm_switch, translation_service
 from app.errors import JudgeError
 from app.models import Summary, Usage
 from tests.helpers import evaluate
+from tests.providers import ai as prepared_ai
 
 
 def test_summary_cache_refresh_usage_and_source_change(seeded_client, monkeypatch, dev_payload):
@@ -69,18 +70,21 @@ def test_translation_exact_indices_and_cache(seeded_client, monkeypatch):
         "turns": [{"idx": turn["idx"], "text": turn["text"]} for turn in original["transcript"]],
         "targetLanguage": "RU", "source": "canonical", "sourceHash": original["transcriptHash"],
     }
-    module = llm_switch.get_ai()
-    original = module.translate
+    seeded_client.app.state.settings.openrouter_api_key = 'synthetic-translation-key'
     calls = []
 
-    async def counted(conversation):
+    async def counted(conversation, target_language, settings):
+        assert target_language == 'RU'
+        assert settings.openrouter_api_key == 'synthetic-translation-key'
         calls.append(conversation.id)
-        return await original(conversation)
+        prepared = await prepared_ai.translate(conversation)
+        return translation_service.TranslationResult(prepared.turns, target_language, prepared.usage)
 
-    monkeypatch.setattr(module, "translate", counted)
+    monkeypatch.setattr(translation_service, "translate", counted)
     for conversation_id, count in [("p1-kz-003", 26), ("p1-en-002", 12)]:
         response = seeded_client.get(f"/api/conversations/{conversation_id}/translation")
         assert response.status_code == 200
+        assert response.json()['targetLanguage'] == 'RU'
         turns = response.json()["turns"]
         assert len(turns) == count
         assert [turn["idx"] for turn in turns] == list(range(count))

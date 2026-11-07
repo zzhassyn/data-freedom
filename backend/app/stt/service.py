@@ -26,7 +26,7 @@ class TranscriptionQueue:
         self.workers = []
 
     async def start(self):
-        if not self.settings.stt_enabled:
+        if not self.settings.stt_enabled or not self.settings.openrouter_api_key:
             return
         for row in self.store.all():
             if row['status'] not in {'queued', 'running'}:
@@ -54,7 +54,7 @@ class TranscriptionQueue:
             self.queue.put_nowait(key)
 
     def enqueue(self, ids, force=False):
-        if not self.settings.stt_enabled:
+        if not self.settings.stt_enabled or not self.settings.openrouter_api_key:
             return []
         accepted = self.store.enqueue(ids, self.settings.stt_model, force)
         for cid, generation in accepted:
@@ -199,5 +199,7 @@ class TranscriptionQueue:
             raise ApiError('stt_disabled', 'Расшифровка звонков выключена', 409)
         if conversation['channel'] != 'voice call' or not conversation.get('audioUrl'):
             raise ApiError('no_audio', 'У этого обращения нет аудиозаписи', 404)
+        if not self.settings.openrouter_api_key:
+            raise ApiError('model_unavailable', 'Расшифровка недоступна: настройте ключ OpenRouter', 503)
         self.enqueue([cid], force=force)
         return self.transcription(cid)

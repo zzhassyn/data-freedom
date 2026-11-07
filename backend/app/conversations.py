@@ -107,7 +107,7 @@ def import_steps(db, payload, group_id, audio_allowed_hosts=AUDIO_ALLOWED_HOSTS,
     matching_group = metadata.get('dataset_group_id') == group_id
     if authoritative:
         if 'dataset_group_id' in metadata and not matching_group:
-            raise ApiError('invalid_transcript', 'Набор организаторов не соответствует запрошенному groupId')
+            raise ApiError('invalid_transcript', 'Источник вернул другой набор диалогов')
         if 'total_records' in metadata and not matching_total:
             raise ApiError('invalid_transcript', 'Число записей набора не совпадает с total_records')
     capture_roster = authoritative or (matching_group and matching_total)
@@ -157,7 +157,9 @@ def import_records(db, payload, group_id, audio_allowed_hosts=AUDIO_ALLOWED_HOST
 
 
 def schedule_summaries(request, ids):
-    if not request.app.state.settings.auto_summarize or not ids:
+    from . import llm_switch
+    if (not request.app.state.settings.auto_summarize or not ids
+            or not llm_switch.provider_configured('ai', request.app.state.settings)):
         return
     from .extras import prefetch_summaries
     task = asyncio.create_task(prefetch_summaries(request.app, ids))
@@ -171,14 +173,28 @@ def schedule_summaries(request, ids):
 
 async def schedule_import_work(request, result):
     """Only new records auto-process; existing records await the user's choice."""
+    from . import llm_switch
     ids = result['newConversationIds']
-    queued = request.app.state.stt.enqueue(ids)
+    settings, db = request.app.state.settings, request.app.state.db
+    queued = request.app.state.stt.enqueue(ids) if settings.openrouter_api_key else []
     result.update(sttQueued=len(queued), sttConversationIds=queued, evaluationJob=None)
-    if ids and request.app.state.settings.auto_evaluate_imports:
-        checklist = request.app.state.db.get_checklist('active')
-        accepted = await request.app.state.queue.submit(ids, checklist['id'], reuse=False)
-        result['evaluationJob'] = {**accepted, 'checklistId': checklist['id'],
-                                   'checklistVersion': checklist['version'], 'reuse': False}
+    unavailable = []
+    if ids and settings.auto_evaluate_imports:
+        if llm_switch.provider_configured('judge', settings):
+            checklist = db.get_checklist('active')
+            accepted = await request.app.state.queue.submit(ids, checklist['id'], reuse=False)
+            result['evaluationJob'] = {**accepted, 'checklistId': checklist['id'],
+                                       'checklistVersion': checklist['version'], 'reuse': False}
+        else:
+            unavailable.append('evaluation')
+    if ids and settings.auto_summarize and not llm_switch.provider_configured('ai', settings):
+        unavailable.append('summary')
+    if (ids and settings.stt_enabled and not settings.openrouter_api_key
+            and any(db.get_conversation(cid).get('audioUrl') for cid in ids)):
+        unavailable.append('transcription')
+    if unavailable:
+        result['processingUnavailable'] = {'code': 'model_unavailable', 'features': unavailable,
+            'message': 'Диалоги сохранены. Автоматическая обработка недоступна: настройте OpenRouter'}
     schedule_summaries(request, ids)
 
 
@@ -200,12 +216,12 @@ async def fetch_dataset(request, group_id):
                 break
             except (httpx.HTTPError, ValueError):
                 if attempt:
-                    raise ApiError('upstream_failed', 'Не удалось загрузить набор у организаторов. Повторите запрос или загрузите JSON-файл', 502)
+                    raise ApiError('upstream_failed', 'Не удалось загрузить набор из CRM. Повторите запрос или загрузите JSON-файл', 502)
                 await asyncio.sleep(0.3)
     if not isinstance(payload, dict):
-        raise ApiError('upstream_failed', 'Организаторы вернули неверный формат набора', 502)
+        raise ApiError('upstream_failed', 'CRM вернула неверный формат набора', 502)
     if payload.get('isSuccess') is False:
-        raise ApiError('bad_group', str(payload.get('error') or 'Организаторы не нашли указанный набор'))
+        raise ApiError('bad_group', str(payload.get('error') or 'CRM не нашла выбранный набор'))
     return payload
 
 
@@ -414,7 +430,7 @@ async def audio(id: str, request: Request):
         if stream is not None:
             await stream.aclose()
         await client.aclose()
-        raise ApiError('upstream_failed', 'Не удалось получить аудиозапись у организаторов. Повторите запрос', 502)
+        raise ApiError('upstream_failed', 'Не удалось получить аудиозапись из источника. Повторите запрос', 502)
     async def chunks():
         try:
             async for chunk in stream.aiter_raw():

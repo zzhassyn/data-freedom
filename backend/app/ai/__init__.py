@@ -1,4 +1,4 @@
-"""Real AI entry point; explicit fake mode imports app.ai.fake directly."""
+"""Real AI entry point."""
 
 from .openrouter import (
     IS_FAKE, cache_identity, coach, coach_stream, configure, second_opinion,

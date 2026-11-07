@@ -53,7 +53,7 @@ def trusted_request_origin(request):
     return not sites or sites[0] == 'same-origin'
 
 
-def create_app(settings=None):
+def create_app(settings=None, *, providers=None):
     config = settings or Settings()
 
     @asynccontextmanager
@@ -64,7 +64,7 @@ def create_app(settings=None):
         application.state.settings = config
         application.state.db = Database(config.db_path)
         seed_checklist(application.state.db)
-        llm_switch.configure(config.judge, config.fake_delay, config)
+        llm_switch.configure(config.judge, config, providers)
         application.state.queue = EvaluationQueue(application.state.db, config)
         application.state.stt = TranscriptionQueue(application.state.db, config)
         application.state.background_tasks = set()
@@ -147,11 +147,9 @@ def create_app(settings=None):
                     judge = llm_switch.get_judge()
                 except JudgeError:
                     judge = None
-                fake = getattr(judge, 'IS_FAKE', False)
                 online = False
-                if fake:
-                    online = not llm_switch.fallback_info()['judge']
-                    model = 'fake'
+                if llm_switch.has_provider_overrides():
+                    model = judge.configured_model() if hasattr(judge, 'configured_model') else 'не настроена'
                 elif config.judge == 'openrouter':
                     model = config.judge_model or 'не настроена'
                     if judge is not None and config.openrouter_api_key and config.judge_model:
@@ -182,7 +180,7 @@ def create_app(settings=None):
         with db.transaction() as conn:
             metrics = conn.execute("SELECT AVG(CASE WHEN kind='evaluation' THEN latency_ms END) AS avg_ms, SUM(cost_usd) AS cost FROM model_calls").fetchone()
         average_ms = metrics['avg_ms'] or 0
-        if llm_switch.current_mode() != 'fake':
+        if not llm_switch.has_provider_overrides():
             timings = [item['latencyMs'] for ev in db.all_evaluations() if is_evaluation_visible(ev)
                        for item in ev['items'] if not item.get('reused') and item.get('latencyMs') is not None
                        and (item.get('usage') or {}).get('calls', 0) > 0]

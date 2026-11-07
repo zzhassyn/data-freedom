@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from app import conversations
 from app.db import Database, SCHEMA, json_dumps
-from app.main import create_app
+from tests.helpers import create_app
 
 
 def record(cid, language='RU', timestamp='00:03'):

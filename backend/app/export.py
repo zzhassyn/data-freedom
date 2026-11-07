@@ -122,7 +122,7 @@ def _check_value(criterion_id, value):
             return
     elif type(value) in {int, float, Decimal} and value in scale:
         return
-    _export_error(f"Критерий {criterion_id}: значение не соответствует формату организаторов")
+    _export_error(f"Критерий {criterion_id}: значение не соответствует формату выгрузки")
 
 
 def organizer_score(values):
@@ -183,7 +183,7 @@ def validate_organizer_results(document, manifest):
         _export_error("Для этой выгрузки mode должен быть external_api")
     names = _text(document["model"]["name"], "Название модели", allow_empty=True)
     if names and not _real_model(names):
-        _export_error("Демонстрационная модель не допускается в результатах организаторов")
+        _export_error("Демонстрационная модель не допускается в результатах оценки")
     if not isinstance(document["results"], list):
         _export_error("results должен быть массивом")
     seen = set()
@@ -283,12 +283,12 @@ def _original_checklist(db):
     checklist = versions[0]
     criteria = checklist.get("criteria", [])
     if len(criteria) != 8 or {criterion["id"] for criterion in criteria} != set(ORGANIZER_CRITERION_IDS):
-        _export_error("Исходный чек-лист должен содержать восемь критериев организаторов", "export_checklist_invalid", 409)
+        _export_error("Чек-лист должен содержать восемь исходных критериев", "export_checklist_invalid", 409)
     for criterion in criteria:
         kind, weight, _, scale = ORGANIZER_RULES[ORGANIZER_CRITERION_IDS[criterion["id"]]]
         if (criterion.get("type") != kind or criterion.get("weight") != weight
                 or (scale is not None and sorted(step["value"] for step in criterion.get("scale") or []) != list(scale))):
-            _export_error("Типы, шкалы или веса версии 1 не совпадают с форматом организаторов", "export_checklist_invalid", 409)
+            _export_error("Типы, шкалы или веса версии 1 не совпадают с форматом выгрузки", "export_checklist_invalid", 409)
     return checklist
 
 
@@ -433,7 +433,7 @@ async def prepare_organizer_results(db, queue, group_id, *, evaluate_missing=Fal
         from . import llm_switch
         try:
             provider = llm_switch.get_judge()
-            unavailable = getattr(provider, "IS_FAKE", False) or llm_switch.fallback_info().get("judge", False)
+            unavailable = getattr(provider, "IS_FAKE", False)
         except Exception:
             unavailable = True
         if unavailable:

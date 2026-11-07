@@ -90,24 +90,28 @@ def test_same_language_never_calls_provider(seeded_client, monkeypatch, cid, tar
     assert _cost(seeded_client)[1] is None
 
 
-def test_no_key_keeps_russian_compatibility_but_never_relabels_it(seeded_client, monkeypatch):
+def test_no_key_rejects_every_cross_language_without_prepared_fallback(seeded_client, monkeypatch):
     calls = []
-    original = llm_switch.get_ai().translate
 
-    async def counted(conversation):
-        calls.append(conversation.id)
-        return await original(conversation)
+    async def should_not_translate(*args):
+        calls.append(True)
+        pytest.fail('Missing translation credentials must never invoke any provider')
 
-    monkeypatch.setattr(llm_switch.get_ai(), 'translate', counted)
-    response = seeded_client.get('/api/conversations/p1-kz-003/translation')
-    assert response.status_code == 200
-    assert response.json()['targetLanguage'] == 'RU'
-    assert response.json()['turns'][0]['text'].startswith('Вчера')
-    for target in ['EN', 'KZ']:
-        response = seeded_client.get(f'/api/conversations/p1-ru-001/translation?targetLanguage={target}')
-        assert response.status_code == 503
-        assert response.json()['error']['code'] == 'translation_unavailable'
-    assert calls == ['p1-kz-003']
+    monkeypatch.setattr(llm_switch.get_ai(), 'translate', should_not_translate)
+    monkeypatch.setattr(translation_service, 'translate', should_not_translate)
+    seeded_client.app.state.settings.openrouter_api_key = ''
+    for cid, language in [('p1-ru-001', 'RU'), ('p1-kz-003', 'KZ'), ('p1-en-002', 'EN')]:
+        source = seeded_client.app.state.db.get_conversation(cid)
+        for target in ['RU', 'KZ', 'EN']:
+            response = seeded_client.get(f'/api/conversations/{cid}/translation?targetLanguage={target}')
+            if target == language:
+                assert response.status_code == 200
+                assert response.json()['turns'] == [{'idx': t['idx'], 'text': t['text']} for t in source['transcript']]
+                assert response.json()['targetLanguage'] == language
+            else:
+                assert response.status_code == 503
+                assert response.json()['error']['code'] == 'translation_unavailable'
+    assert calls == [] and _cost(seeded_client)[1] is None
     assert seeded_client.get('/api/conversations/p1-ru-001/translation?targetLanguage=FR').status_code == 400
 
 
@@ -353,10 +357,11 @@ def test_unready_stt_never_falls_back_to_canonical(seeded_client, monkeypatch, s
 def test_stt_no_key_uses_original_only_when_target_already_matches(seeded_client, monkeypatch):
     cid, generation, result, source_hash = _sanitized_call(seeded_client)
 
-    async def should_not_use_canonical_fake(*_):
-        pytest.fail('Canonical fixture translation must never be used for STT turns')
+    async def should_not_translate(*_):
+        pytest.fail('A keyless STT translation must never use prepared or runtime providers')
 
-    monkeypatch.setattr(llm_switch.get_ai(), 'translate', should_not_use_canonical_fake)
+    monkeypatch.setattr(llm_switch.get_ai(), 'translate', should_not_translate)
+    monkeypatch.setattr(translation_service, 'translate', should_not_translate)
     base = f'/api/conversations/{cid}/translation?source=transcription&sourceHash={source_hash}'
     same = seeded_client.get(base + '&targetLanguage=EN')
     assert same.status_code == 200

@@ -13,8 +13,12 @@ from app.errors import JudgeError
 from app.models import Conversation, Criterion, Evidence, JudgeResult, SecondOpinion, Usage
 
 IS_FAKE = True
-DELAY_SECONDS = 0.4
+DELAY_SECONDS = 0.001
 FIXTURES = json.loads(Path(__file__).with_name("fixtures.json").read_text(encoding="utf-8"))
+
+
+def configured_model():
+    return 'fake'
 
 
 def _fixture(conversation: Conversation, criterion: Criterion) -> dict:

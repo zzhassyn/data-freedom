@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 import httpx
 
 from app import llm_switch
-from app.main import create_app
+from tests.helpers import create_app
 from app.settings import Settings
 from app.stt import audio, provider
 from tests.helpers import evaluate
@@ -190,13 +190,12 @@ def test_dev_then_renamed_control_fixture_journey(tmp_path, monkeypatch):
                 words.append({'word': word, 'speaker': turn['speaker'], 'start': start, 'end': start + 0.2})
         return {'words': words, 'duration': len(words) * 0.25, 'usage': {'seconds': 0}}
 
-    monkeypatch.setenv('JUDGE', 'fake')
     monkeypatch.setattr(httpx.AsyncClient, 'send', no_network)
     monkeypatch.setattr('app.conversations.fetch_dataset', file_dataset)
     monkeypatch.setattr(audio, 'download_audio', download)
     monkeypatch.setattr(audio, 'inspect_audio', inspect)
     monkeypatch.setattr(provider, 'transcribe', transcribe)
-    settings = Settings(db_path=tmp_path / 'journey.sqlite', judge='fake', fake_delay=0,
+    settings = Settings(db_path=tmp_path / 'journey.sqlite',
                         auto_summarize=False, auto_evaluate_imports=False, stt_enabled=True,
                         openrouter_api_key='synthetic-test-key', stt_model='test-stt-fixture')
     with TestClient(create_app(settings)) as client:

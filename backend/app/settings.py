@@ -26,7 +26,7 @@ class Settings:
     org_api_url: str = field(default_factory=lambda: os.getenv('ORG_API_URL', DEFAULT_ORG_API_URL))
     audio_allowed_hosts: tuple[str, ...] = field(default_factory=lambda: tuple(
         os.getenv('AUDIO_ALLOWED_HOSTS', ','.join(AUDIO_ALLOWED_HOSTS)).split(',')))
-    judge: str = field(default_factory=lambda: os.getenv('JUDGE', 'fake'))
+    judge: str = field(default_factory=lambda: os.getenv('JUDGE', 'openrouter'))
     judge_model: str = field(default_factory=lambda: os.getenv('JUDGE_MODEL', '').strip())
     judge_temperature: float = field(default_factory=lambda: float(os.getenv('JUDGE_TEMPERATURE', '0')))
     judge_output_mode: str = field(default_factory=lambda: os.getenv('JUDGE_OUTPUT_MODE', 'tool'))
@@ -37,7 +37,6 @@ class Settings:
     llm_price_in: float = field(default_factory=lambda: float(os.getenv('LLM_PRICE_IN', '0')))
     llm_price_out: float = field(default_factory=lambda: float(os.getenv('LLM_PRICE_OUT', '0')))
     judge_concurrency: int = field(default_factory=lambda: int(os.getenv('JUDGE_CONCURRENCY', '8')))
-    fake_delay: float = field(default_factory=lambda: float(os.getenv('FAKE_DELAY', '0.4')))
     auto_summarize: bool = field(default_factory=lambda: os.getenv('AUTO_SUMMARIZE', '1') == '1')
     auto_evaluate_imports: bool = field(default_factory=lambda: env_bool('AUTO_EVALUATE_IMPORTS', True))
     openrouter_api_key: str = field(default_factory=lambda: os.getenv('OPENROUTER_API_KEY', ''), repr=False)
@@ -54,16 +53,14 @@ class Settings:
         if isinstance(hosts, str):
             hosts = hosts.split(',')
         self.audio_allowed_hosts = tuple(host.strip().strip('.').lower() for host in hosts if host.strip().strip('.'))
-        if self.judge not in {'fake', 'real', 'openrouter'}:
-            raise ValueError('JUDGE должен быть fake, real или openrouter')
+        if self.judge not in {'real', 'openrouter'}:
+            raise ValueError('JUDGE должен быть real или openrouter')
         if not math.isfinite(self.judge_temperature) or not 0 <= self.judge_temperature <= 2:
             raise ValueError('JUDGE_TEMPERATURE должен быть от 0 до 2')
         if self.judge_output_mode not in {'tool', 'schema'}:
             raise ValueError('JUDGE_OUTPUT_MODE должен быть tool или schema')
         if not 1 <= self.judge_concurrency <= 128:
             raise ValueError('JUDGE_CONCURRENCY должен быть от 1 до 128')
-        if self.fake_delay < 0:
-            raise ValueError('FAKE_DELAY не может быть отрицательным')
         if not 1 <= self.stt_concurrency <= 16:
             raise ValueError('STT_CONCURRENCY должен быть от 1 до 16')
         if not math.isfinite(self.stt_price_per_sec) or self.stt_price_per_sec < 0:

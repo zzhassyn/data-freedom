@@ -1,5 +1,21 @@
 import time
 
+from app import llm_switch
+from app.main import create_app as create_runtime_app
+from tests.providers import PROVIDERS
+
+
+def create_app(settings=None):
+    return create_runtime_app(settings, providers=PROVIDERS)
+
+
+def use_runtime_providers(settings=None):
+    llm_switch.configure('openrouter', settings=settings)
+
+
+def use_test_providers(settings=None):
+    llm_switch.configure('openrouter', settings=settings, providers=PROVIDERS)
+
 
 def evaluate(client, ids=None, checklist_id='cl_1', reuse=False):
     ids = ids or ['p1-ru-001']

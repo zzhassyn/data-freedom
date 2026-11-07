@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.conversations import import_records
 from app.db import Database
-from app.main import create_app
+from tests.helpers import create_app
 from app.settings import Settings
 from app.stt import audio, provider
 from app.stt.service import TranscriptionQueue
@@ -35,7 +35,7 @@ def response_words():
 
 
 def enabled_settings(path, **extra):
-    return Settings(db_path=path, judge='fake', auto_summarize=False, fake_delay=0,
+    return Settings(db_path=path, auto_summarize=False,
                     auto_evaluate_imports=extra.pop('auto_evaluate_imports', False),
                     stt_enabled=True, openrouter_api_key='synthetic-test-key', **extra)
 
@@ -187,9 +187,10 @@ def test_disabled_missing_config_and_failure_retry(tmp_path, monkeypatch):
     settings.openrouter_api_key = ''
     with TestClient(create_app(settings)) as client:
         assert client.get('/api/conversations/call-0/transcription').json()['status'] == 'not_queued'
-        client.post('/api/conversations/call-0/transcription/retry', json={})
-        assert wait_jobs(client, 1)['failed'] == 1
-        assert client.get('/api/conversations/call-0/transcription').json()['error'] == 'Сервис распознавания не настроен'
+        unavailable = client.post('/api/conversations/call-0/transcription/retry', json={})
+        assert unavailable.status_code == 503 and unavailable.json()['error']['code'] == 'model_unavailable'
+        assert client.get('/api/stt/jobs').json()['total'] == 0
+        assert client.get('/api/conversations/call-0/transcription').json()['status'] == 'not_queued'
         assert not paths and count['value'] == 0
     settings.openrouter_api_key = 'synthetic-test-key'
     with TestClient(create_app(settings)) as client:

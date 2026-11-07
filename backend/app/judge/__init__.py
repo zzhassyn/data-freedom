@@ -1,4 +1,4 @@
-"""Real judge exports; fixtures are available only through explicit fake mode."""
+"""Real judge exports."""
 
 from app.errors import JudgeError
 from app.models import JudgeResult, SecondOpinion, Usage
