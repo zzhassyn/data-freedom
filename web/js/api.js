@@ -170,6 +170,7 @@
     getTranscription: (id, options) => request(`/conversations/${part(id)}/transcription`, options),
     retryTranscription: (id, options) => post(`/conversations/${part(id)}/transcription/retry`, options?.force === true ? { force: true } : {}, options),
     getSummary: (id, options) => aiGet(`/conversations/${part(id)}/summary`, options),
+    askAssistant: (id, body, options) => post(`/conversations/${part(id)}/assistant`, body, aiOptions(options)),
     getTranslation: (id, options) => get(`/conversations/${part(id)}/translation`, {
       refresh: options?.refresh, targetLanguage: options?.targetLanguage || "RU", source: options?.source || "canonical", sourceHash: options?.sourceHash
     }, aiOptions(options)),

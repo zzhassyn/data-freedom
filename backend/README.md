@@ -122,6 +122,7 @@ uvicorn app.main:app --port 8000
 | POST | `/api/gold` | `Content-Type: text/csv`; импорт ручной разметки |
 | GET | `/api/accuracy?checklistId=` | Точность исходных ответов модели без апелляционных изменений |
 | GET | `/api/conversations/{id}/summary` | Тема, запрос, итог и имя оператора; `?stream=true` включает NDJSON |
+| POST | `/api/conversations/{id}/assistant` | Вопрос по открытому диалогу. `message`, `history`, `language`, `transcriptHash`, необязательный `evaluationId`. Ответ содержит `answer`, проверенные `citations` и `usage` |
 | GET | `/api/conversations/{id}/translation` | Перевод на `targetLanguage=RU\|KZ\|EN`; `source=canonical\|transcription`, необязательный ожидаемый `sourceHash` |
 | GET | `/api/evaluations/{id}/coaching` | Советы по критериям с замечаниями; `?stream=true` включает NDJSON |
 | POST | `/api/criteria/try` | Пробная оценка критерия, до трёх диалогов, общий таймаут 90 с |

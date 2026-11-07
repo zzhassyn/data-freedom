@@ -1,7 +1,8 @@
 """Shared ML/domain schemas. Python uses snake_case, HTTP uses camelCase."""
+import re
 from typing import Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, field_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -86,6 +87,35 @@ class Usage(ApiModel):
     output_tokens: int = Field(default=0, ge=0)
     cost_usd: float = Field(default=0, ge=0)
     calls: int = Field(default=0, ge=0)
+
+
+class AssistantCitation(ApiModel):
+    model_config = ConfigDict(extra='forbid')
+    turn_idx: StrictInt = Field(ge=0)
+    quote: str = Field(min_length=1, max_length=500)
+
+
+class AssistantReply(ApiModel):
+    model_config = ConfigDict(extra='forbid')
+    answer: str = Field(min_length=1, max_length=6000)
+    citations: list[AssistantCitation] = Field(max_length=8)
+    usage: Usage = Field(default_factory=Usage)
+
+    @field_validator('answer')
+    @classmethod
+    def plain_answer(cls, value):
+        value = value.strip()
+        if not value or re.search(r'<\s*(?:/?[A-Za-z][^>]*|![^>]*|\?[^>]*)>', value):
+            raise ValueError('invalid_assistant_answer')
+        return value
+
+    def validate_citations(self, conversation):
+        turns = {turn.idx: turn.text for turn in conversation.transcript}
+        for citation in self.citations:
+            if (citation.turn_idx not in turns or not citation.quote.strip()
+                    or citation.quote not in turns[citation.turn_idx]):
+                raise ValueError('invalid_assistant_citation')
+        return self
 
 
 class JudgeResult(ApiModel):

@@ -549,6 +549,8 @@
 
     /* ---------- Панель оценки ---------- */
     const panel = h("section", { class: "da-eval", "aria-label": m("evaluation") });
+    const assistant = DA.conversationAssistant?.({ conversation: conv, evaluation: ev,
+      onCitation: (idx) => jumpTo(idx, "yes") });
     const critNodes = new Map();
     let ribbon = null;
     let totalNode = null;
@@ -559,6 +561,7 @@
       opts = opts || {};
       renderedEvaluationSignature = evaluationSignature(ev);
       ai?.updateEvaluation(ev);
+      assistant?.updateEvaluation(ev);
       panel.replaceChildren();
       critNodes.clear();
       totalNode = null;
@@ -948,6 +951,7 @@
         readOnly ? null : h("div", { class: "da-card-actions" }, evalBtn)),
       historyView ? h("p", { class: "da-card-history" }, m("historyOpen"), h("a", { href: `#/c/${encodeURIComponent(cid)}` }, m("currentConversation"))) : null,
       tabs, grid));
+    if (assistant) root.append(assistant.element);
 
     renderPanel();
     attachDisplayedTranscript();
@@ -962,6 +966,6 @@
     window.addEventListener("da:locale-changed", () => requestAnimationFrame(() => {
       if (!disposed && focused) focusCriterion(ev?.items.find((item) => item.criterionId === focused) || null);
     }), { signal: controller.signal });
-    return () => { disposed = true; unsubscribeBulk?.(); controller.abort(); clearTimeout(sttTimer); player?.destroy(); ai?.dispose?.(); timers.forEach(clearTimeout); };
+    return () => { disposed = true; unsubscribeBulk?.(); controller.abort(); clearTimeout(sttTimer); player?.destroy(); ai?.dispose?.(); assistant?.dispose(); timers.forEach(clearTimeout); };
   };
 })();

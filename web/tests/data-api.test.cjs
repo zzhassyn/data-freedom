@@ -79,6 +79,24 @@ test('API preserves contract errors, encodes identifiers and sends JSON for muta
   assert.equal(JSON.parse(request.opts.body).action, 'confirm');
 });
 
+test('assistant sends bounded-context identifiers as JSON and supports cancellation', async () => {
+  let captured;
+  const { DA } = environment(async (url, opts) => {
+    captured = { url, opts };
+    return reply({ answer: 'Ответ', citations: [{ turnIdx: 0, quote: 'Здравствуйте' }] });
+  });
+  const body = { message: 'Объясни оценку', history: [], language: 'RU', transcriptHash: 'original', evaluationId: 'ev_server' };
+  const result = await DA.api.askAssistant('call /1', body);
+  assert.equal(captured.url, '/api/conversations/call%20%2F1/assistant');
+  assert.equal(captured.opts.method, 'POST');
+  assert.deepEqual(JSON.parse(captured.opts.body), body);
+  assert.equal(result.citations[0].quote, 'Здравствуйте');
+  const controller = new AbortController();
+  controller.abort();
+  await DA.api.askAssistant('call /1', body, { signal: controller.signal });
+  assert.equal(captured.opts.signal.aborted, true);
+});
+
 test('STT and AI requests encode IDs, pass refresh separately and send JSON on mutation routes', async () => {
   const calls = [], timers = [];
   const { DA, context } = environment(async (url, opts) => { calls.push({ url, opts }); return reply({ ok: true }); });

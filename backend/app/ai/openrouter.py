@@ -10,7 +10,7 @@ from pydantic import Field, ValidationError
 from pydantic_core import from_json
 
 from app.errors import JudgeError
-from app.models import CriterionSuggestion, SecondOpinion, Summary, Tip, Usage
+from app.models import AssistantReply, CriterionSuggestion, SecondOpinion, Summary, Tip, Usage
 
 IS_FAKE = False
 _settings = None
@@ -61,6 +61,12 @@ _COACH_SCHEMA = _object({'tips': {'type': 'array', 'items': _TIP_SCHEMA}})
 _SUGGEST_SCHEMA = _object({'description': _TEXT, 'naCondition': _NULL_TEXT,
                          'scale': {'anyOf': [{'type': 'null'}, {'type': 'array', 'items':
                                    _object({'value': {'type': 'number'}, 'description': _TEXT})}]}})
+_ASSISTANT_SCHEMA = _object({
+    'answer': {'type': 'string', 'minLength': 1, 'maxLength': 6000},
+    'citations': {'type': 'array', 'maxItems': 8, 'items': _object({
+        'turnIdx': {'type': 'integer', 'minimum': 0},
+        'quote': {'type': 'string', 'minLength': 1, 'maxLength': 500}})},
+})
 
 
 def _source(conversation):
@@ -193,6 +199,19 @@ async def _request(kind, data, schema):
         raise _error('Сервис ИИ не ответил. Повторите запрос позже', usage) from exc
     except (ValueError, KeyError, TypeError, IndexError) as exc:
         raise _error('Сервис ИИ вернул некорректный ответ', usage) from exc
+
+
+async def assistant(conversation, message, history, language, assessment):
+    value, usage = await _request('assistant', {
+        'conversation': _source(conversation), 'assessment': assessment,
+        'message': message, 'history': history, 'language': language,
+    }, _ASSISTANT_SCHEMA)
+    try:
+        if set(value) != {'answer', 'citations'}:
+            raise ValueError('invalid_fields')
+        return AssistantReply.model_validate({**value, 'usage': usage}).validate_citations(conversation)
+    except (ValueError, TypeError) as exc:
+        raise _error('Модель вернула некорректный ответ или цитату', usage) from exc
 
 
 async def _sse_data(lines):
