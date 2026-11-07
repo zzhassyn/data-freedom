@@ -37,6 +37,7 @@ class Settings:
     auto_summarize: bool = field(default_factory=lambda: os.getenv('AUTO_SUMMARIZE', '1') == '1')
     auto_evaluate_imports: bool = field(default_factory=lambda: env_bool('AUTO_EVALUATE_IMPORTS', True))
     openrouter_api_key: str = field(default_factory=lambda: os.getenv('OPENROUTER_API_KEY', ''), repr=False)
+    translation_model: str = field(default_factory=lambda: os.getenv('TRANSLATION_MODEL', 'google/gemini-3.1-flash-lite'))
     stt_enabled: bool = field(default_factory=lambda: env_bool('STT_ENABLED', True))
     stt_model: str = field(default_factory=lambda: os.getenv('STT_MODEL', 'elevenlabs/scribe-v2'))
     stt_price_per_sec: float = field(default_factory=lambda: float(os.getenv('STT_PRICE_PER_SEC', '0.0000611')))

@@ -64,7 +64,11 @@ def test_summary_single_flight_and_model_failure(seeded_client, monkeypatch):
 
 
 def test_translation_exact_indices_and_cache(seeded_client, monkeypatch):
-    assert seeded_client.get("/api/conversations/p1-ru-001/translation").json() == {"turns": []}
+    original = seeded_client.app.state.db.get_conversation("p1-ru-001")
+    assert seeded_client.get("/api/conversations/p1-ru-001/translation").json() == {
+        "turns": [{"idx": turn["idx"], "text": turn["text"]} for turn in original["transcript"]],
+        "targetLanguage": "RU", "source": "canonical", "sourceHash": original["transcriptHash"],
+    }
     module = llm_switch.get_ai()
     original = module.translate
     calls = []

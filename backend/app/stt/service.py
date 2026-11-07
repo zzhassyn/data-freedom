@@ -151,10 +151,11 @@ class TranscriptionQueue:
                               error='Не удалось обработать расшифровку. Повторите её', turns=[], speakers=[])
 
     def transcription(self, cid):
+        from ..translation_service import transcription_source_hash
         conversation = self.db.get_conversation(cid)
         row = self.store.get(cid) if self.settings.stt_enabled else None
         status = row['status'] if row else 'not_queued' if self.settings.stt_enabled else 'disabled'
-        return {
+        result = {
             'status': status, 'step': row['step'] if row else status, 'progress': row['progress'] if row else 0,
             'error': row['error'] if row else None, 'transcriptHash': conversation['transcriptHash'],
             'turns': row['turns'] if row and status == 'done' else [],
@@ -165,6 +166,8 @@ class TranscriptionQueue:
             'costUsd': row['cost_usd'] if row else 0, 'model': row['model'] if row else self.settings.stt_model,
             'audioCheck': row['audio_check'] if row else 'pending',
         }
+        result['sourceHash'] = transcription_source_hash(result) if status == 'done' else None
+        return result
 
     def jobs(self, group_id=None):
         rows = self.store.all(group_id) if self.settings.stt_enabled else []

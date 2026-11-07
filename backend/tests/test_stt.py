@@ -96,6 +96,11 @@ def test_import_jobs_deduplicate_and_do_not_change_organizer_input(tmp_path, mon
         assert transcript['incomplete'] is True
         assert (transcript['audioSecondsDeclared'], transcript['audioSecondsDecoded']) == (393.3, 265.75)
         assert transcript['turns'] and transcript['speakers']
+        from app.translation_service import transcription_source_hash
+        assert transcript['sourceHash'] == transcription_source_hash(transcript)
+        revised = copy.deepcopy(transcript)
+        revised['turns'][0]['text'] += ' Уточнение'
+        assert transcription_source_hash(revised) != transcript['sourceHash']
         assert transcript['costUsd'] == pytest.approx(10 * 0.0000611)
         assert client.get('/api/conversations/call-0').json() == before
         again = client.post('/api/conversations/upload', json=payload).json()
@@ -192,6 +197,7 @@ def test_disabled_missing_config_and_failure_retry(tmp_path, monkeypatch):
         assert wait_jobs(client, 1)['failed'] == 1
         failed = client.get('/api/conversations/call-0/transcription').json()
         assert failed['turns'] == [] and failed['progress'] < 100
+        assert failed['sourceHash'] is None
         assert client.post('/api/conversations/call-0/transcription/retry', json={}).status_code == 202
         assert wait_jobs(client, 1)['done'] == 1
         assert count['value'] == 2

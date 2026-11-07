@@ -1,20 +1,20 @@
-"""Cached AI operations; model prompts and transport stay in judge/ and ai/."""
+"""Cached AI operations with source checks and isolated provider adapters."""
 import asyncio
 import hashlib
 import logging
 import time
 from typing import Literal
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from pydantic import Field, ValidationError
 
-from . import llm_switch
+from . import llm_switch, translation_service
 from .checklists import prepare_criterion
 from .db import json_dumps
 from .errors import ApiError, JudgeError
 from .models import (
     ApiModel, Conversation, Criterion, CriterionSuggestion, JudgeResult,
-    SecondOpinion, Summary, Tip, TranslatedTurn, Usage,
+    SecondOpinion, Summary, Tip, Usage,
 )
 from .scoring import validate_answer
 
@@ -129,17 +129,47 @@ async def summary(conversation_id: str, request: Request, refresh: bool = False)
     return await _summary(request.app, conversation_id, refresh)
 
 
+def _translation_input(app, conversation, source_name):
+    if source_name == "canonical":
+        return Conversation.model_validate(conversation), _conversation_hash(conversation)
+    payload = app.state.stt.transcription(conversation["id"])
+    if (payload["status"] != "done" or payload["transcriptHash"] != _conversation_hash(conversation)
+            or not payload["turns"]):
+        raise ApiError("stale_source", "Расшифровка изменилась или ещё не готова. Повторите запрос", 409)
+    roles = {speaker["speakerId"]: speaker.get("role", "unknown") for speaker in payload["speakers"]}
+    source = translation_service.TranslationSource(conversation["language"], [
+        translation_service.SourceTurn(turn["idx"], roles.get(turn["speakerId"], "unknown"), turn["text"])
+        for turn in payload["turns"]
+    ])
+    return source, translation_service.transcription_source_hash(payload)
+
+
 @router.get("/conversations/{conversation_id}/translation")
-async def translation(conversation_id: str, request: Request, refresh: bool = False):
-    db = request.app.state.db
+async def translation(conversation_id: str, request: Request, refresh: bool = False,
+                      target_language: Literal["RU", "KZ", "EN"] = Query("RU", alias="targetLanguage"),
+                      source_name: Literal["canonical", "transcription"] = Query("canonical", alias="source"),
+                      expected_hash: str | None = Query(None, alias="sourceHash", max_length=128)):
+    app = request.app
+    db = app.state.db
     conversation = db.get_conversation(conversation_id)
-    if conversation["language"] == "RU":
-        return {"turns": []}
-    source_hash = _conversation_hash(conversation)
+    source, source_hash = _translation_input(app, conversation, source_name)
+    if expected_hash is not None and expected_hash != source_hash:
+        raise ApiError("stale_source", "Отображаемый диалог изменился. Откройте его заново", 409)
+    metadata = {"targetLanguage": target_language, "source": source_name, "sourceHash": source_hash}
+    if conversation["language"] == target_language:
+        return {"turns": [{"idx": turn.idx, "text": turn.text} for turn in source.transcript], **metadata}
+    settings = app.state.settings
+    if not settings.openrouter_api_key and (target_language != "RU" or source_name != "canonical"):
+        raise ApiError("translation_unavailable", "Перевод на этот язык пока недоступен", 503)
 
     async def produce():
-        result, usage = await _call(request.app, llm_switch.get_ai().translate,
-                                    Conversation.model_validate(conversation))
+        if settings.openrouter_api_key:
+            result, usage = await _call(app, translation_service.translate, source, target_language, settings)
+            if result.target_language != target_language:
+                raise ApiError("model_failed", "Модель вернула перевод на другой язык. Повторите через минуту", 502)
+        else:
+            # The existing ML interface promises Russian only; never relabel it.
+            result, usage = await _call(app, llm_switch.get_ai().translate, source)
         if hasattr(result, "turns"):
             turns = result.turns
         elif isinstance(result, dict):
@@ -148,18 +178,40 @@ async def translation(conversation_id: str, request: Request, refresh: bool = Fa
             turns = result[0]
         else:
             turns = result
-        if not isinstance(turns, list):
-            raise ApiError("model_failed", "Модель вернула некорректный перевод. Повторите через минуту", 502)
-        translated = [_validate(TranslatedTurn, turn).model_dump(by_alias=True) for turn in turns]
-        indices = [turn["idx"] for turn in translated]
-        allowed = {turn["idx"] for turn in conversation["transcript"]}
-        if len(indices) != len(set(indices)) or not set(indices).issubset(allowed):
-            raise ApiError("model_failed", "Перевод ссылается на неизвестные реплики. Повторите через минуту", 502)
-        return {"turns": translated}, usage
+        try:
+            translated = translation_service.validate_turns(turns, source)
+        except JudgeError as exc:
+            raise ApiError("model_failed", f"Некорректный перевод: {exc}. Повторите через минуту", 502) from exc
+        return {"turns": translated, **metadata}, usage
 
-    return await _cached(request.app, "translation", conversation_id, source_hash, produce,
-                         lambda: _conversation_hash(db.get_conversation(conversation_id)) == source_hash,
-                         refresh)
+    key = _digest([conversation_id, source_name, source_hash, target_language])
+    tasks = getattr(app.state, "translation_tasks", None)
+    if tasks is None:
+        app.state.translation_tasks = tasks = {}
+    task = tasks.get(key)
+    if task is None:
+        def is_current():
+            current = db.get_conversation(conversation_id)
+            try:
+                _, current_hash = _translation_input(app, current, source_name)
+            except ApiError:
+                return False
+            return current_hash == source_hash and current["language"] == conversation["language"]
+
+        task = asyncio.create_task(_cached(app, "translation", key, source_hash, produce, is_current, refresh))
+        tasks[key] = task
+        app.state.background_tasks.add(task)
+
+        def completed(done):
+            if tasks.get(key) is done:
+                tasks.pop(key, None)
+            app.state.background_tasks.discard(done)
+            if not done.cancelled():
+                done.exception()  # Retrieve an error if every HTTP waiter disconnected.
+
+        task.add_done_callback(completed)
+    # UI language switches must not cancel the shared request or bill it twice.
+    return await asyncio.shield(task)
 
 
 def _judge_result(item, model, original=False):
