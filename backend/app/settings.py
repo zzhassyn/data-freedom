@@ -1,5 +1,6 @@
 """Environment configuration, paths resolved relative to backend/."""
 import os
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -13,6 +14,10 @@ DEFAULT_ORG_API_URL = ('https://ec88f21f1accecf38e20095a9fe175.a5.environment.ap
     '/powerautomate/automations/direct/cu/11/workflows/b3d2a68006a24662be2b721454cb4e00'
     '/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0'
     '&sig=5Sog2MThgCRTlk3HObv70LRmRk6u7IOwzlwMpe804qo')
+
+
+def env_bool(name, default):
+    return os.getenv(name, str(default)).strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
 @dataclass
@@ -30,6 +35,12 @@ class Settings:
     judge_concurrency: int = field(default_factory=lambda: int(os.getenv('JUDGE_CONCURRENCY', '8')))
     fake_delay: float = field(default_factory=lambda: float(os.getenv('FAKE_DELAY', '0.4')))
     auto_summarize: bool = field(default_factory=lambda: os.getenv('AUTO_SUMMARIZE', '1') == '1')
+    openrouter_api_key: str = field(default_factory=lambda: os.getenv('OPENROUTER_API_KEY', ''), repr=False)
+    stt_enabled: bool = field(default_factory=lambda: env_bool('STT_ENABLED', True))
+    stt_model: str = field(default_factory=lambda: os.getenv('STT_MODEL', 'elevenlabs/scribe-v2'))
+    stt_price_per_sec: float = field(default_factory=lambda: float(os.getenv('STT_PRICE_PER_SEC', '0.0000611')))
+    stt_concurrency: int = field(default_factory=lambda: int(os.getenv('STT_CONCURRENCY', '3')))
+    stt_keep_raw: bool = field(default_factory=lambda: env_bool('STT_KEEP_RAW', False))
     model_timeout: float = 90.0
 
     def __post_init__(self):
@@ -43,5 +54,9 @@ class Settings:
             raise ValueError('JUDGE_CONCURRENCY должен быть от 1 до 128')
         if self.fake_delay < 0:
             raise ValueError('FAKE_DELAY не может быть отрицательным')
+        if not 1 <= self.stt_concurrency <= 16:
+            raise ValueError('STT_CONCURRENCY должен быть от 1 до 16')
+        if not math.isfinite(self.stt_price_per_sec) or self.stt_price_per_sec < 0:
+            raise ValueError('STT_PRICE_PER_SEC должен быть конечным неотрицательным числом')
         path = Path(self.db_path)
         self.db_path = str(path if path.is_absolute() else BASE_DIR / path)

@@ -64,6 +64,15 @@ CREATE TABLE IF NOT EXISTS model_calls (
  id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, input_tokens INTEGER NOT NULL,
  output_tokens INTEGER NOT NULL, cost_usd REAL NOT NULL, calls INTEGER NOT NULL,
  latency_ms INTEGER NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS transcriptions (
+ conversation_id TEXT PRIMARY KEY REFERENCES conversations(id), transcript_hash TEXT NOT NULL,
+ status TEXT NOT NULL, step TEXT NOT NULL, progress REAL NOT NULL DEFAULT 0, error TEXT,
+ model TEXT NOT NULL, audio_seconds_declared REAL, audio_seconds_decoded REAL,
+ incomplete INTEGER NOT NULL DEFAULT 0, seconds_billed REAL NOT NULL DEFAULT 0,
+ cost_usd REAL NOT NULL DEFAULT 0, turns_json TEXT NOT NULL DEFAULT '[]',
+ speakers_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ generation INTEGER NOT NULL DEFAULT 1, audio_check TEXT NOT NULL DEFAULT 'pending');
+CREATE INDEX IF NOT EXISTS transcriptions_status ON transcriptions(status);
 '''
 
 

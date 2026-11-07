@@ -8,6 +8,13 @@ from app.main import create_app
 from app.settings import Settings
 
 
+@pytest.fixture(autouse=True)
+def no_live_stt(monkeypatch):
+    """Imports in ordinary tests must never submit paid transcription requests."""
+    monkeypatch.setenv('STT_ENABLED', 'false')
+    monkeypatch.setenv('OPENROUTER_API_KEY', '')
+
+
 @pytest.fixture
 def dev_payload():
     return json.loads((Path(__file__).parent / 'data' / 'dev.json').read_text(encoding='utf-8-sig'))
