@@ -154,6 +154,10 @@
     const cid = conv.conversation_id;
     const isCall = conv.channel === "voice call";
     let ev = cardContext.ev;
+    const evaluationSignature = (value) => value ? JSON.stringify([value.id, value.conversationId, value.checklistVersion,
+      value.transcriptHash, value.stale, value.status, value.total, value.originalTotal, value.grossFlagged,
+      value.sections, value.items, value.usage, value.durationSec, value.minutesAgo]) : null;
+    let renderedEvaluationSignature = null;
     const CL = () => (ev ? DA.checklist(ev.checklistVersion) : DA.activeChecklist());
     let openId = params.query.criterion || null;
     let running = !!ev && ["queued", "running"].includes(ev.status);
@@ -553,6 +557,7 @@
 
     function renderPanel(opts) {
       opts = opts || {};
+      renderedEvaluationSignature = evaluationSignature(ev);
       ai?.updateEvaluation(ev);
       panel.replaceChildren();
       critNodes.clear();
@@ -831,8 +836,19 @@
         renderPanel();
       } finally {
         operationPending = false;
-        if (!disposed) setHeadBusy(false);
+        if (!disposed) { setHeadBusy(false); syncExternalEvaluation(); }
       }
+    }
+    function syncExternalEvaluation() {
+      if (disposed || historyView || operationPending) return;
+      const next = DA.state.evaluations[cid];
+      if (!next || next.conversationId !== cid || !DA.checklist(next.checklistVersion)
+        || evaluationSignature(next) === renderedEvaluationSignature) return;
+      ev = next;
+      running = ["queued", "running"].includes(ev.status);
+      loadError = null;
+      renderPanel();
+      setHeadBusy(running);
     }
 
     /* ---------- Апелляция ---------- */
@@ -846,6 +862,8 @@
     }
 
     function appealDrawer(c, it, anchor) {
+      const evaluationId = ev.id;
+      const answerAtOpen = JSON.stringify([it.status, it.answer, it.explanation, it.naReason, it.evidence, it.checkedRange]);
       let proposed = null;
       let submitting = false;
       const err = h("div", { class: "da-error", hidden: true });
@@ -885,6 +903,11 @@
         submit.classList.add("is-busy");
         upd();
         try {
+          const current = DA.state.evaluations[cid], item = current?.items.find((value) => value.criterionId === c.id);
+          if (current?.id !== evaluationId || !item
+            || JSON.stringify([item.status, item.answer, item.explanation, item.naReason, item.evidence, item.checkedRange]) !== answerAtOpen) {
+            throw new DA.ApiError("stale_source", "Оценка изменилась. Откройте критерий заново", 409);
+          }
           await DA.data.createAppeal(cid, c.id, ta.value.trim(), proposed);
           d.close();
           if (disposed) return;
@@ -933,11 +956,12 @@
     if (isCall) loadTranscription(false);
     setHeadBusy(running);
     if (running) runEvaluation("resume");
+    const unsubscribeBulk = historyView ? null : DA.bulk?.subscribe(syncExternalEvaluation);
     if (params.query.turn) timers.push(setTimeout(() => jumpTo(+params.query.turn, "yes"), 200));
     if (openId) timers.push(setTimeout(() => { const n = critNodes.get(openId); n && n.scrollIntoView({ block: "nearest" }); }, 100));
     window.addEventListener("da:locale-changed", () => requestAnimationFrame(() => {
       if (!disposed && focused) focusCriterion(ev?.items.find((item) => item.criterionId === focused) || null);
     }), { signal: controller.signal });
-    return () => { disposed = true; controller.abort(); clearTimeout(sttTimer); player?.destroy(); ai?.dispose?.(); timers.forEach(clearTimeout); };
+    return () => { disposed = true; unsubscribeBulk?.(); controller.abort(); clearTimeout(sttTimer); player?.destroy(); ai?.dispose?.(); timers.forEach(clearTimeout); };
   };
 })();

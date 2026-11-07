@@ -423,7 +423,7 @@
         // The registry's latest evaluation IDs may have changed in another
         // browser. Refresh those pointers before following the accepted jobs.
         await DA.data.conversations({ refresh: true });
-        await DA.data.checklists();
+        await DA.data.checklists({ refresh: true });
       }
       for (const incoming of jobs) {
         if (restoringJobs.has(incoming.id)) continue;
