@@ -1000,7 +1000,12 @@
     const version = opts.checklistId || opts.checklistVersion;
     const cl = version != null ? versionBy(version) : null;
     if (version != null && !cl) throw failure("not_found", "Версия чек-листа не найдена");
-    const candidates = records.filter((conv) => !opts.groupId || (conv.datasetGroupId || conv.groupId || (window.DA_DEV.records.some((r) => r.conversation_id === conv.conversation_id) ? "DEV" : "UPLOAD")) === opts.groupId);
+    const candidates = records.filter((conv) => {
+      if (!opts.groupId) return true;
+      const groupId = conv.datasetGroupId || conv.groupId;
+      if (groupId || server()) return groupId === opts.groupId;
+      return (window.DA_DEV.records.some((r) => r.conversation_id === conv.conversation_id) ? "DEV" : "UPLOAD") === opts.groupId;
+    });
     const loaded = await mapLimit(candidates, async (conv) => {
       const all = await history(conv.conversation_id, { signal: opts.signal });
       return all.find((ev) => {

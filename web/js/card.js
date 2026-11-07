@@ -74,6 +74,8 @@
     "card.someUnfinished": { ru: "Часть критериев не оценена", kk: "Кейбір критерийлер бағаланбаған", en: "Some criteria have not been evaluated" },
     "card.evaluatedAgo": { ru: "Оценено {ago}", kk: "{ago} бағаланды", en: "Evaluated {ago}" },
     "card.evaluatedDuration": { ru: "Оценено {ago} за {seconds} с", kk: "{ago}, {seconds} с ішінде бағаланды", en: "Evaluated {ago} in {seconds}s" },
+    "card.evaluationCost": { ru: "Стоимость оценки: {cost}", kk: "Бағалау құны: {cost}", en: "Evaluation cost: {cost}" },
+    "card.evaluationUsage": { ru: "Запросы: {calls} · Токены на входе: {input} · На выходе: {output}", kk: "Сұраулар: {calls} · Кіріс токендері: {input} · Шығыс токендері: {output}", en: "Requests: {calls} · Input tokens: {input} · Output tokens: {output}" },
     "card.grossError": { ru: "Грубая ошибка", kk: "Өрескел қате", en: "Serious violation" },
     "card.naSubject": { ru: ({count}) => `${["", "Один", "Два", "Три", "Четыре"][count] || count} ${DA.fmt.plural(count, ["критерий к этому разговору не относится", "критерия к этому разговору не относятся", "критериев к этому разговору не относятся"])}`, kk: "Бұл диалогқа {count} критерий қолданылмайды", en: { one: "One criterion does not apply to this conversation", other: "{count} criteria do not apply to this conversation" } },
     "card.naAll": { ru: "{subject}. Применимых критериев с баллами нет.", kk: "{subject}. Ұпай берілетін қолданылатын критерийлер жоқ.", en: "{subject}. No scored criteria apply." },
@@ -92,7 +94,7 @@
     "card.changedDetail": { ru: "Проверяющий изменил оценку: было {before}, стало {after}", kk: "Тексеруші бағаны өзгертті: бұрын {before}, қазір {after}", en: "The reviewer changed the answer from {before} to {after}" },
     "card.confirmedDetail": { ru: "Проверяющий подтвердил оценку после рассмотрения апелляции", kk: "Тексеруші апелляцияны қарап, бағаны растады", en: "The reviewer confirmed the score after considering the appeal" },
     "card.needsReview": { ru: "Стоит проверить", kk: "Тексерген жөн", en: "Needs review" },
-    "card.needsReviewDetail": { ru: "Модель ответила по-разному при двух проверках, ответ стоит перепроверить", kk: "Модель екі тексеруде әртүрлі жауап берді, жауапты қайта тексерген жөн", en: "The model gave different answers on two checks. Review the answer." },
+    "card.needsReviewDetail": { ru: "Проверьте ответ модели по исходному диалогу", kk: "Модель жауабын бастапқы диалогпен салыстырып тексеріңіз", en: "Check the model's answer against the original conversation." },
     "card.criterionFailed": { ru: "Не удалось оценить этот критерий", kk: "Бұл критерийді бағалау мүмкін болмады", en: "Could not evaluate this criterion" },
     "card.whyNA": { ru: "Почему не применимо", kk: "Неліктен қолданылмайды", en: "Why it does not apply" },
     "card.speakerTime": { ru: "{speaker}, {time}", kk: "{speaker}, {time}", en: "{speaker}, {time}" },
@@ -594,7 +596,14 @@
         h("div", { class: "da-eval-meta" },
           h("span", {}, m("checklistVersion", { version: ev.checklistVersion })),
           ev.checklistVersion !== DA.activeChecklist().version ? h("span", {}, m("activeVersion", { version: DA.activeChecklist().version })) : null,
-          h("span", {}, running ? m("modelReading") : ev.status === "failed" ? m("someUnfinished") : m(ev.durationSec != null ? "evaluatedDuration" : "evaluatedAgo", () => ({ ago: DA.fmt.ago(ev.minutesAgo || 0), seconds: Math.max(1, Math.round(ev.durationSec)) }))))));
+          h("span", {}, running ? m("modelReading") : ev.status === "failed" ? m("someUnfinished") : m(ev.durationSec != null ? "evaluatedDuration" : "evaluatedAgo", () => ({ ago: DA.fmt.ago(ev.minutesAgo || 0), seconds: Math.max(1, Math.round(ev.durationSec)) }))),
+          DA.mode === "server" && Number.isFinite(ev.usage?.costUsd) && ev.usage.costUsd >= 0 ? h("span", { class: "da-eval-cost",
+            title: m("evaluationUsage", () => {
+              const count = (value) => Number.isFinite(value) && value >= 0 ? new Intl.NumberFormat(DA.fmt.locale()).format(value) : "—";
+              return { calls: count(ev.usage.calls), input: count(ev.usage.inputTokens), output: count(ev.usage.outputTokens) };
+            }) }, m("evaluationCost", () => ({ cost: new Intl.NumberFormat(DA.fmt.locale(), {
+              style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 6
+            }).format(ev.usage.costUsd) }))) : null)));
 
       if (ev.grossFlagged) {
         const g = ev.items.find((i) => DA.criterionById(CL(), i.criterionId).type === "flag");

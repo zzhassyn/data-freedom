@@ -71,10 +71,11 @@
     function retryButton(callback) { return h("button", { class: "da-btn is-text is-sm", type: "button", onclick: callback }, DA.icon("refresh", 14), msg("retry")); }
 
     function renderSummary() {
-      summary.removeAttribute("aria-busy");
+      if (summaryPending) summary.setAttribute("aria-busy", "true");
+      else summary.removeAttribute("aria-busy");
       summary.classList.toggle("is-collapsed", collapsed);
       const fields = [["topic", summaryData.topic], ["request", summaryData.request], ["outcome", summaryData.outcome]];
-      const list = h("dl", { class: "cai-summary-lines" }, fields.slice(0, collapsed ? 1 : 3).map(([label, value]) => [h("dt", {}, msg(label)), h("dd", {}, value)]));
+      const list = h("dl", { class: "cai-summary-lines" }, fields.slice(0, collapsed ? 1 : 3).map(([label, value]) => [h("dt", {}, msg(label)), h("dd", { "data-summary-field": label }, value || "")]));
       const toggle = h("button", { class: "cai-summary-toggle", type: "button", "aria-expanded": String(!collapsed),
         "aria-label": msg(collapsed ? "summaryExpand" : "summaryCollapse"), onclick: () => {
           collapsed = !collapsed;
@@ -89,16 +90,31 @@
       if (summaryPending || !validSource()) return;
       const request = ++summaryRequest;
       summaryPending = true;
+      summaryData = null;
       summary.classList.remove("is-collapsed");
       summary.setAttribute("aria-busy", "true");
       summary.replaceChildren(h("span", { class: "da-sr", role: "status" }, msg("summaryLoading")),
         h("dl", { class: "cai-summary-lines", "aria-hidden": "true" }, ["topic", "request", "outcome"].map((label, index) => [
           h("dt", {}, msg(label)), h("dd", {}, h("span", { class: "da-skel", style: { width: ["92%", "78%", "86%"][index] } }))])));
       try {
-        const data = await DA.api.getSummary(cid, { signal: controller.signal, refresh: !!refresh });
+        const data = await DA.api.getSummary(cid, { signal: controller.signal, refresh: !!refresh, onProgress: (event) => {
+          if (event.type !== "partial" || request !== summaryRequest || !validSource() || !event.value) return;
+          const partial = {};
+          ["topic", "request", "outcome"].forEach((field) => {
+            if (typeof event.value[field] === "string") partial[field] = event.value[field];
+          });
+          if (!Object.keys(partial).length) return;
+          if (!summaryData) { summaryData = { topic: "", request: "", outcome: "", operatorName: null }; renderSummary(); }
+          Object.assign(summaryData, partial);
+          summary.querySelectorAll("[data-summary-field]").forEach((node) => {
+            node.textContent = summaryData[node.dataset.summaryField];
+          });
+          layoutChanged();
+        } });
         if (request !== summaryRequest || !validSource()) return;
         if (!["topic", "request", "outcome"].every((field) => typeof data[field] === "string")) throw new Error("invalid_summary");
         summaryData = data;
+        summaryPending = false;
         renderSummary();
       } catch (error) {
         if (abortError(error) || request !== summaryRequest || !validSource()) return;
@@ -225,8 +241,31 @@
       const abort = () => request.abort();
       controller.signal.addEventListener("abort", abort, { once: true });
       coaching.hidden = true; coaching.replaceChildren();
+      const previews = new Map();
+      const criteria = new Map((DA.checklist(evaluation.checklistVersion)?.criteria || []).map((item) => [item.id, item]));
+      let previewList = null;
       try {
-        const result = await DA.api.getCoaching(evaluation.id, { signal: request.signal, refresh: !!refresh });
+        const result = await DA.api.getCoaching(evaluation.id, { signal: request.signal, refresh: !!refresh, onProgress: (event) => {
+          if (event.type !== "partial" || request.signal.aborted || !validEvaluation(key) || !Array.isArray(event.value?.tips)) return;
+          event.value.tips.forEach((tip) => {
+            const criterion = criteria.get(tip.criterionId);
+            if (!criterion || (typeof tip.tip !== "string" && typeof tip.example !== "string")) return;
+            if (!previewList) {
+              previewList = h("div", { class: "cai-tips" });
+              coaching.replaceChildren(h("h3", {}, msg("coachingTitle")), previewList);
+              coaching.hidden = false; coaching.setAttribute("aria-busy", "true");
+            }
+            let nodes = previews.get(tip.criterionId);
+            if (!nodes) {
+              const body = h("p", { class: "cai-tip-text" });
+              const example = h("p", {}), box = h("div", { class: "cai-example", style: { display: "none" } }, example);
+              const article = h("article", { class: "cai-tip" }, h("p", { class: "cai-tip-criterion" }, criterion.title), body, box);
+              previewList.append(article); nodes = { body, example, box }; previews.set(tip.criterionId, nodes);
+            }
+            if (typeof tip.tip === "string") nodes.body.textContent = tip.tip;
+            if (typeof tip.example === "string") { nodes.example.textContent = tip.example; nodes.box.style.display = tip.example ? "" : "none"; }
+          });
+        } });
         if (request.signal.aborted || !validEvaluation(key)) return;
         if (!Array.isArray(result.tips) || result.tips.some((tip) => typeof tip.tip !== "string" || typeof tip.example !== "string")) throw new Error("invalid_coaching");
         renderCoaching(result.tips, evaluation);
@@ -234,7 +273,7 @@
         if (abortError(error) || request.signal.aborted || !validEvaluation(key)) return;
         coaching.hidden = false;
         coaching.replaceChildren(h("div", { class: "cai-error", role: "status" }, h("span", {}, msg("coachingError")), retryButton(() => loadCoaching(activeEvaluation, key, true))));
-      } finally { controller.signal.removeEventListener("abort", abort); }
+      } finally { if (coachingRequest === request) coaching.removeAttribute("aria-busy"); controller.signal.removeEventListener("abort", abort); }
     }
     function updateEvaluation(evaluation) {
       const nextKey = evaluationKey(evaluation);

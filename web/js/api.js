@@ -93,18 +93,23 @@
       });
       if (opts.onProgress && response.ok && (response.headers.get("content-type") || "").includes("ndjson")) {
         const reader = response.body.getReader(), decoder = new TextDecoder();
-        let pending = "", result;
+        let pending = "", result, completed = false;
         const receive = (line) => {
           if (!line.trim()) return;
-          const step = JSON.parse(line);
-          if (step.stage === "error") throw new ApiError(step.error.code, step.error.message, response.status);
+          let step;
+          try { step = JSON.parse(line); }
+          catch (_) { throw new ApiError("invalid_response", "Не удалось прочитать поток ответа сервера", response.status); }
+          const stage = step.type || step.stage;
+          if (stage === "error") throw new ApiError(step.error?.code || "model_failed", step.error?.message || "Модель не ответила", response.status);
+          if (completed) throw new ApiError("invalid_response", "Сервер продолжил завершённый ответ", response.status);
           opts.onProgress(step);
-          if (step.stage === "done") result = step.result;
+          if (stage === "done") { result = step.result; completed = true; }
         };
         try {
           while (true) {
             const chunk = await reader.read();
             pending += decoder.decode(chunk.value, { stream: !chunk.done });
+            if (pending.length > 1000000) throw new ApiError("invalid_response", "Ответ сервера слишком большой", response.status);
             const lines = pending.split("\n");
             pending = lines.pop();
             lines.forEach(receive);
@@ -113,7 +118,10 @@
           receive(pending);
           if (result === undefined) throw new ApiError("interrupted", "Загрузка прервалась. Проверьте список обращений и повторите синхронизацию", 0);
           return result;
-        } finally { reader.releaseLock(); }
+        } finally {
+          if (!completed) { try { await reader.cancel(); } catch (_) { /* Поток уже мог закрыться. */ } }
+          reader.releaseLock();
+        }
       }
       let body;
       try { body = await response.json(); }
@@ -132,17 +140,19 @@
   const get = (path, values, options) => request(path + query(values), options);
   const post = (path, body, options) => request(path, { ...options, method: "POST", body: body || {} });
   const aiOptions = (options) => ({ ...options, timeout: options?.timeout ?? 120000 });
-  const aiGet = (path, options) => get(path, { refresh: options?.refresh }, aiOptions(options));
+  const aiGet = (path, options) => get(path, { refresh: options?.refresh, stream: options?.onProgress ? true : undefined }, aiOptions(options));
   let detected;
   DA.mode = "local";
   DA.api = {
     request,
     detect() {
-      if (!detected) detected = request("/health", { timeout: 2000 }).then((health) => {
-        DA.health = health;
-        DA.mode = health.ok === true ? "server" : "local";
-        return DA.mode;
-      }, () => (DA.mode = "local")).then((mode) => {
+      if (!detected) detected = (window.location?.protocol === "file:" ? Promise.resolve("local")
+        : request("/health", { timeout: 2000 }).then((health) => {
+          DA.health = health;
+          return health?.ok === false ? "local" : "server";
+        }, (error) => [404, 405].includes(error.status) ? "local" : "server")).then((mode) => {
+        // A failed server health check must never expose the browser's demo data.
+        DA.mode = mode;
         DA.backendAvailable = mode === "server";
         return mode;
       });
