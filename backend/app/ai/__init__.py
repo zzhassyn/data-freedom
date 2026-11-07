@@ -1,5 +1,9 @@
-"""AI integration point: replace these exports with the ML team's functions."""
+"""Real AI entry point; explicit fake mode imports app.ai.fake directly."""
 
-from .fake import IS_FAKE, coach, suggest_criterion, summarize, translate
+from .openrouter import (
+    IS_FAKE, cache_identity, coach, coach_stream, configure, second_opinion,
+    suggest_criterion, summarize, summarize_stream,
+)
 
-__all__ = ["summarize", "translate", "coach", "suggest_criterion"]
+__all__ = ["summarize", "summarize_stream", "coach", "coach_stream", "suggest_criterion",
+           "second_opinion", "configure", "cache_identity"]

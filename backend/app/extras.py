@@ -1,11 +1,14 @@
 """Cached AI operations with source checks and isolated provider adapters."""
 import asyncio
+from contextlib import aclosing
 import hashlib
+import json
 import logging
 import time
 from typing import Literal
 
 from fastapi import APIRouter, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import Field, ValidationError
 
 from . import llm_switch, translation_service
@@ -30,16 +33,45 @@ def _conversation_hash(conversation):
     return conversation.get("transcriptHash") or _digest(conversation["transcript"])
 
 
-def _cached_result(db, kind, key, source_hash):
+def _provider_identity(kind):
+    module = llm_switch.get_judge() if kind == "trial" else llm_switch.get_ai()
+    identity = getattr(module, "cache_identity", None)
+    return identity() if identity else getattr(module, "__name__", type(module).__name__)
+
+
+def _cache_identity(app, kind):
+    if kind == "translation" and app.state.settings.openrouter_api_key:
+        return "openrouter:translation:" + app.state.settings.translation_model
+    return _provider_identity(kind)
+
+
+def _cached_result(db, kind, key, source_hash, identity):
     cached = db.get_cache(kind, key)
-    if cached and cached["body"].get("sourceHash") == source_hash:
+    if (cached and cached["body"].get("sourceHash") == source_hash
+            and cached["body"].get("providerIdentity") == identity):
         return cached["body"]["result"]
     return None
 
 
 def get_cached_summary(db, conversation):
     """Read a current summary without invoking any provider."""
-    return _cached_result(db, "summary", conversation["id"], _conversation_hash(conversation))
+    try:
+        identity = _provider_identity("summary")
+    except JudgeError:
+        return None
+    return _cached_result(db, "summary", conversation["id"], _conversation_hash(conversation), identity)
+
+
+def visible_appeal(appeal):
+    """Old provider opinions remain in history storage, never masquerade as current AI."""
+    result = {key: value for key, value in appeal.items() if not key.startswith("_")}
+    try:
+        current = _provider_identity("second-opinion")
+    except JudgeError:
+        current = None
+    if not current or appeal.get("_secondOpinionIdentity") != current:
+        result["secondOpinion"] = None
+    return result
 
 
 def _usage(value):
@@ -62,6 +94,10 @@ async def _call(app, function, *args, priority=0):
         app.state.db.record_usage(usage, latency_ms=int((time.monotonic() - started) * 1000), kind="extra")
         return result, usage
     except JudgeError as exc:
+        billed = getattr(exc, "usage", None)
+        if billed is not None:
+            app.state.db.record_usage(Usage.model_validate(billed),
+                latency_ms=int((time.monotonic() - started) * 1000), kind="extra")
         raise ApiError("model_failed", f"Модель не ответила: {exc}. Повторите через минуту", 502) from exc
     except asyncio.TimeoutError as exc:
         raise ApiError("model_failed", "Модель не ответила за 90 секунд. Повторите через минуту", 502) from exc
@@ -78,24 +114,98 @@ def _validate(model, result):
         raise ApiError("model_failed", "Модель вернула некорректный ответ. Повторите через минуту", 502) from exc
 
 
-async def _cached(app, kind, key, source_hash, producer, is_current, refresh=False):
-    """Serialize identical requests and refuse to persist results for changed input."""
-    db = app.state.db
+def _cache_lock(app, kind, key):
     locks = getattr(app.state, "ai_locks", None)
     if locks is None:
         app.state.ai_locks = locks = {}
-    lock = locks.setdefault((kind, key), asyncio.Lock())
-    async with lock:
+    return locks.setdefault((kind, key), asyncio.Lock())
+
+
+async def _cached(app, kind, key, source_hash, producer, is_current, refresh=False):
+    """Serialize identical requests and refuse to persist results for changed input."""
+    db = app.state.db
+    try:
+        identity = _cache_identity(app, kind)
+    except JudgeError as exc:
+        raise ApiError("model_unavailable", str(exc), 503) from exc
+    async with _cache_lock(app, kind, key):
         if not is_current():
             raise ApiError("stale_source", "Данные изменились. Повторите запрос", 409)
-        cached = _cached_result(db, kind, key, source_hash)
+        cached = _cached_result(db, kind, key, source_hash, identity)
         if cached is not None and not refresh:
             return cached
         result, usage = await producer()
-        if not is_current():
+        if not is_current() or _cache_identity(app, kind) != identity:
             raise ApiError("stale_source", "Данные изменились во время обработки. Повторите запрос", 409)
-        db.set_cache(kind, key, {"sourceHash": source_hash, "result": result}, usage)
+        db.set_cache(kind, key, {"sourceHash": source_hash, "providerIdentity": identity, "result": result}, usage)
         return result
+
+
+def _stream_cached(app, kind, key, source_hash, factory, serialize, is_current, refresh=False):
+    """One bounded model call; partials stream immediately, only validated results persist."""
+    try:
+        identity = _cache_identity(app, kind)
+    except JudgeError as exc:
+        raise ApiError("model_unavailable", str(exc), 503) from exc
+    settings = app.state.settings
+    if settings.judge == "openrouter" and not (settings.openrouter_api_key and (settings.ai_model or settings.judge_model)):
+        raise ApiError("model_unavailable", "Укажите ключ OpenRouter и модель в настройках сервера", 503)
+    if not is_current():
+        raise ApiError("stale_source", "Данные изменились. Повторите запрос", 409)
+
+    async def events():
+        messages = asyncio.Queue(maxsize=32)
+
+        async def consume():
+            async with aclosing(factory()) as upstream:
+                async for event in upstream:
+                    if event.get("type") == "partial":
+                        if not is_current():
+                            raise ApiError("stale_source", "Данные изменились во время обработки. Повторите запрос", 409)
+                        await messages.put({"type": "partial", "value": event["value"]})
+                    elif event.get("type") == "done":
+                        return event["result"], event["usage"]
+            raise JudgeError("Поток ответа прервался до завершения")
+
+        async def produce():
+            try:
+                async with _cache_lock(app, kind, key):
+                    if not is_current():
+                        raise ApiError("stale_source", "Данные изменились. Повторите запрос", 409)
+                    result = _cached_result(app.state.db, kind, key, source_hash, identity)
+                    if result is not None and not refresh:
+                        await messages.put({"type": "done", "result": result})
+                        return
+                    pair, usage = await _call(app, consume)
+                    result = serialize(pair[0])
+                    if not is_current() or _cache_identity(app, kind) != identity:
+                        raise ApiError("stale_source", "Данные изменились во время обработки. Повторите запрос", 409)
+                    app.state.db.set_cache(kind, key,
+                        {"sourceHash": source_hash, "providerIdentity": identity, "result": result}, usage)
+                    await messages.put({"type": "done", "result": result})
+            except ApiError as exc:
+                await messages.put({"type": "error", "error": {"code": exc.code, "message": exc.message}})
+            except Exception:
+                logger.exception("AI stream failed")
+                await messages.put({"type": "error", "error": {"code": "model_failed",
+                    "message": "Не удалось получить ответ модели. Повторите через минуту"}})
+
+        task = asyncio.create_task(produce())
+        app.state.background_tasks.add(task)
+        try:
+            while True:
+                event = await messages.get()
+                yield json.dumps(event, ensure_ascii=False, allow_nan=False) + "\n"
+                if event["type"] in {"done", "error"}:
+                    break
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            app.state.background_tasks.discard(task)
+
+    return StreamingResponse(events(), media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 
 async def _summary(app, conversation_id, refresh=False, priority=0):
@@ -125,8 +235,28 @@ async def prefetch_summaries(app, conversation_ids):
 
 
 @router.get("/conversations/{conversation_id}/summary")
-async def summary(conversation_id: str, request: Request, refresh: bool = False):
+async def summary(conversation_id: str, request: Request, refresh: bool = False, stream: bool = False):
+    if stream:
+        app = request.app
+        conversation = app.state.db.get_conversation(conversation_id)
+        source_hash = _conversation_hash(conversation)
+        try:
+            module = llm_switch.get_ai()
+        except JudgeError as exc:
+            raise ApiError("model_unavailable", str(exc), 503) from exc
+        source = Conversation.model_validate(conversation)
+        factory = (lambda: module.summarize_stream(source)) if hasattr(module, "summarize_stream") else (
+            lambda: _completed_stream(module.summarize, source))
+        return _stream_cached(app, "summary", conversation_id, source_hash, factory,
+            lambda value: _validate(Summary, value).model_dump(by_alias=True, exclude={"usage"}),
+            lambda: _conversation_hash(app.state.db.get_conversation(conversation_id)) == source_hash, refresh)
     return await _summary(request.app, conversation_id, refresh)
+
+
+async def _completed_stream(function, *args):
+    """Explicit fake/legacy adapters may produce one terminal value without fake deltas."""
+    result = await function(*args)
+    yield {"type": "done", "result": result, "usage": _usage(result)}
 
 
 def _translation_input(app, conversation, source_name):
@@ -159,7 +289,7 @@ async def translation(conversation_id: str, request: Request, refresh: bool = Fa
     if conversation["language"] == target_language:
         return {"turns": [{"idx": turn.idx, "text": turn.text} for turn in source.transcript], **metadata}
     settings = app.state.settings
-    if not settings.openrouter_api_key and (target_language != "RU" or source_name != "canonical"):
+    if not settings.openrouter_api_key and (settings.judge != "fake" or target_language != "RU" or source_name != "canonical"):
         raise ApiError("translation_unavailable", "Перевод на этот язык пока недоступен", 503)
 
     async def produce():
@@ -184,7 +314,7 @@ async def translation(conversation_id: str, request: Request, refresh: bool = Fa
             raise ApiError("model_failed", f"Некорректный перевод: {exc}. Повторите через минуту", 502) from exc
         return {"turns": translated, **metadata}, usage
 
-    key = _digest([conversation_id, source_name, source_hash, target_language])
+    key = _digest([conversation_id, source_name, source_hash, target_language, _cache_identity(app, "translation")])
     tasks = getattr(app.state, "translation_tasks", None)
     if tasks is None:
         app.state.translation_tasks = tasks = {}
@@ -236,7 +366,7 @@ def _evaluation_hash(evaluation):
 
 
 @router.get("/evaluations/{evaluation_id}/coaching")
-async def coaching(evaluation_id: str, request: Request, refresh: bool = False):
+async def coaching(evaluation_id: str, request: Request, refresh: bool = False, stream: bool = False):
     db = request.app.state.db
     evaluation = db.get_evaluation(evaluation_id)
     if evaluation["status"] != "done":
@@ -247,23 +377,42 @@ async def coaching(evaluation_id: str, request: Request, refresh: bool = False):
     checklist = db.get_checklist(evaluation["checklistId"])
     criteria = {criterion["id"]: criterion for criterion in checklist["criteria"]}
     source_hash = _evaluation_hash(evaluation)
+    pairs = [(Criterion.model_validate(criteria[item["criterionId"]]),
+              _judge_result(item, evaluation["model"])) for item in evaluation["items"]]
+    weak = {criterion.id for criterion, result in pairs
+            if (criterion.type == "binary" and result.answer == "no")
+            or (criterion.type == "scale" and isinstance(result.answer, (int, float))
+                and result.answer < max(step.value for step in criterion.scale))}
 
-    async def produce():
-        pairs = [(Criterion.model_validate(criteria[item["criterionId"]]),
-                  _judge_result(item, evaluation["model"])) for item in evaluation["items"]]
-        result, usage = await _call(request.app, llm_switch.get_ai().coach,
-                                    Conversation.model_validate(conversation), pairs)
+    def serialize(result):
         if not isinstance(result, list):
             raise ApiError("model_failed", "Модель вернула некорректные советы. Повторите через минуту", 502)
         tips = [_validate(Tip, tip).model_dump(by_alias=True) for tip in result]
-        if any(tip["criterionId"] not in criteria for tip in tips):
-            raise ApiError("model_failed", "Совет ссылается на неизвестный критерий. Повторите через минуту", 502)
-        return {"tips": tips}, usage
+        if any(tip["criterionId"] not in weak for tip in tips):
+            raise ApiError("model_failed", "Совет ссылается на критерий без замечаний. Повторите через минуту", 502)
+        return {"tips": tips}
+
+    def is_current():
+        return (_evaluation_hash(db.get_evaluation(evaluation_id)) == source_hash
+                and _conversation_hash(db.get_conversation(conversation["id"])) == _conversation_hash(conversation))
+
+    if stream:
+        try:
+            module = llm_switch.get_ai()
+        except JudgeError as exc:
+            raise ApiError("model_unavailable", str(exc), 503) from exc
+        source = Conversation.model_validate(conversation)
+        factory = (lambda: module.coach_stream(source, pairs)) if hasattr(module, "coach_stream") else (
+            lambda: _completed_stream(module.coach, source, pairs))
+        return _stream_cached(request.app, "coaching", evaluation_id, source_hash, factory, serialize, is_current, refresh)
+
+    async def produce():
+        result, usage = await _call(request.app, llm_switch.get_ai().coach,
+                                    Conversation.model_validate(conversation), pairs)
+        return serialize(result), usage
 
     return await _cached(request.app, "coaching", evaluation_id, source_hash, produce,
-                         lambda: _evaluation_hash(db.get_evaluation(evaluation_id)) == source_hash
-                         and _conversation_hash(db.get_conversation(conversation["id"])) == _conversation_hash(conversation),
-                         refresh)
+                         is_current, refresh)
 
 
 class TryRequest(ApiModel):
@@ -284,7 +433,7 @@ def _trial_criterion(db, draft):
 
 def _validate_evidence(result, conversation, criterion):
     try:
-        validate_answer(criterion, result.answer)
+        validate_answer(criterion, result.answer, conversation)
     except ApiError as exc:
         raise ApiError("model_failed", "Модель вернула недопустимый ответ для критерия", 502) from exc
     turns = {turn["idx"]: turn for turn in conversation["transcript"]}
@@ -381,6 +530,7 @@ async def second_opinion(appeal_id: str, request: Request, refresh: bool = False
     original = _judge_result(item, evaluation["model"], original=True)
     source_hash = _digest([_conversation_hash(conversation), criterion["hash"],
                            original.model_dump(by_alias=True), appeal["comment"]])
+    identity = _provider_identity("second-opinion")
 
     async def produce():
         result, usage = await _call(request.app, llm_switch.get_judge().second_opinion,
@@ -397,5 +547,6 @@ async def second_opinion(appeal_id: str, request: Request, refresh: bool = False
     with db.transaction() as conn:
         current = db.get_appeal(appeal_id, conn)
         current["secondOpinion"] = result
+        current["_secondOpinionIdentity"] = identity
         db.save_appeal(current, conn)
     return result

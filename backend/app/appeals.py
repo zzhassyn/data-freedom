@@ -7,6 +7,7 @@ from fastapi import APIRouter, Body, Request
 from .db import utcnow
 from .errors import ApiError
 from .evaluations import public_evaluation, source_conversation
+from .extras import visible_appeal
 from .scoring import score_evaluation, validate_answer
 
 
@@ -55,7 +56,7 @@ async def create_appeal(request: Request, body: dict = Body(...)):
         if item["status"] != "done" or item.get("answer") is None:
             raise ApiError("evaluation_not_ready", "Критерий ещё не оценён", 409)
         if proposed is not None:
-            validate_answer(criterion, proposed)
+            validate_answer(criterion, proposed, source_conversation(db, evaluation, conn))
         if any(
             appeal["evaluationId"] == evaluation_id
             and appeal["criterionId"] == criterion_id
@@ -116,7 +117,7 @@ async def list_appeals(request: Request, status: str = "open"):
             conversation = source_conversation(db, evaluation, conn)
             items.append(
                 {
-                    **appeal,
+                    **visible_appeal(appeal),
                     "criterionTitle": criterion["title"],
                     "conversationLanguage": conversation["language"],
                     "channel": conversation["channel"],
@@ -133,7 +134,7 @@ async def get_appeal(request: Request, appeal_id: str):
         evaluation = db.get_evaluation(appeal["evaluationId"], conn)
         _, criterion, _ = _criterion_and_item(db, evaluation, appeal["criterionId"], conn)
         conversation = source_conversation(db, evaluation, conn)
-    return {**appeal, "evaluation": public_evaluation(evaluation), "conversation": conversation, "criterion": criterion}
+    return {**visible_appeal(appeal), "evaluation": public_evaluation(evaluation), "conversation": conversation, "criterion": criterion}
 
 
 @router.post("/appeals/{appeal_id}/decision")
@@ -156,7 +157,7 @@ async def decide_appeal(request: Request, appeal_id: str, body: dict = Body(...)
         checklist, criterion, item = _criterion_and_item(db, evaluation, appeal["criterionId"], conn)
         new_answer = body.get("newAnswer") if action == "change" else None
         if action == "change":
-            validate_answer(criterion, new_answer)
+            validate_answer(criterion, new_answer, source_conversation(db, evaluation, conn))
             if item.get("original") is None:
                 item["original"] = {
                     "answer": item["answer"],
@@ -180,4 +181,4 @@ async def decide_appeal(request: Request, appeal_id: str, body: dict = Body(...)
             "decidedAt": utcnow(),
         }
         db.save_appeal(appeal, conn)
-    return {"appeal": appeal, "evaluation": public_evaluation(evaluation)}
+    return {"appeal": visible_appeal(appeal), "evaluation": public_evaluation(evaluation)}
