@@ -102,6 +102,32 @@
 .rv-comment::after { content: close-quote; }
 .rv-warn { display: flex; align-items: center; gap: 6px; font-size: 13px !important; color: var(--da-partial-ink); }
 
+/* Повторное мнение остаётся рядом с исходной оценкой и комментарием аналитика. */
+.rv-opinion { gap: 12px; }
+.rv-opinion-request { justify-self: start; height: auto; min-height: 40px; padding-top: 9px; padding-bottom: 9px; white-space: normal; text-align: left; }
+.rv-opinion-request .da-icon { flex: none; }
+.rv-opinion-pending { min-height: 40px; color: var(--da-text-2); font-size: 14px !important; line-height: 1.5; }
+.rv-opinion-pending::before { flex: 0 0 14px; width: 14px; height: 14px; border-color: var(--da-brand); border-right-color: transparent; }
+.rv-opinion-error { font-size: 14px !important; line-height: 1.5; }
+.rv-opinion-verdict { color: var(--da-text-2); font-size: 14px; }
+.rv-opinion-verdict.is-agree { color: var(--da-yes-ink); }
+.rv-opinion-explanation { font-size: 15px; line-height: 1.5; }
+.rv-opinion-evidence { display: grid; gap: 8px; min-width: 0; }
+.rv-opinion-evidence:empty { display: none; }
+.rv-opinion-quote { display: grid; gap: 8px; width: 100%; min-width: 0; padding: 12px 14px; border: 1px solid var(--da-line); border-radius: var(--da-r-control); background: var(--da-surface-2); text-align: left; transition: background var(--da-fast), border-color var(--da-fast), transform 90ms var(--da-ease); }
+.rv-opinion-quote:hover { border-color: var(--da-brand); background: var(--da-brand-soft); }
+.rv-opinion-quote:active { transform: scale(.985); }
+.rv-opinion-quote-text { font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.rv-opinion-quote-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; color: var(--da-text-2); font-size: 12px; }
+.rv-opinion-quote-meta > span { display: inline-flex; align-items: center; gap: 4px; color: var(--da-brand-press); }
+.rv-opinion-focus .da-bubble { animation: rv-opinion-flash 800ms var(--da-ease); }
+.rv-turns .rv-opinion-focus:focus { outline: 2px solid var(--lit); outline-offset: 4px; border-radius: var(--da-r-control); }
+@keyframes rv-opinion-flash { from { box-shadow: 0 0 0 4px var(--lit-soft); } }
+@media (prefers-reduced-motion: reduce) {
+  .rv-opinion-focus .da-bubble, .rv-opinion-pending::before { animation: none; }
+  .rv-opinion-quote { transition-duration: 1ms; }
+}
+
 /* ---------- Решение ---------- */
 .rv-decide {
   display: grid; gap: 16px; padding: 20px; border-radius: var(--da-r-panel);
@@ -225,6 +251,7 @@
 @media (max-width: 760px) {
   .rv-h1 { font-size: 26px; }
   .rv-panel, .rv-side, .rv-decide { padding: 16px; }
+  .rv-dispute { padding: 0; }
   .rv-options { grid-template-columns: 1fr 1fr; gap: 8px; }
   .rv-option { grid-template-columns: 1fr; gap: 8px; }
   .rv-option-text small { display: none; }

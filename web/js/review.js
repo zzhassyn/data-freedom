@@ -41,7 +41,7 @@
     if (!anchors.length && item.checkedRange) anchors.push(item.checkedRange.fromIdx, item.checkedRange.toIdx);
     const shown = new Set();
     for (const k of anchors) for (let j = k - AROUND; j <= k + AROUND; j++) if (j >= 0 && j < t.length) shown.add(j);
-    let full = false;
+    let full = false, opinionFocus = null;
 
     const box = h("div", { class: "da-turns rv-turns" });
     const toggle = h("button", { class: "da-btn is-sm", type: "button", onclick: () => { full = !full; render(true); } });
@@ -55,15 +55,15 @@
       return [text.slice(0, k), h("mark", { class: "rv-mark" }, quote), text.slice(k + quote.length)];
     }
     function turnNode(i) {
-      const turn = t[i], ev = evidence.get(i);
+      const turn = t[i], ev = evidence.get(i), focused = opinionFocus?.index === i;
       let node;
       if (turn.speaker === "system") {
         const kind = DA.tx.systemKind(turn.text);
         const ic = { verified: "check", escalate: "escalate", closed: "x", hold: "pause" }[kind];
         node = h("div", { class: `da-sys k-${kind}` }, h("span", {}, ic ? DA.icon(ic) : null, h("span", {}, turn.text), h("time", {}, DA.tx.clock(turn.timestamp))));
       } else {
-        const long = turn.speaker === "bot" && turn.text.length > 220 && !ev;
-        const bubble = h("div", { class: "da-bubble" + (long ? " is-clamped" : "") }, bubbleText(turn.text, ev && ev.quote));
+        const long = turn.speaker === "bot" && turn.text.length > 220 && !ev && !focused;
+        const bubble = h("div", { class: "da-bubble" + (long ? " is-clamped" : "") }, bubbleText(turn.text, focused ? opinionFocus.quote : ev && ev.quote));
         node = h("div", { class: `da-turn r-${turn.speaker}` },
           h("div", { class: "da-turn-meta" },
             h("b", {}, DA.speakerLabel[turn.speaker]), h("time", {}, DA.tx.clock(turn.timestamp)),
@@ -73,6 +73,9 @@
           long ? h("button", { class: "da-more", type: "button", onclick: (e) => { bubble.classList.toggle("is-clamped"); e.target.textContent = bubble.classList.contains("is-clamped") ? "Показать полностью" : "Свернуть"; } }, "Показать полностью") : null);
       }
       if (ev) { node.classList.add("is-lit"); paint(node, tone); }
+      node.dataset.turnIdx = turn.idx ?? i;
+      node.setAttribute("tabindex", "-1");
+      if (focused) { node.classList.add("is-lit", "rv-opinion-focus"); paint(node, opinionFocus.tone); }
       return node;
     }
     function skipNode(from, to) {
@@ -103,9 +106,22 @@
       toggle.setAttribute("aria-expanded", String(full));
     }
     render(false);
-    return h("section", { class: "rv-panel rv-dialog", "aria-label": "Фрагмент диалога" },
+    const panel = h("section", { class: "rv-panel rv-dialog", "aria-label": "Фрагмент диалога" },
       h("div", { class: "rv-panel-head" }, h("h2", { class: "rv-h2" }, "Фрагмент диалога"), h("div", { class: "rv-panel-actions" }, listen, toggle)),
       box);
+    /* Ссылка повторного мнения раскрывает нужный участок того же снимка диалога. */
+    panel.jumpTo = function (entry, nextTone) {
+      const index = t.findIndex((turn, i) => (turn.idx ?? i) === entry.turnIdx);
+      if (index < 0) return;
+      opinionFocus = { index, quote: entry.quote, tone: nextTone };
+      for (let i = Math.max(0, index - AROUND); i <= Math.min(t.length - 1, index + AROUND); i++) shown.add(i);
+      render(false);
+      const target = [...box.querySelectorAll("[data-turn-idx]")].find((node) => Number(node.dataset.turnIdx) === entry.turnIdx);
+      if (!target) return;
+      target.scrollIntoView({ block: "center", behavior: reduced() ? "auto" : "smooth" });
+      target.focus({ preventScroll: true });
+    };
+    return panel;
   }
 
   /* ---------- Правило критерия ---------- */
@@ -137,6 +153,56 @@
         appeal.proposedAnswer != null ? h("div", { class: "rv-answer" }, h("span", { class: "da-small da-muted" }, "Предлагает"), DA.answerPill(appeal.proposedAnswer, c)) : null,
         h("p", { class: "rv-comment" }, appeal.comment),
         h("span", { class: "da-small da-muted" }, `Подана ${DA.fmt.dateTime(appeal.createdAt).toLowerCase()}`)));
+  }
+
+  /* Повторная проверка помогает человеку выбрать ответ, но не принимает решение. */
+  function secondOpinionBlock(appeal, c, conv, hooks) {
+    if (!DA.backendAvailable || (appeal.status !== "open" && !appeal.secondOpinion)) return null;
+    const node = h("section", { class: "rv-side rv-opinion", "aria-label": "Повторная проверка" });
+    const controller = new AbortController();
+    let opinion = appeal.secondOpinion || null, busy = false, disposed = false, error = "", returnFocus = false;
+    function render() {
+      node.setAttribute("aria-busy", String(busy));
+      if (busy) {
+        node.replaceChildren(h("p", { class: "da-thinking rv-opinion-pending", role: "status" }, "Модель перечитывает разговор с учётом комментария"));
+        return;
+      }
+      if (!opinion) {
+        const button = h("button", { class: "da-btn is-sm rv-opinion-request", type: "button", onclick: request }, DA.icon("refresh", 16), error ? "Повторить перепроверку" : "Попросить модель перепроверить");
+        node.replaceChildren(...[error ? h("p", { class: "da-error rv-opinion-error", role: "alert" }, error) : null, button].filter(Boolean));
+        if (returnFocus && document.activeElement === document.body) button.focus({ preventScroll: true });
+        return;
+      }
+      const heading = h("h2", { class: "rv-h2", tabindex: -1 }, "Модель после перепроверки");
+      const quotes = (opinion.evidence || []).map((entry) => {
+        const turn = conv.transcript.find((item, index) => (item.idx ?? index) === entry.turnIdx);
+        if (!turn || !entry.quote || !turn.text.includes(entry.quote)) return null;
+        return h("button", { class: "rv-opinion-quote", type: "button", onclick: () => hooks.jump(entry, DA.tone(opinion.answer, c)) },
+          h("span", { class: "rv-opinion-quote-text" }, entry.quote),
+          h("span", { class: "rv-opinion-quote-meta" }, `${DA.speakerLabel[turn.speaker]}, ${DA.tx.clock(turn.timestamp)}`, h("span", {}, "К реплике", DA.icon("chevron", 13))));
+      });
+      node.replaceChildren(heading,
+        h("div", { class: "rv-answer" }, DA.answerPill(opinion.answer, c), h("span", { class: "rv-opinion-verdict" + (opinion.agreesWithAppeal ? " is-agree" : ""), role: "status" }, opinion.agreesWithAppeal ? "Согласна с аналитиком" : "Остаётся при своей оценке")),
+        h("p", { class: "rv-opinion-explanation" }, opinion.explanation || "Модель не оставила объяснения."),
+        h("div", { class: "rv-opinion-evidence" }, quotes));
+      if (returnFocus && document.activeElement === document.body) heading.focus({ preventScroll: true });
+    }
+    async function request() {
+      if (busy || disposed || opinion) return;
+      returnFocus = node.contains(document.activeElement);
+      busy = true; error = ""; render();
+      try {
+        const result = await DA.data.secondOpinion(appeal.id, { signal: controller.signal });
+        if (disposed) return;
+        opinion = result; appeal.secondOpinion = result;
+        if (result.agreesWithAppeal) hooks.prefill(result.answer);
+      } catch (e) {
+        if (!disposed && e.name !== "AbortError") error = e.message || "Модель не смогла перепроверить критерий. Попробуйте ещё раз";
+      } finally { busy = false; if (!disposed) render(); }
+    }
+    if (opinion?.agreesWithAppeal) hooks.prefill(opinion.answer);
+    render();
+    return { node, dispose() { disposed = true; controller.abort(); } };
   }
 
   /* ---------- Предпросмотр итога ---------- */
@@ -192,7 +258,7 @@
     const { ev, cl, c, item } = ctx;
     const modelAnswer = item.answer;
     const options = DA.allowedAnswers(c).filter((a) => a !== modelAnswer);
-    let action = null, busy = false, committed = false, disposed = false;
+    let action = null, busy = false, committed = false, disposed = false, answerTouched = false;
     let newAnswer = options.includes(appeal.proposedAnswer) ? appeal.proposedAnswer : null;
 
     const choice = (value, icon, title, sub) => h("button", { class: "rv-option", type: "button", role: "radio", "aria-checked": "false", "data-value": value, onclick: () => choose(value) },
@@ -201,10 +267,11 @@
     const optChange = choice("change", "refresh", "Изменить оценку", "Поставить другой ответ");
     const optionsBox = h("div", { class: "rv-options", role: "radiogroup", "aria-label": "Решение" }, optConfirm, optChange);
 
-    const seg = DA.segmented(options.map((a) => ({ value: a, label: DA.answerText(a, c) })), newAnswer, (v) => { if (!busy && !committed) { newAnswer = v; refresh(); } }, "Новый ответ");
+    const seg = DA.segmented(options.map((a) => ({ value: a, label: DA.answerText(a, c) })), newAnswer, (v) => { if (!busy && !committed) { answerTouched = true; newAnswer = v; refresh(); } }, "Новый ответ");
+    const suggestion = h("span", { class: "da-hint", hidden: appeal.proposedAnswer == null }, appeal.proposedAnswer != null ? `Аналитик предложил «${DA.answerText(appeal.proposedAnswer, c)}»` : "");
     const changeBox = h("div", { class: "rv-reveal" }, h("div", {}, h("div", { class: "rv-new" },
       h("span", { class: "rv-label" }, "Новый ответ"), seg,
-      appeal.proposedAnswer != null ? h("span", { class: "da-hint" }, `Аналитик предложил «${DA.answerText(appeal.proposedAnswer, c)}»`) : null)));
+      suggestion)));
     changeBox.inert = true;
 
     const reason = h("textarea", { class: "da-textarea", id: "rv-reason", placeholder: "Коротко объясните решение, его увидит аналитик" });
@@ -288,7 +355,14 @@
       }
     }
     refresh();
-    return { node, ready, save, nudge, choose, dispose: () => { disposed = true; } };
+    function prefill(answer) {
+      if (busy || committed || disposed || answerTouched || !options.includes(answer)) return;
+      newAnswer = answer; seg.setValue(answer);
+      suggestion.textContent = `После перепроверки модель предлагает «${DA.answerText(answer, c)}»`;
+      suggestion.hidden = false;
+      refresh();
+    }
+    return { node, ready, save, nudge, choose, prefill, dispose: () => { disposed = true; } };
   }
 
   /* Решение по апелляции, которая уже закрыта: вместо формы итог разбора. */
@@ -338,11 +412,18 @@
         }
       });
     }
+    const dialogue = fragment(conv, item, tone), dispute = disputeBlock(appeal, c, item);
+    const opinion = secondOpinionBlock(appeal, c, conv, {
+      jump: (entry, nextTone) => dialogue.jumpTo(entry, nextTone),
+      prefill: (answer) => decision?.prefill(answer)
+    });
+    if (opinion) dispute.append(opinion.node);
     const node = h("article", { class: "rv-work", "data-id": appeal.id }, head,
       h("div", { class: "rv-body" },
-        h("div", { class: "rv-col" }, fragment(conv, item, tone), rule),
-        h("div", { class: "rv-col" }, disputeBlock(appeal, c, item), decision ? decision.node : outcomeBlock(appeal, c))));
+        h("div", { class: "rv-col" }, dialogue, rule),
+        h("div", { class: "rv-col" }, dispute, decision ? decision.node : outcomeBlock(appeal, c))));
     node.decision = decision;
+    node.dispose = () => { decision?.dispose(); opinion?.dispose(); };
     return node;
   }
 
@@ -414,7 +495,7 @@
       }, 180));
     }
     function select(id, how) {
-      work?.decision?.dispose();
+      work?.dispose();
       const appeal = DA.state.appeals.find((a) => a.id === id);
       current = appeal ? appeal.id : null;
       renderQueue();
@@ -446,6 +527,7 @@
           } else {
             history.replaceState(null, "", "#/review");
             current = null;
+            work?.dispose();
             work = null;
             renderQueue();
             swap(emptyState());
@@ -490,7 +572,7 @@
 
     return () => {
       disposed = true;
-      work?.decision?.dispose();
+      work?.dispose();
       timers.forEach(clearTimeout);
       clearInterval(tick);
       document.removeEventListener("keydown", onKey);
