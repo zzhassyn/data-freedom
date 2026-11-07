@@ -138,8 +138,7 @@
     no: ["var(--da-no)", "var(--da-no-soft)"], na: ["var(--da-na)", "var(--da-na-soft)"],
     flag: ["var(--da-gross)", "var(--da-gross-soft)"], pending: ["var(--da-line)", "var(--da-surface-2)"]
   };
-  const toneStyle = (tone) => ({ "--lit": TONE_VARS[tone][0], "--lit-soft": TONE_VARS[tone][1],
-    "--lit-ink": `var(--da-${tone === "flag" ? "gross" : tone}-on-soft, var(--da-bubble-ink, var(--da-text)))` });
+  const toneStyle = (tone) => ({ "--lit": TONE_VARS[tone][0], "--lit-soft": TONE_VARS[tone][1] });
   function setTone(node, tone) { for (const [k, v] of Object.entries(toneStyle(tone))) node.style.setProperty(k, v); }
 
   DA.views.card = function mount(root, params) {
