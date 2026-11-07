@@ -43,6 +43,7 @@ def test_sync_fetches_fresh_data_and_preserves_stale_history(client, dev_payload
     new = deepcopy(record)
     new['conversation_id'] = 'new-from-crm'
     payload['data']['records'].append(new)
+    payload['data']['total_records'] = len(payload['data']['records'])
     third = client.post('/api/source/sync', json={}).json()
     assert (third['imported'], third['updated'], third['unchanged'], third['total']) == (1, 1, 64, 66)
     assert client.get('/api/conversations').json()['counts']['all'] == 66
@@ -64,7 +65,9 @@ def test_sync_uses_saved_group_and_reset_receipt_only_when_group_changes(client,
     seen = []
     def upstream(request):
         seen.append(request.url.params['group_id'])
-        return httpx.Response(200, json=dev_payload)
+        payload = deepcopy(dev_payload)
+        payload['data']['dataset_group_id'] = request.url.params['group_id']
+        return httpx.Response(200, json=payload)
     install_transport(monkeypatch, upstream)
     client.put('/api/source', json={'groupId': 'CTRL & 1'})
     assert client.post('/api/source/sync', json={}).json()['imported'] == 65

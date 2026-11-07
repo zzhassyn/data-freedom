@@ -94,10 +94,23 @@ def normalize_records(payload, group_id, audio_allowed_hosts=AUDIO_ALLOWED_HOSTS
     return normalized
 
 
-def import_steps(db, payload, group_id, audio_allowed_hosts=AUDIO_ALLOWED_HOSTS, source=False):
-    """Yield measured progress; records and sync receipt commit in one transaction."""
+def import_steps(db, payload, group_id, audio_allowed_hosts=AUDIO_ALLOWED_HOSTS, source=False,
+                 full_dataset=False):
+    """Commit records, an authoritative dataset roster and sync receipt atomically."""
     rejected_audio = []
     records = normalize_records(payload, group_id, audio_allowed_hosts, rejected_audio)
+    metadata = payload.get('data') if isinstance(payload, dict) else None
+    metadata = metadata if isinstance(metadata, dict) else {}
+    authoritative = source or full_dataset
+    declared_total = metadata.get('total_records')
+    matching_total = type(declared_total) is int and declared_total == len(records)
+    matching_group = metadata.get('dataset_group_id') == group_id
+    if authoritative:
+        if 'dataset_group_id' in metadata and not matching_group:
+            raise ApiError('invalid_transcript', 'Набор организаторов не соответствует запрошенному groupId')
+        if 'total_records' in metadata and not matching_total:
+            raise ApiError('invalid_transcript', 'Число записей набора не совпадает с total_records')
+    capture_roster = authoritative or (matching_group and matching_total)
     imported, updated = 0, 0
     new_ids, existing_ids = [], []
     yield dict(stage='importing', processed=0, total=len(records))
@@ -127,12 +140,18 @@ def import_steps(db, payload, group_id, audio_allowed_hosts=AUDIO_ALLOWED_HOSTS,
                           total=len(records), lastSyncAt=utcnow())
             db.set_setting('lastSyncAt', result['lastSyncAt'], conn)
             db.set_setting('lastResult', {k: result[k] for k in ('imported', 'updated', 'unchanged')}, conn)
+        if capture_roster:
+            db.set_setting(f'datasetRoster:{group_id}', {
+                'ids': [record['id'] for record in records],
+                'transcriptHashes': {record['id']: record['transcriptHash'] for record in records},
+                'capturedAt': utcnow(),
+            }, conn)
         result.update(newConversationIds=new_ids, existingConversationIds=existing_ids)
     yield dict(stage='done', result=result, ids=[r['id'] for r in records])
 
 
-def import_records(db, payload, group_id, audio_allowed_hosts=AUDIO_ALLOWED_HOSTS):
-    for step in import_steps(db, payload, group_id, audio_allowed_hosts):
+def import_records(db, payload, group_id, audio_allowed_hosts=AUDIO_ALLOWED_HOSTS, full_dataset=False):
+    for step in import_steps(db, payload, group_id, audio_allowed_hosts, full_dataset=full_dataset):
         if step['stage'] == 'done':
             return step['result'], step['ids']
 
@@ -194,7 +213,8 @@ async def fetch_dataset(request, group_id):
 async def import_dataset(request: Request):
     group_id = source_group(await request.json())
     payload = await fetch_dataset(request, group_id)
-    result, ids = import_records(request.app.state.db, payload, group_id, request.app.state.settings.audio_allowed_hosts)
+    result, ids = import_records(request.app.state.db, payload, group_id,
+                                 request.app.state.settings.audio_allowed_hosts, full_dataset=True)
     await schedule_import_work(request, result)
     return result
 
