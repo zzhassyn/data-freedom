@@ -79,6 +79,72 @@ test('API preserves contract errors, encodes identifiers and sends JSON for muta
   assert.equal(JSON.parse(request.opts.body).action, 'confirm');
 });
 
+test('STT and AI requests encode IDs, pass refresh separately and send JSON on mutation routes', async () => {
+  const calls = [], timers = [];
+  const { DA, context } = environment(async (url, opts) => { calls.push({ url, opts }); return reply({ ok: true }); });
+  context.setTimeout = (fn, ms) => { timers.push(ms); return setTimeout(fn, ms); };
+  await DA.api.getSttJobs({ groupId: 'DEV & UPLOAD' });
+  await DA.api.getTranscription('call /1');
+  await DA.api.retryTranscription('call /1');
+  await DA.api.getSummary('call /1', { refresh: true });
+  await DA.api.getTranslation('call /1');
+  await DA.api.getCoaching('ev /1', { refresh: false });
+  await DA.api.secondOpinion('ap /1', { refresh: true });
+  assert.deepEqual(calls.map(({ url }) => url), [
+    '/api/stt/jobs?groupId=DEV+%26+UPLOAD', '/api/conversations/call%20%2F1/transcription',
+    '/api/conversations/call%20%2F1/transcription/retry', '/api/conversations/call%20%2F1/summary?refresh=true',
+    '/api/conversations/call%20%2F1/translation', '/api/evaluations/ev%20%2F1/coaching?refresh=false',
+    '/api/appeals/ap%20%2F1/second-opinion?refresh=true'
+  ]);
+  for (const index of [2, 6]) {
+    assert.equal(calls[index].opts.method, 'POST');
+    assert.equal(calls[index].opts.headers['Content-Type'], 'application/json');
+    assert.equal(calls[index].opts.body, '{}');
+  }
+  assert.deepEqual(timers, [30000, 30000, 30000, 120000, 120000, 120000, 120000]);
+});
+
+test('second opinion and reviewer decision preserve each other in either response order', async () => {
+  for (const opinionFirst of [false, true]) {
+    const { DA, ev, cl } = fixtureServer();
+    await DA.data.prepare('registry', { refresh: true });
+    const appeal = { id: 'ap_opinion', evaluationId: ev.id, conversationId: source.id, criterionId: cl.criteria[0].id,
+      createdAt: 1, status: 'open', secondOpinion: null };
+    DA.state.appeals = [appeal, { ...appeal, id: 'ap_untouched' }];
+    const opinion = { answer: 'no', agreesWithAppeal: true, explanation: 'Проверено заново', evidence: [] };
+    const decision = { action: 'change', newAnswer: 'no', reason: 'Проверено по реплике', decidedAt: '2026-11-01T12:00:00Z' };
+    let releaseOpinion, releaseDecision;
+    DA.api.secondOpinion = () => new Promise((resolve) => { releaseOpinion = resolve; });
+    DA.api.decideAppeal = () => new Promise((resolve) => { releaseDecision = resolve; });
+    const rereading = DA.data.secondOpinion(appeal.id);
+    const deciding = DA.data.decideAppeal(appeal.id, 'change', 'no', decision.reason);
+    if (opinionFirst) { releaseOpinion(opinion); await rereading; }
+    releaseDecision({ appeal: { ...appeal, status: 'changed', decision }, evaluation: { ...ev, total: 80 } });
+    await deciding;
+    if (!opinionFirst) { releaseOpinion(opinion); await rereading; }
+    const saved = DA.state.appeals.find((entry) => entry.id === appeal.id);
+    assert.equal(saved.status, 'changed');
+    assert.equal(saved.decision.reason, decision.reason);
+    assert.deepEqual(json(saved.secondOpinion), opinion);
+    assert.equal(DA.state.evaluations.fixture.total, 80);
+    assert.equal(DA.state.appeals[1].secondOpinion, null);
+  }
+});
+
+test('an abandoned second opinion cannot update the appeal after its caller aborts', async () => {
+  const { DA, ev } = fixtureServer();
+  const appeal = { id: 'ap_abandoned', evaluationId: ev.id, conversationId: source.id, status: 'open', secondOpinion: null };
+  DA.state.appeals = [appeal];
+  const controller = new AbortController();
+  let release;
+  DA.api.secondOpinion = () => new Promise((resolve) => { release = resolve; });
+  const request = DA.data.secondOpinion(appeal.id, { signal: controller.signal });
+  controller.abort();
+  release({ answer: 'no', agreesWithAppeal: true, explanation: 'Проверено заново', evidence: [] });
+  await assert.rejects(request, (error) => error.name === 'AbortError');
+  assert.equal(DA.state.appeals[0].secondOpinion, null);
+});
+
 test('server normalization preserves authoritative totals, null sections, stable numbers and conversation cache', async () => {
   const { DA, calls } = fixtureServer();
   assert.equal(Object.keys(DA.state.evaluations).length, 0);

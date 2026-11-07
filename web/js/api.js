@@ -73,6 +73,8 @@
   }
   const get = (path, values, options) => request(path + query(values), options);
   const post = (path, body, options) => request(path, { ...options, method: "POST", body: body || {} });
+  const aiOptions = (options) => ({ ...options, timeout: options?.timeout ?? 120000 });
+  const aiGet = (path, options) => get(path, { refresh: options?.refresh }, aiOptions(options));
   let detected;
   DA.mode = "local";
   DA.api = {
@@ -91,9 +93,15 @@
     health: (options) => request("/health", options),
     listConversations: (filters, options) => get("/conversations", filters, options),
     getConversation: (id, options) => request(`/conversations/${part(id)}`, options),
+    getSttJobs: (filters, options) => get("/stt/jobs", filters, options),
+    getTranscription: (id, options) => request(`/conversations/${part(id)}/transcription`, options),
+    retryTranscription: (id, options) => post(`/conversations/${part(id)}/transcription/retry`, {}, options),
+    getSummary: (id, options) => aiGet(`/conversations/${part(id)}/summary`, options),
+    getTranslation: (id, options) => aiGet(`/conversations/${part(id)}/translation`, options),
     listEvaluations: (id, options) => request(`/conversations/${part(id)}/evaluations`, options),
     getEvaluation: (id, options) => request(`/evaluations/${part(id)}`, options),
     getEvaluationConversation: (id, options) => request(`/evaluations/${part(id)}/conversation`, options),
+    getCoaching: (id, options) => aiGet(`/evaluations/${part(id)}/coaching`, options),
     startEvaluation: (body, options) => post("/evaluations", body, options),
     getJob: (id, options) => request(`/jobs/${part(id)}`, options),
     retryCriterion: (id, criterionId, options) => post(`/evaluations/${part(id)}/criteria/${part(criterionId)}/retry`, {}, options),
@@ -107,6 +115,7 @@
     getAppeal: (id, options) => request(`/appeals/${part(id)}`, options),
     createAppeal: (body, options) => post("/appeals", body, options),
     decideAppeal: (id, body, options) => post(`/appeals/${part(id)}/decision`, body, options),
+    secondOpinion: (id, options) => post(`/appeals/${part(id)}/second-opinion` + query({ refresh: options?.refresh }), {}, aiOptions(options)),
     getStats: (filters, options) => get("/stats", filters, options),
     getOperators: (filters, options) => get("/operators", filters, options),
     getSource: (options) => request("/source", options),

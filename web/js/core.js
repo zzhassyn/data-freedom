@@ -590,12 +590,25 @@
     const response = await DA.api.decideAppeal(a.id, { action, newAnswer, reason });
     epoch.value++;
     const ev = evaluation(response.evaluation);
-    const saved = appeal({ ...a, ...response.appeal, evaluation: ev });
+    const current = DA.state.appeals.find((item) => item.id === a.id);
+    const saved = appeal({ ...a, ...response.appeal, secondOpinion: response.appeal.secondOpinion || current?.secondOpinion || a.secondOpinion, evaluation: ev });
     const latest = DA.state.evaluations[a.conversationId];
     if (!latest || latest.id === ev.id) DA.state.evaluations[a.conversationId] = ev;
     updateEvaluationContexts(ev);
     upsertAppeal(saved);
     return { appeal: saved, evaluation: ev };
+  }
+  async function secondOpinion(id, options) {
+    ensureMode();
+    if (!server()) throw failure("unavailable", "Перепроверка модели сейчас недоступна");
+    const opinion = await DA.api.secondOpinion(id, options);
+    if (options?.signal?.aborted) throw new DOMException("Действие прервано", "AbortError");
+    if (server()) {
+      epoch.value++;
+      const current = DA.state.appeals.find((item) => item.id === id);
+      if (current) upsertAppeal({ ...current, secondOpinion: opinion });
+    }
+    return opinion;
   }
   async function saveChecklist(draft, options) {
     if (!server()) {
@@ -1017,7 +1030,7 @@
   }
   DA.data = { prepare, conversations, checklists, evaluation: getEvaluation, evaluations, appeals, appealContext, cardContext,
     evaluate, watchEvaluation, retryCriterion, startBatch, getJob, watchJob, retryBatch,
-    history, evaluationById, latestEvaluations, diffChecklists, compareChecklists, createAppeal, decideAppeal, saveChecklist, activateChecklist, stats,
+    history, evaluationById, latestEvaluations, diffChecklists, compareChecklists, createAppeal, decideAppeal, secondOpinion, saveChecklist, activateChecklist, stats,
     invalidate, refresh: () => prepare("registry", { refresh: true }),
     normalizeConversation: conversation, normalizeEvaluation: evaluation };
 })();
