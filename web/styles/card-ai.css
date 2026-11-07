@@ -1,0 +1,53 @@
+/* Помощь в чтении диалога остаётся тише исходных реплик и оценки. */
+.cai-summary { position: relative; min-width: 0; margin: 0 0 22px; padding: 0 34px 0 0; }
+.cai-summary[hidden], .cai-translation-control[hidden], .cai-coaching[hidden], .cai-translation-status[hidden] { display: none; }
+.cai-summary-lines { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+.cai-summary-lines dt { color: var(--da-text-3); font-size: 13px; line-height: 1.7; }
+.cai-summary-lines dd { margin: 0; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
+.cai-summary-lines .da-skel { display: block; height: 18px; margin: 3px 0; }
+.cai-summary-toggle { position: absolute; top: -7px; right: -4px; display: grid; place-items: center; width: 36px; height: 36px;
+  border: 0; border-radius: var(--da-r-pill); background: transparent; color: var(--da-text-2); transition: background var(--da-fast), color var(--da-fast), transform 90ms; }
+.cai-summary-toggle:hover { background: var(--da-surface-3); color: var(--da-brand); }
+.cai-summary-toggle:active { transform: scale(.95); }
+.cai-summary-toggle .da-icon { transform: rotate(90deg); transition: transform var(--da-fast); }
+.cai-summary.is-collapsed .cai-summary-toggle .da-icon { transform: rotate(0); }
+.cai-operator { margin: 8px 0 0 88px; text-align: right; font-size: 13px; color: var(--da-text-2); }
+.cai-error { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; color: var(--da-text-2); font-size: 14px; line-height: 1.5; }
+.cai-error .da-btn { margin: -4px 0; }
+.cai-translation-control { display: grid; justify-items: start; gap: 8px; min-width: 0; margin-bottom: 12px; }
+.cai-translation-control .da-seg { max-width: 100%; }
+.cai-translation-control .da-seg button { height: auto; min-height: 32px; padding-block: 6px; white-space: normal; }
+.cai-translation-status { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; font-size: 14px; color: var(--da-text-2); }
+.cai-turn-translation { margin: 4px 4px 0; padding-left: 10px; border-left: 2px solid var(--da-line); font-size: 14px; line-height: 1.5;
+  color: var(--da-text-2); overflow-wrap: anywhere; }
+.cai-turn-translation.is-entering { animation: cai-translate-in 220ms var(--da-ease) both; }
+@keyframes cai-translate-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
+.cai-coaching { padding: 20px; border-top: 1px solid var(--da-line); }
+.cai-coaching h3 { margin: 0 0 16px; font-size: 16px; font-weight: 650; line-height: 1.4; }
+.cai-tips { display: grid; gap: 20px; }
+.cai-tip { min-width: 0; }
+.cai-tip-criterion { margin: 0 0 5px; color: var(--da-text-3); font-size: 13px; line-height: 1.4; }
+.cai-tip-text { margin: 0; font-size: 15px; line-height: 1.5; }
+.cai-example { display: grid; grid-template-columns: minmax(0, 1fr) 36px; align-items: start; gap: 8px; margin-top: 10px;
+  padding: 12px 8px 12px 14px; border-radius: var(--da-r-control); background: var(--da-brand-soft); }
+.cai-example p { margin: 0; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; user-select: text; }
+.cai-copy { display: grid; place-items: center; width: 36px; height: 36px; margin-top: -5px; border: 0; border-radius: var(--da-r-pill);
+  color: var(--da-brand-press); background: transparent; transition: background var(--da-fast), transform 90ms; }
+.cai-copy:hover { background: var(--da-surface); }
+.cai-copy:active { transform: scale(.94); }
+.cai-copy:disabled { opacity: .55; cursor: wait; }
+@media (max-width: 600px) {
+  .cai-summary { margin-bottom: 20px; padding-right: 28px; }
+  .cai-summary-lines { grid-template-columns: 52px minmax(0, 1fr); gap: 9px 10px; }
+  .cai-operator { margin-left: 62px; }
+  .cai-summary-toggle { right: -9px; }
+  .cai-translation-control { width: 100%; }
+  .cai-translation-control .da-seg { width: 100%; }
+  .cai-translation-control .da-seg button { min-width: 0; min-height: 40px; flex: 1; padding-inline: 10px; }
+  .cai-translation-control .da-seg button:first-of-type { flex: 0 0 auto; }
+  .cai-coaching { padding: 18px 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cai-summary-toggle, .cai-summary-toggle .da-icon, .cai-copy { transition: none; }
+  .cai-turn-translation.is-entering { animation: none; }
+}
