@@ -1,19 +1,48 @@
 /* Боковое меню и маршрутизация через хэш: в веб-ресурсе Dynamics 365 путь сервера недоступен. */
 (function () {
   const DA = window.DA, h = DA.h;
+  DA.i18n.addMessages({
+    "app.conversations": { ru: "Обращения", kk: "Өтініштер", en: "Conversations" },
+    "app.conversation": { ru: "Обращение", kk: "Өтініш", en: "Conversation" },
+    "app.appeals": { ru: "Апелляции", kk: "Апелляциялар", en: "Appeals" },
+    "app.checklist": { ru: "Чек-лист", kk: "Чек-парақ", en: "Checklist" },
+    "app.insights": { ru: "Сводка", kk: "Жиынтық", en: "Overview" },
+    "app.queue": { ru: "Очередь", kk: "Кезек", en: "Queue" },
+    "app.decided": { ru: "Решённые", kk: "Шешілгендер", en: "Decided" },
+    "app.reviewQueue": { ru: "Очередь апелляций", kk: "Апелляциялар кезегі", en: "Appeal queue" },
+    "app.decidedAppeals": { ru: "Решённые апелляции", kk: "Шешілген апелляциялар", en: "Decided appeals" },
+    "app.accuracy": { ru: "Точность оценки", kk: "Бағалау дәлдігі", en: "Evaluation accuracy" },
+    "app.sections": { ru: "Разделы", kk: "Бөлімдер", en: "Sections" },
+    "app.analyst": { ru: "Аналитик", kk: "Талдаушы", en: "Analyst" },
+    "app.reviewer": { ru: "Проверяющий", kk: "Тексеруші", en: "Reviewer" },
+    "app.role": { ru: "Режим работы", kk: "Жұмыс режимі", en: "Work mode" },
+    "app.toggleMenu": { ru: "Свернуть или развернуть меню", kk: "Мәзірді жию немесе ашу", en: "Collapse or expand menu" },
+    "app.openMenu": { ru: "Открыть меню", kk: "Мәзірді ашу", en: "Open menu" },
+    "app.loading": { ru: "Загружаем данные", kk: "Деректер жүктелуде", en: "Loading data" },
+    "app.loadError": { ru: "Не удалось загрузить данные", kk: "Деректерді жүктеу мүмкін болмады", en: "Could not load the data" },
+    "app.openError": { ru: "Не удалось открыть страницу. Попробуйте ещё раз", kk: "Бетті ашу мүмкін болмады. Қайталап көріңіз", en: "Could not open the page. Try again" },
+    "app.networkError": { ru: "Нет связи с сервером. Проверьте подключение и повторите запрос", kk: "Сервермен байланыс жоқ. Қосылымды тексеріп, қайталап көріңіз", en: "Cannot connect to the server. Check your connection and try again" },
+    "app.responseError": { ru: "Не удалось прочитать ответ сервера. Повторите запрос", kk: "Сервер жауабын оқу мүмкін болмады. Қайталап көріңіз", en: "Could not read the server response. Try again" },
+    "app.missingData": { ru: "Запрошенные данные не найдены. Вернитесь к списку и откройте их заново", kk: "Сұралған деректер табылмады. Тізімге оралып, қайта ашыңыз", en: "The requested data was not found. Return to the list and open it again" },
+    "app.staleData": { ru: "Данные изменились. Откройте страницу заново", kk: "Деректер өзгерді. Бетті қайта ашыңыз", en: "The data has changed. Open the page again" },
+    "app.retry": { ru: "Повторить", kk: "Қайталау", en: "Try again" },
+    "app.notFound": { ru: "Такой страницы нет", kk: "Мұндай бет жоқ", en: "This page does not exist" },
+    "app.backToWork": { ru: "Вернуться к работе", kk: "Жұмысқа оралу", en: "Back to work" }
+  });
+  const msg = (key) => DA.msg(`app.${key}`);
   let unmount = null, routeId = 0, routeRequest = null, ready = false;
 
   /* Меню по роли. Входа в систему нет, роль выбирается переключателем внизу меню. */
   const NAV = {
     analyst: [
-      { href: "#/", match: /^#\/(c\/.*|\?.*)?$/, label: "Обращения", icon: "list" },
-      { href: "#/appeals", match: /^#\/appeals/, label: "Апелляции", icon: "message", count: true },
-      { href: "#/checklists", match: /^#\/checklists/, label: "Чек-лист", icon: "scale" },
-      { href: "#/insights", match: /^#\/insights/, label: "Сводка", icon: "chart" }
+      { href: "#/", match: /^#\/(c\/.*|\?.*)?$/, label: "conversations", icon: "list" },
+      { href: "#/appeals", match: /^#\/appeals/, label: "appeals", icon: "message", count: true },
+      { href: "#/checklists", match: /^#\/checklists/, label: "checklist", icon: "scale" },
+      { href: "#/insights", match: /^#\/insights/, label: "insights", icon: "chart" }
     ],
     reviewer: [
-      { href: "#/review", match: /^#\/review(\/(?!done$)[^/]+)?$/, label: "Очередь", icon: "message", count: true },
-      { href: "#/review/done", match: /^#\/review\/done$/, label: "Решённые", icon: "check" }
+      { href: "#/review", match: /^#\/review(\/(?!done$)[^/]+)?$/, label: "queue", icon: "message", count: true },
+      { href: "#/review/done", match: /^#\/review\/done$/, label: "decided", icon: "check" }
     ]
   };
   const home = () => (DA.state.role === "reviewer" ? "#/review" : "#/");
@@ -21,17 +50,20 @@
 
   function sidebar() {
     const count = h("span", { class: "da-count" });
-    const nav = h("nav", { class: "da-side-nav", "aria-label": "Разделы" });
+    const nav = h("nav", { class: "da-side-nav", "aria-label": msg("sections") });
     let items = [], links = [];
-    const role = DA.segmented([{ value: "analyst", label: "Аналитик" }, { value: "reviewer", label: "Проверяющий" }], DA.state.role, (v) => DA.setRole(v), "Режим работы");
-    const toggle = h("button", { class: "da-burger", type: "button", "aria-label": "Свернуть или развернуть меню", onclick: () => setOpen(document.body.dataset.sidebar !== "open") }, DA.icon("menu"));
+    const role = DA.segmented([{ value: "analyst", label: msg("analyst") }, { value: "reviewer", label: msg("reviewer") }], DA.state.role, (v) => DA.setRole(v), msg("role"));
+    const language = DA.i18n.createControl();
+    const toggle = h("button", { class: "da-burger", type: "button", "aria-label": msg("toggleMenu"), onclick: () => setOpen(document.body.dataset.sidebar !== "open") }, DA.icon("menu"));
     const marks = [0, 1].map(() => h("a", { class: "da-wordmark", href: home() }, h("b", {}, "Data"), "Avengers"));
     const el = h("aside", { class: "da-side" },
       h("div", { class: "da-side-top" }, toggle, marks[0]),
       nav,
-      h("div", { class: "da-side-bottom" }, h("div", { class: "da-label" }, "Режим работы"), role));
+      h("div", { class: "da-side-bottom" },
+        h("div", { class: "da-label" }, DA.msg("ui.language")), language,
+        h("div", { class: "da-label" }, msg("role")), role));
     const mobileBar = h("div", { class: "da-mobilebar" },
-      h("button", { class: "da-burger", type: "button", "aria-label": "Открыть меню", onclick: () => setOpen(true) }, DA.icon("menu")),
+      h("button", { class: "da-burger", type: "button", "aria-label": msg("openMenu"), onclick: () => setOpen(true) }, DA.icon("menu")),
       marks[1]);
     const scrim = h("div", { class: "da-side-scrim", onclick: () => setOpen(false) });
 
@@ -42,8 +74,8 @@
     /* Пункты меню собираются заново при смене роли и въезжают по очереди. */
     function renderNav(animate) {
       items = NAV[DA.state.role] || NAV.analyst;
-      links = items.map((n, i) => h("a", { class: "da-side-link" + (animate ? " is-entering" : ""), href: n.href, title: n.label, style: animate ? { animationDelay: i * 40 + "ms" } : null },
-        DA.icon(n.icon), h("span", { class: "da-side-text" }, n.label), n.count ? count : null));
+      links = items.map((n, i) => h("a", { class: "da-side-link" + (animate ? " is-entering" : ""), href: n.href, title: msg(n.label), style: animate ? { animationDelay: i * 40 + "ms" } : null },
+        DA.icon(n.icon), h("span", { class: "da-side-text" }, msg(n.label)), n.count ? count : null));
       nav.replaceChildren(...links);
       marks.forEach((a) => a.setAttribute("href", home()));
       sync();
@@ -61,6 +93,7 @@
     matchMedia("(max-width: 900px)").addEventListener("change", (e) => (document.body.dataset.sidebar = e.matches ? "closed" : DA.state.sidebar || "open"));
     window.addEventListener("da:appeals-changed", sync);
     window.addEventListener("hashchange", sync);
+    window.addEventListener("da:locale-changed", () => role.setValue(DA.state.role));
     renderNav(false);
     return { el, mobileBar, scrim, setRole: (v) => role.setValue(v), renderNav, sync };
   }
@@ -93,7 +126,7 @@
   const allowed = (path) => path === "/lab/accuracy" || (DA.state.role === "reviewer" ? /^\/(review(\/.*)?|c\/.+)$/.test(path) : !/^\/review(\/|$)/.test(path));
   const main = () => document.getElementById("da-main");
 
-  const titles = { registry: "Обращения", card: "Обращение", appeals: "Апелляции", checklists: "Чек-лист", insights: "Сводка", accuracy: "Точность оценки", review: "Очередь апелляций", reviewDone: "Решённые апелляции" };
+  const titles = { registry: "conversations", card: "conversation", appeals: "appeals", checklists: "checklist", insights: "insights", accuracy: "accuracy", review: "reviewQueue", reviewDone: "decidedAppeals" };
   const skeleton = (width, cls) => h("div", { class: "da-skel" + (cls ? " " + cls : ""), style: { width } });
   function loadingState(scope) {
     const row = () => h("div", { class: "da-load-row" }, skeleton("52%"), skeleton("90%"), skeleton("38%"));
@@ -112,18 +145,20 @@
     }
     main().setAttribute("aria-busy", "true");
     main().replaceChildren(h("div", { class: "da-page da-loading" },
-      h("div", { class: "da-page-head" }, h("h1", { class: "da-h1" }, titles[scope]), skeleton("160px", "is-action")),
-      h("span", { class: "da-sr", role: "status" }, "Загружаем данные"),
+      h("div", { class: "da-page-head" }, h("h1", { class: "da-h1" }, msg(titles[scope])), skeleton("160px", "is-action")),
+      h("span", { class: "da-sr", role: "status" }, msg("loading")),
       h("div", { "aria-hidden": "true" }, content)));
   }
 
   function errorState(scope, error) {
-    const message = error instanceof DA.ApiError ? error.message : "Не удалось открыть страницу. Попробуйте ещё раз";
+    const errorKey = { network: "networkError", invalid_response: "responseError", not_found: "missingData", stale_source: "staleData" }[error?.code];
+    const message = errorKey ? msg(errorKey) : error instanceof DA.ApiError
+      ? DA.msg((locale) => locale === "ru" ? error.message : DA.t("app.openError")) : msg("openError");
     main().replaceChildren(h("div", { class: "da-page" },
-      h("div", { class: "da-page-head" }, h("h1", { class: "da-h1", tabindex: -1 }, titles[scope])),
+      h("div", { class: "da-page-head" }, h("h1", { class: "da-h1", tabindex: -1 }, msg(titles[scope]))),
       h("div", { class: "da-empty da-load-error", role: "alert" },
-        h("h2", {}, "Не удалось загрузить данные"), h("p", {}, message),
-        h("button", { class: "da-btn is-primary", type: "button", onclick: () => DA.route() }, DA.icon("refresh"), "Повторить"))));
+        h("h2", {}, msg("loadError")), h("p", {}, message),
+        h("button", { class: "da-btn is-primary", type: "button", onclick: () => DA.route() }, DA.icon("refresh"), msg("retry")))));
   }
 
   DA.route = async function () {
@@ -149,7 +184,7 @@
         if (current !== routeId || request.signal.aborted) return;
         errorState(hit[1], error);
       }
-    } else main().replaceChildren(h("div", { class: "da-page" }, h("div", { class: "da-empty" }, h("h2", { tabindex: -1 }, "Такой страницы нет"), h("a", { class: "da-btn", href: home() }, "Вернуться к работе"))));
+    } else main().replaceChildren(h("div", { class: "da-page" }, h("div", { class: "da-empty" }, h("h2", { tabindex: -1 }, msg("notFound")), h("a", { class: "da-btn", href: home() }, msg("backToWork")))));
     main().removeAttribute("aria-busy");
     const title = main().querySelector("h1, h2");
     if (title) title.focus({ preventScroll: true });
@@ -164,6 +199,7 @@
     DA.side = sidebar();
     document.body.prepend(DA.side.mobileBar, DA.side.el, DA.side.scrim);
     DA.bulk?.restore();
+    DA.stt?.restore();
     ready = true;
     window.addEventListener("hashchange", DA.route);
     await DA.route();
