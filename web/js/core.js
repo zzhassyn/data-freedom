@@ -1009,7 +1009,7 @@
     const loaded = await mapLimit(candidates, async (conv) => {
       const all = await history(conv.conversation_id, { signal: opts.signal });
       return all.find((ev) => {
-        if (ev.status !== "done" || (cl && ev.checklistVersion !== cl.version)) return false;
+        if ((!opts.includeIncomplete && ev.status !== "done") || (cl && ev.checklistVersion !== cl.version)) return false;
         if (ev.transcriptHash && conv.transcriptHash) return ev.transcriptHash === conv.transcriptHash;
         if (ev.transcriptKey) return ev.transcriptKey === DA.transcriptKey(conv.transcript);
         return !ev.stale;
