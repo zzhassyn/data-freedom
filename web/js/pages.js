@@ -1,4 +1,4 @@
-/* Очередь апелляций и сводка. */
+/* Очередь апелляций. */
 (function () {
   const DA = window.DA, h = DA.h;
   let appealsTab = "open";
@@ -47,13 +47,4 @@
     render();
   };
 
-  DA.views.insights = function mount(root) {
-    root.append(h("div", { class: "da-page" },
-      h("div", { class: "da-page-head" }, h("h1", { class: "da-h1", tabindex: -1 }, "Сводка")),
-      h("div", { class: "da-list" }, h("div", { class: "da-empty" },
-        h("div", { class: "da-empty-ribbon", "aria-hidden": "true" }, DA.activeChecklist().criteria.filter((c) => c.weight).map((c) => h("i", { style: { "--w": c.weight } }))),
-        h("h2", {}, "Сводка появится, когда будет оценён весь набор"),
-        h("p", {}, "Здесь будут критерии по языкам, распределение итогов, рейтинг операторов и точность против ручной разметки."),
-        h("a", { class: "da-btn", href: "#/" }, "К списку обращений")))));
-  };
 })();
