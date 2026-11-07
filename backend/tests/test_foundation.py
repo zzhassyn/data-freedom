@@ -57,7 +57,7 @@ def test_dev_upload_is_idempotent_and_public_conversation_matches_contract(clien
     after = client.get('/api/conversations/p4-ru-001').json()
     assert before == after
     Conversation.model_validate(after)
-    assert set(after) == {'id', 'datasetGroupId', 'channel', 'language', 'audioUrl', 'transcript', 'importedAt'}
+    assert set(after) == {'id', 'number', 'startedAt', 'datasetGroupId', 'channel', 'language', 'audioUrl', 'transcript', 'importedAt'}
     raw = next(r for r in dev_payload['data']['records'] if r['conversation_id'] == after['id'])
     assert [turn['idx'] for turn in after['transcript']] == list(range(len(raw['transcript'])))
     assert [turn['timestamp'] for turn in after['transcript']] == [turn['timestamp'] for turn in raw['transcript']]

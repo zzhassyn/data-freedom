@@ -1,5 +1,6 @@
 """Small transactional SQLite adapter. JSON is authoritative; columns index queries."""
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -14,6 +15,15 @@ def utcnow():
 
 def json_dumps(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
+
+
+def conversation_started_at(body):
+    """A call carries its own date; an undated chat uses its first import."""
+    timestamp = body['transcript'][0]['timestamp']
+    if 'T' not in timestamp:
+        return body['importedAt']
+    timestamp = re.sub(r'(\.\d{6})\d+', r'\1', timestamp).replace('Z', '+00:00')
+    return datetime.fromisoformat(timestamp).astimezone(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
 
 
 SCHEMA = '''
@@ -63,6 +73,31 @@ class Database:
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         with self.transaction() as conn:
             conn.executescript(SCHEMA)
+            self._migrate_conversation_metadata(conn)
+
+    def _migrate_conversation_metadata(self, conn):
+        """Keep existing registry order once, then persist identity independently of rowid."""
+        rows = conn.execute('SELECT rowid, body_json FROM conversations ORDER BY rowid').fetchall()
+        records = [(row['rowid'], json.loads(row['body_json'])) for row in rows]
+        used = {body['number'] for _, body in records if body.get('number') is not None}
+        last_number = max([rowid for rowid, _ in records] + list(used), default=0)
+        for rowid, body in records:
+            changed = False
+            if body.get('number') is None:
+                if rowid in used:
+                    last_number += 1
+                    body['number'] = last_number
+                else:
+                    body['number'] = rowid
+                used.add(body['number'])
+                changed = True
+            if not body.get('startedAt'):
+                body['startedAt'] = conversation_started_at(body)
+                changed = True
+            if changed:
+                conn.execute('UPDATE conversations SET body_json=? WHERE id=?', (json_dumps(body), body['id']))
+        conn.execute("INSERT INTO sequences(prefix,value) VALUES('conversation',?) "
+                     "ON CONFLICT(prefix) DO UPDATE SET value=MAX(value,excluded.value)", (last_number,))
 
     @contextmanager
     def transaction(self):
@@ -125,7 +160,16 @@ class Database:
         return self._all('conversations', conn)
 
     def save_conversation(self, b, conn=None):
-        self._save('conversations', b, dict(group_id=b['datasetGroupId'], channel=b['channel'], language=b['language'], audio_url=b['audioUrl'], transcript_json=json_dumps(b['transcript']), transcript_hash=b['transcriptHash'], imported_at=b['importedAt']), conn)
+        with self._using(conn) as c:
+            old = c.execute('SELECT body_json FROM conversations WHERE id=?', (b['id'],)).fetchone()
+            if old:
+                previous = json.loads(old['body_json'])
+                b['number'] = previous['number']
+                b['startedAt'] = previous['startedAt']
+            else:
+                b['number'] = int(self.next_id('conversation', c).removeprefix('conversation_'))
+                b['startedAt'] = conversation_started_at(b)
+            self._save('conversations', b, dict(group_id=b['datasetGroupId'], channel=b['channel'], language=b['language'], audio_url=b['audioUrl'], transcript_json=json_dumps(b['transcript']), transcript_hash=b['transcriptHash'], imported_at=b['importedAt']), c)
 
     def get_checklist(self, id, conn=None):
         if id == 'active':

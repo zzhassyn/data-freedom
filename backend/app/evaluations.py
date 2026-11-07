@@ -41,6 +41,14 @@ def public_evaluation(evaluation: dict) -> dict:
     return {key: value for key, value in evaluation.items() if not key.startswith("_")}
 
 
+def source_conversation(db, evaluation: dict, conn=None) -> dict:
+    """Return the transcript used by this evaluation with its durable registry identity."""
+    current = db.get_conversation(evaluation["conversationId"], conn)
+    source = {**(evaluation.get("_conversation") or current),
+              "number": current["number"], "startedAt": current["startedAt"]}
+    return Conversation.model_validate(source).model_dump(by_alias=True)
+
+
 def empty_item(criterion: dict) -> dict:
     return {
         "criterionId": criterion["id"], "criterionHash": criterion["hash"],
@@ -454,6 +462,14 @@ async def create_evaluations(body: EvaluationRequest, request: Request):
 @router.get("/evaluations/{evaluation_id}")
 async def get_evaluation(evaluation_id: str, request: Request):
     return public_evaluation(request.app.state.db.get_evaluation(evaluation_id))
+
+
+@router.get("/evaluations/{evaluation_id}/conversation")
+async def get_evaluation_conversation(evaluation_id: str, request: Request):
+    db = request.app.state.db
+    with db.transaction() as conn:
+        evaluation = db.get_evaluation(evaluation_id, conn)
+        return source_conversation(db, evaluation, conn)
 
 
 @router.get("/jobs/{job_id}")

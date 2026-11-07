@@ -208,6 +208,10 @@ def test_multiple_decisions_preserve_model_total_and_accuracy(seeded_client, exa
 
 def test_old_appeal_keeps_evaluated_transcript_and_hides_internal_fields(seeded_client, dev_payload):
     evaluation = evaluate(seeded_client, ["p1-ru-001"])[0]
+    stored = seeded_client.app.state.db.get_evaluation(evaluation['id'])
+    stored['_conversation'].pop('number', None)
+    stored['_conversation'].pop('startedAt', None)
+    seeded_client.app.state.db.save_evaluation(stored)
     appeal = open_appeal(seeded_client, evaluation)
     original = seeded_client.get("/api/conversations/p1-ru-001").json()
     record = deepcopy(next(record for record in dev_payload["data"]["records"] if record["conversation_id"] == "p1-ru-001"))
@@ -222,7 +226,7 @@ def test_old_appeal_keeps_evaluated_transcript_and_hides_internal_fields(seeded_
     result = detail.json()
     assert result["conversation"] == original
     assert set(result["conversation"]) == {
-        "id", "datasetGroupId", "channel", "language", "audioUrl", "transcript", "importedAt",
+        "id", "number", "startedAt", "datasetGroupId", "channel", "language", "audioUrl", "transcript", "importedAt",
     }
     assert not any(key.startswith("_") for key in result["evaluation"])
     for item in result["evaluation"]["items"]:

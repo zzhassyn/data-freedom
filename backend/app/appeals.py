@@ -6,8 +6,7 @@ from fastapi import APIRouter, Body, Request
 
 from .db import utcnow
 from .errors import ApiError
-from .evaluations import public_evaluation
-from .models import Conversation
+from .evaluations import public_evaluation, source_conversation
 from .scoring import score_evaluation, validate_answer
 
 
@@ -32,12 +31,6 @@ def _criterion_and_item(db, evaluation: dict, criterion_id: str, conn=None):
     if criterion is None or item is None:
         raise ApiError("not_found", f"Критерий {criterion_id} не найден в оценке", 404)
     return checklist, criterion, item
-
-
-def _source_conversation(db, evaluation: dict, conn=None) -> dict:
-    """Evidence is attached to the transcript that the judge actually read."""
-    source = evaluation.get("_conversation") or db.get_conversation(evaluation["conversationId"], conn)
-    return Conversation.model_validate(source).model_dump(by_alias=True)
 
 
 @router.post("/appeals", status_code=201)
@@ -120,7 +113,7 @@ async def list_appeals(request: Request, status: str = "open"):
         for appeal in selected:
             evaluation = db.get_evaluation(appeal["evaluationId"], conn)
             _, criterion, _ = _criterion_and_item(db, evaluation, appeal["criterionId"], conn)
-            conversation = _source_conversation(db, evaluation, conn)
+            conversation = source_conversation(db, evaluation, conn)
             items.append(
                 {
                     **appeal,
@@ -139,7 +132,7 @@ async def get_appeal(request: Request, appeal_id: str):
         appeal = db.get_appeal(appeal_id, conn)
         evaluation = db.get_evaluation(appeal["evaluationId"], conn)
         _, criterion, _ = _criterion_and_item(db, evaluation, appeal["criterionId"], conn)
-        conversation = _source_conversation(db, evaluation, conn)
+        conversation = source_conversation(db, evaluation, conn)
     return {**appeal, "evaluation": public_evaluation(evaluation), "conversation": conversation, "criterion": criterion}
 
 

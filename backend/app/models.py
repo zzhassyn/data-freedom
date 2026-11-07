@@ -22,6 +22,8 @@ class Turn(ApiModel):
 
 class Conversation(ApiModel):
     id: str
+    number: Optional[int] = Field(default=None, ge=1)
+    started_at: Optional[str] = None
     dataset_group_id: str
     channel: Literal['agent chat', 'voice call']
     language: Literal['RU', 'KZ', 'EN']

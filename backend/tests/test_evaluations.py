@@ -89,6 +89,28 @@ def test_contract_example_and_usage_are_calculated_by_queue(seeded_client, monke
     assert Evaluation.model_validate(evaluation).total == 82.94
 
 
+def test_evaluation_conversation_preserves_source_after_reimport(seeded_client, dev_payload):
+    original = seeded_client.get('/api/conversations/p1-ru-001').json()
+    _, (evaluation,) = finish(seeded_client, start(seeded_client))
+    # Evaluations created before registry identity was added still have valid snapshots.
+    stored = seeded_client.app.state.db.get_evaluation(evaluation['id'])
+    stored['_conversation'].pop('number', None)
+    stored['_conversation'].pop('startedAt', None)
+    seeded_client.app.state.db.save_evaluation(stored)
+    changed = copy.deepcopy(next(r for r in dev_payload['data']['records'] if r['conversation_id'] == 'p1-ru-001'))
+    changed['transcript'][0]['text'] = 'Новый вопрос после изменения транскрипта.'
+    assert seeded_client.post('/api/conversations/upload', json=[changed]).json()['updated'] == 1
+    current = seeded_client.get('/api/conversations/p1-ru-001').json()
+    assert current['transcript'] != original['transcript']
+    response = seeded_client.get(f"/api/evaluations/{evaluation['id']}/conversation")
+    assert response.status_code == 200
+    assert response.json() == original
+    assert '_conversation' not in seeded_client.get(f"/api/evaluations/{evaluation['id']}").json()
+    missing = seeded_client.get('/api/evaluations/ev_missing/conversation')
+    assert missing.status_code == 404
+    assert missing.json()['error']['code'] == 'not_found'
+
+
 def test_five_fixture_conversations_and_public_response_shapes(seeded_client):
     job, evaluations = finish(seeded_client, start(seeded_client, FIXTURE_IDS))
     assert job["status"] == "done", evaluations
