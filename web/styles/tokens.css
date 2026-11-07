@@ -1,0 +1,54 @@
+/* Токены DataAvengers. Решения в plan/DESIGN.md. */
+:root {
+  --da-bg: oklch(97.6% 0.006 175);
+  --da-surface: oklch(99.3% 0.003 175);
+  --da-surface-2: oklch(95.4% 0.008 175);
+  --da-surface-3: oklch(92.6% 0.01 175);
+  --da-line: oklch(90% 0.01 175);
+  --da-text: oklch(23% 0.02 200);
+  --da-text-2: oklch(43% 0.02 200);
+  --da-text-3: oklch(56% 0.015 200);
+
+  --da-brand: oklch(50% 0.11 172);
+  --da-brand-press: oklch(44% 0.11 172);
+  --da-brand-soft: oklch(93% 0.04 172);
+  --da-on-brand: oklch(99% 0.005 172);
+
+  --da-yes: oklch(58% 0.13 155);
+  --da-yes-soft: oklch(94% 0.05 155);
+  --da-partial: oklch(70% 0.14 70);
+  --da-partial-ink: oklch(52% 0.12 65);
+  --da-partial-soft: oklch(95% 0.05 85);
+  --da-no: oklch(60% 0.17 32);
+  --da-no-ink: oklch(52% 0.17 30);
+  --da-no-soft: oklch(95% 0.035 35);
+  --da-na: oklch(62% 0.02 230);
+  --da-na-soft: oklch(94% 0.01 230);
+  --da-gross: oklch(48% 0.19 25);
+  --da-gross-soft: oklch(93% 0.05 25);
+
+  --da-client: oklch(99% 0.003 230);
+  --da-operator: oklch(95.6% 0.03 172);
+  --da-bot: oklch(96.6% 0.006 260);
+
+  --da-na-hatch: repeating-linear-gradient(135deg, var(--da-na) 0 1px, transparent 1px 5px);
+
+  --da-shadow-rest: 0 1px 1px oklch(30% 0.03 190 / 0.06), 0 2px 6px oklch(30% 0.03 190 / 0.06);
+  --da-shadow-raised: 0 1px 2px oklch(30% 0.03 190 / 0.08), 0 8px 24px -6px oklch(30% 0.03 190 / 0.14);
+  --da-shadow-overlay: 0 2px 4px oklch(30% 0.03 190 / 0.08), 0 24px 64px -12px oklch(30% 0.03 190 / 0.28);
+  --da-highlight: inset 0 1px 0 oklch(100% 0 0 / 0.6);
+
+  --da-r-panel: 24px;
+  --da-r-card: 16px;
+  --da-r-control: 12px;
+  --da-r-pill: 10px;
+  --da-r-tag: 6px;
+
+  --da-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --da-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --da-fast: 150ms;
+  --da-dur: 280ms;
+  --da-slow: 500ms;
+
+  --da-font: "Onest", "Segoe UI", system-ui, sans-serif;
+}
