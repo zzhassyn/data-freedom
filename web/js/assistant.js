@@ -4,6 +4,7 @@
   DA.i18n.addMessages({
     "assistant.title": { ru: "ИИ-ассистент", kk: "ЖИ көмекшісі", en: "AI assistant" },
     "assistant.open": { ru: "Спросить ассистента", kk: "Көмекшіден сұрау", en: "Ask the assistant" },
+    "assistant.minimize": { ru: "Свернуть чат", kk: "Чатты жию", en: "Minimize chat" },
     "assistant.context": { ru: "Обращение №{number}", kk: "№{number} өтініш", en: "Conversation #{number}" },
     "assistant.welcome": { ru: "Разберём этот диалог", kk: "Осы диалогты талдайық", en: "Let’s review this conversation" },
     "assistant.intro": { ru: "Помогу понять оценку, найти подтверждающие цитаты и улучшить ответ оператора.", kk: "Бағаны түсінуге, дәлел болатын дәйексөздерді табуға және оператор жауабын жақсартуға көмектесемін.", en: "I can explain the assessment, find supporting quotes and suggest better operator responses." },
@@ -56,7 +57,7 @@
     const composer = h("form", { class: "da-assistant-composer", onsubmit: (event) => { event.preventDefault(); send(); } },
       input, h("div", { class: "da-assistant-composer-actions" }, stop, submit));
     const body = h("div", { class: "da-assistant-body" }, welcome, log, notice);
-    const close = h("button", { class: "da-assistant-control", type: "button", "aria-label": DA.msg("ui.close"), onclick: () => setOpen(false) }, DA.icon("x", 18));
+    const close = h("button", { class: "da-assistant-control da-assistant-minimize", type: "button", "aria-label": m("minimize"), title: m("minimize"), onclick: () => setOpen(false) }, h("span", { "aria-hidden": "true" }, "−"));
     const clear = h("button", { class: "da-assistant-control", type: "button", "aria-label": m("clear"), title: m("clear"), onclick: () => {
       cancel(); history = []; log.replaceChildren(); notice.hidden = true; welcome.hidden = false; input.value = ""; syncControls(); input.focus();
     } }, DA.icon("refresh", 17));
@@ -76,9 +77,10 @@
       panel?.setAttribute("aria-busy", String(!!pending));
     }
     function setOpen(value) {
-      expanded = value; panel.hidden = !value;
+      expanded = value; panel.hidden = !value; launcher.hidden = value;
+      element.classList.toggle("is-expanded", value);
       launcher.setAttribute("aria-expanded", String(value));
-      if (value) { input.focus(); body.scrollTop = body.scrollHeight; }
+      if (value) { (pending ? close : input).focus(); body.scrollTop = body.scrollHeight; }
       else launcher.focus();
     }
     function showNotice(message) {
