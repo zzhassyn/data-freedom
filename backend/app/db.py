@@ -1,0 +1,197 @@
+"""Small transactional SQLite adapter. JSON is authoritative; columns index queries."""
+import json
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+
+from .errors import ApiError
+
+
+def utcnow():
+    return datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+
+
+def json_dumps(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
+
+
+SCHEMA = '''
+CREATE TABLE IF NOT EXISTS conversations (
+ id TEXT PRIMARY KEY, group_id TEXT NOT NULL, channel TEXT NOT NULL, language TEXT NOT NULL,
+ audio_url TEXT, transcript_json TEXT NOT NULL, transcript_hash TEXT NOT NULL,
+ imported_at TEXT NOT NULL, body_json TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS conversations_group ON conversations(group_id);
+CREATE TABLE IF NOT EXISTS checklists (
+ id TEXT PRIMARY KEY, version INTEGER NOT NULL UNIQUE, name TEXT NOT NULL,
+ based_on_version INTEGER, is_active INTEGER NOT NULL, created_at TEXT NOT NULL, body_json TEXT NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS one_active_checklist ON checklists(is_active) WHERE is_active=1;
+CREATE TABLE IF NOT EXISTS evaluations (
+ id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id),
+ checklist_id TEXT NOT NULL REFERENCES checklists(id), status TEXT NOT NULL, model TEXT,
+ started_at TEXT, finished_at TEXT, duration_ms INTEGER, body_json TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS evaluations_conversation ON evaluations(conversation_id);
+CREATE INDEX IF NOT EXISTS evaluations_status ON evaluations(status);
+CREATE INDEX IF NOT EXISTS evaluations_checklist ON evaluations(checklist_id, status);
+CREATE TABLE IF NOT EXISTS jobs (
+ id TEXT PRIMARY KEY, status TEXT NOT NULL, created_at TEXT NOT NULL, body_json TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS jobs_status ON jobs(status);
+CREATE TABLE IF NOT EXISTS appeals (
+ id TEXT PRIMARY KEY, evaluation_id TEXT NOT NULL REFERENCES evaluations(id), criterion_id TEXT NOT NULL,
+ status TEXT NOT NULL, created_at TEXT NOT NULL, body_json TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS appeals_status ON appeals(status);
+CREATE INDEX IF NOT EXISTS appeals_evaluation ON appeals(evaluation_id);
+CREATE UNIQUE INDEX IF NOT EXISTS one_open_appeal ON appeals(evaluation_id, criterion_id) WHERE status='open';
+CREATE TABLE IF NOT EXISTS gold (
+ conversation_id TEXT NOT NULL, criterion_id TEXT NOT NULL, answer TEXT NOT NULL, note TEXT,
+ PRIMARY KEY(conversation_id,criterion_id));
+CREATE TABLE IF NOT EXISTS ai_cache (
+ kind TEXT NOT NULL, key TEXT NOT NULL, body_json TEXT NOT NULL, usage_json TEXT NOT NULL,
+ created_at TEXT NOT NULL, PRIMARY KEY(kind,key));
+CREATE TABLE IF NOT EXISTS sequences (prefix TEXT PRIMARY KEY, value INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS model_calls (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, input_tokens INTEGER NOT NULL,
+ output_tokens INTEGER NOT NULL, cost_usd REAL NOT NULL, calls INTEGER NOT NULL,
+ latency_ms INTEGER NOT NULL, created_at TEXT NOT NULL);
+'''
+
+
+class Database:
+    def __init__(self, path):
+        self.path = str(path)
+        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+        with self.transaction() as conn:
+            conn.executescript(SCHEMA)
+
+    @contextmanager
+    def transaction(self):
+        conn = sqlite3.connect(self.path, timeout=15)
+        conn.row_factory = sqlite3.Row
+        conn.execute('PRAGMA foreign_keys=ON')
+        conn.execute('PRAGMA journal_mode=WAL')
+        try:
+            conn.execute('BEGIN IMMEDIATE')
+            yield conn
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    @contextmanager
+    def _using(self, conn=None):
+        if conn is not None:
+            yield conn
+        else:
+            with self.transaction() as owned:
+                yield owned
+
+    def _get(self, table, record_id, noun, conn=None):
+        with self._using(conn) as c:
+            row = c.execute(f'SELECT body_json FROM {table} WHERE id=?', (record_id,)).fetchone()
+        if row is None:
+            raise ApiError('not_found', f'{noun} {record_id} не найден', 404)
+        return json.loads(row['body_json'])
+
+    def _all(self, table, conn=None):
+        with self._using(conn) as c:
+            rows = c.execute(f'SELECT body_json FROM {table} ORDER BY rowid DESC').fetchall()
+        return [json.loads(row['body_json']) for row in rows]
+
+    def _save(self, table, body, columns, conn=None):
+        values = {'id': body['id'], **columns, 'body_json': json_dumps(body)}
+        keys = ','.join(values)
+        placeholders = ','.join('?' for _ in values)
+        update = ','.join(f'{key}=excluded.{key}' for key in values if key != 'id')
+        with self._using(conn) as c:
+            c.execute(f'INSERT INTO {table} ({keys}) VALUES ({placeholders}) ON CONFLICT(id) DO UPDATE SET {update}', tuple(values.values()))
+
+    def get_conversation(self, id, conn=None):
+        return self._get('conversations', id, 'Диалог', conn)
+
+    def all_conversations(self, conn=None):
+        return self._all('conversations', conn)
+
+    def save_conversation(self, b, conn=None):
+        self._save('conversations', b, dict(group_id=b['datasetGroupId'], channel=b['channel'], language=b['language'], audio_url=b['audioUrl'], transcript_json=json_dumps(b['transcript']), transcript_hash=b['transcriptHash'], imported_at=b['importedAt']), conn)
+
+    def get_checklist(self, id, conn=None):
+        if id == 'active':
+            with self._using(conn) as c:
+                row = c.execute('SELECT body_json FROM checklists WHERE is_active=1').fetchone()
+            if row is None:
+                raise ApiError('not_found', 'Активный чек-лист не найден', 404)
+            return json.loads(row['body_json'])
+        return self._get('checklists', id, 'Чек-лист', conn)
+
+    def all_checklists(self, conn=None):
+        return self._all('checklists', conn)
+
+    def save_checklist(self, b, conn=None):
+        self._save('checklists', b, dict(version=b['version'], name=b['name'], based_on_version=b.get('basedOnVersion'), is_active=int(b['isActive']), created_at=b['createdAt']), conn)
+
+    def get_evaluation(self, id, conn=None):
+        return self._get('evaluations', id, 'Оценка', conn)
+
+    def all_evaluations(self, conn=None):
+        return self._all('evaluations', conn)
+
+    def save_evaluation(self, b, conn=None):
+        self._save('evaluations', b, dict(conversation_id=b['conversationId'], checklist_id=b['checklistId'], status=b['status'], model=b.get('model'), started_at=b.get('startedAt'), finished_at=b.get('finishedAt'), duration_ms=b.get('durationMs')), conn)
+
+    def get_appeal(self, id, conn=None):
+        return self._get('appeals', id, 'Апелляция', conn)
+
+    def all_appeals(self, conn=None):
+        return self._all('appeals', conn)
+
+    def save_appeal(self, b, conn=None):
+        self._save('appeals', b, dict(evaluation_id=b['evaluationId'], criterion_id=b['criterionId'], status=b['status'], created_at=b['createdAt']), conn)
+
+    def get_job(self, id, conn=None):
+        return self._get('jobs', id, 'Задача', conn)
+
+    def all_jobs(self, conn=None):
+        return self._all('jobs', conn)
+
+    def save_job(self, b, conn=None):
+        self._save('jobs', b, dict(status=b['status'], created_at=b.get('createdAt') or b.get('startedAt') or utcnow()), conn)
+
+    def next_id(self, prefix, conn=None):
+        with self._using(conn) as c:
+            c.execute('INSERT INTO sequences(prefix,value) VALUES(?,1) ON CONFLICT(prefix) DO UPDATE SET value=value+1', (prefix,))
+            value = c.execute('SELECT value FROM sequences WHERE prefix=?', (prefix,)).fetchone()[0]
+        return f'{prefix}_{value}'
+
+    def get_cache(self, kind, key, conn=None):
+        with self._using(conn) as c:
+            row = c.execute('SELECT * FROM ai_cache WHERE kind=? AND key=?', (kind, key)).fetchone()
+        return None if row is None else dict(body=json.loads(row['body_json']), usage=json.loads(row['usage_json']), createdAt=row['created_at'])
+
+    def set_cache(self, kind, key, body, usage=None, conn=None):
+        with self._using(conn) as c:
+            c.execute('INSERT INTO ai_cache VALUES(?,?,?,?,?) ON CONFLICT(kind,key) DO UPDATE SET body_json=excluded.body_json,usage_json=excluded.usage_json,created_at=excluded.created_at', (kind, key, json_dumps(body), json_dumps(usage or {}), utcnow()))
+
+    def invalidate_cache(self, kind, key, conn=None):
+        with self._using(conn) as c:
+            c.execute('DELETE FROM ai_cache WHERE kind=? AND key=?', (kind, key))
+
+    def record_usage(self, usage, latency_ms=0, kind='extra'):
+        if hasattr(usage, 'model_dump'):
+            usage = usage.model_dump(by_alias=True)
+        with self.transaction() as c:
+            c.execute('INSERT INTO model_calls(kind,input_tokens,output_tokens,cost_usd,calls,latency_ms,created_at) VALUES(?,?,?,?,?,?,?)', (kind, usage.get('inputTokens',0), usage.get('outputTokens',0), usage.get('costUsd',0), usage.get('calls',0), latency_ms, utcnow()))
+
+
+def latest_evaluations(db, checklist_id=None, group_id=None):
+    checklist_id = checklist_id or db.get_checklist('active')['id']
+    db.get_checklist(checklist_id)
+    conversations = {c['id']: c for c in db.all_conversations() if not group_id or c['datasetGroupId'] == group_id}
+    latest = {}
+    for ev in db.all_evaluations():
+        conversation = conversations.get(ev['conversationId'])
+        if (conversation and ev['status'] == 'done' and ev['checklistId'] == checklist_id
+                and ev.get('transcriptHash') == conversation.get('transcriptHash')):
+            latest.setdefault(ev['conversationId'], ev)
+    return list(latest.values())

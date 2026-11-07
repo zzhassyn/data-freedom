@@ -15,7 +15,7 @@
       root.append(h("div", { class: "da-page" }, h("div", { class: "da-empty" },
         h("h2", { tabindex: -1 }, "Такого обращения нет в базе"),
         h("p", {}, "Возможно, набор ещё не загружен."),
-        h("a", { class: "da-btn", href: "#/" }, "К списку обращений"))));
+        DA.state.role === "reviewer" ? h("a", { class: "da-btn", href: "#/review" }, "Вернуться к очереди") : h("a", { class: "da-btn", href: "#/" }, "К списку обращений"))));
       return;
     }
     const cid = conv.conversation_id;
@@ -24,6 +24,8 @@
     const CL = () => (ev ? DA.checklist(ev.checklistVersion) : DA.activeChecklist());
     let openId = params.query.criterion || null;
     let running = false;
+    /* Проверяющий видит карточку только для чтения: без переоценки и без новых апелляций. */
+    const readOnly = DA.state.role === "reviewer";
     const timers = [];
 
     /* ---------- Транскрипт ---------- */
@@ -137,8 +139,8 @@
         panel.append(h("div", { class: "da-empty" },
           h("div", { class: "da-empty-ribbon", "aria-hidden": "true" }, CL().criteria.filter((c) => c.weight).map((c) => h("i", { style: { "--w": c.weight } }))),
           h("h2", {}, "Диалог ещё не оценён"),
-          h("p", {}, "Модель пройдёт по каждому критерию чек-листа и приведёт реплики, на которых основан ответ."),
-          h("button", { class: "da-btn is-primary", onclick: (e) => evaluate(e.currentTarget) }, "Оценить")));
+          h("p", {}, readOnly ? "Оценку запускает аналитик." : "Модель пройдёт по каждому критерию чек-листа и приведёт реплики, на которых основан ответ."),
+          readOnly ? null : h("button", { class: "da-btn is-primary", onclick: (e) => evaluate(e.currentTarget) }, "Оценить")));
         return;
       }
       const done = ev.items.filter((i) => i.status === "done").length;
@@ -271,17 +273,15 @@
       if (appeal) {
         if (appeal.status === "open") {
           body.append(h("div", { class: "da-appeal-state" },
-            h("b", {}, "Апелляция на рассмотрении"),
+            h("b", {}, "На рассмотрении у проверяющего"),
             h("span", {}, appeal.comment),
-            DA.state.role === "reviewer"
-              ? h("div", {}, h("button", { class: "da-btn is-primary is-sm", style: { marginTop: "6px" }, onclick: () => decisionDrawer(appeal) }, "Принять решение"))
-              : h("span", { class: "da-small da-muted" }, "Решение принимает проверяющий")));
+            readOnly ? h("div", {}, h("a", { class: "da-btn is-sm", style: { marginTop: "6px" }, href: `#/review/${appeal.id}` }, "Разобрать апелляцию")) : null));
         } else {
           body.append(h("div", { class: "da-appeal-state is-done" },
             h("b", {}, appeal.status === "changed" ? `Изменено проверяющим: ${DA.answerLabel(appeal.originalAnswer, c)} → ${DA.answerLabel(appeal.decision.newAnswer, c)}` : "Оценка подтверждена проверяющим"),
             h("span", {}, appeal.decision.reason)));
         }
-      } else if (!running) {
+      } else if (!running && !readOnly) {
         body.append(h("div", { class: "da-crit-actions" },
           h("button", { class: "da-btn is-sm", onclick: (e) => appealDrawer(c, it, e.currentTarget) }, DA.icon("message"), "Оспорить оценку")));
       }
@@ -357,7 +357,7 @@
       setHeadBusy(false);
     }
 
-    /* ---------- Апелляция и решение ---------- */
+    /* ---------- Апелляция ---------- */
     function previewTotal(criterionId, answer) {
       const answers = Object.fromEntries(ev.items.map((i) => [i.criterionId, i.answer]));
       answers[criterionId] = answer;
@@ -407,71 +407,24 @@
       });
     }
 
-    function decisionDrawer(appeal) {
-      const c = DA.criterionById(CL(), appeal.criterionId);
-      const it = ev.items.find((i) => i.criterionId === c.id);
-      let action = "confirm", newAnswer = appeal.proposedAnswer != null ? appeal.proposedAnswer : null;
-      const reason = h("textarea", { class: "da-textarea", placeholder: "Коротко объясните решение, его увидит аналитик" });
-      const prev = h("div", { class: "da-preview-total" });
-      const answerBox = h("div", { class: "da-block", hidden: true }, h("div", { class: "da-label" }, "Новая оценка"),
-        DA.segmented(answerOptions(c, it.answer), newAnswer, (v) => { newAnswer = v; refresh(); }, "Новая оценка"));
-      const save = h("button", { class: "da-btn is-primary", disabled: true }, "Сохранить решение");
-      function refresh() {
-        answerBox.hidden = action !== "change";
-        const after = action === "change" && newAnswer != null ? previewTotal(c.id, newAnswer) : ev.total;
-        prev.replaceChildren(...(action === "change" && newAnswer != null
-          ? [h("span", { class: "da-muted" }, "Итог"), h("b", {}, `${DA.fmt.score(ev.total)} → ${DA.fmt.score(after)}`)]
-          : [h("span", { class: "da-muted" }, "Итог не изменится"), h("b", {}, DA.fmt.score(ev.total))]));
-        save.disabled = reason.value.trim().length < 10 || (action === "change" && newAnswer == null);
-      }
-      reason.addEventListener("input", refresh);
-      const d = DA.drawer({
-        title: "Решение по апелляции", subtitle: `${c.title}, обращение № ${DA.convNumber(cid)}`,
-        body: [
-          h("div", { class: "da-block" }, h("div", { class: "da-label" }, "Правило"), h("p", { class: "da-rule", style: { margin: 0 } }, c.description)),
-          h("div", { class: "da-block" }, h("div", { class: "da-label" }, "Оценка модели"),
-            h("div", {}, DA.answerPill(it.answer, c)), h("p", { style: { margin: 0, fontSize: "14px" } }, it.answer === "na" ? it.naReason : it.explanation)),
-          h("div", { class: "da-block" }, h("div", { class: "da-label" }, "Комментарий аналитика"), h("p", { style: { margin: 0, fontSize: "14px" } }, appeal.comment),
-            appeal.proposedAnswer != null ? h("div", { class: "da-small da-muted" }, "Предлагает: ", DA.answerPill(appeal.proposedAnswer, c)) : null),
-          DA.segmented([{ value: "confirm", label: "Подтвердить оценку" }, { value: "change", label: "Изменить оценку" }], action, (v) => { action = v; refresh(); }, "Решение"),
-          answerBox,
-          h("label", { class: "da-field" }, h("span", {}, "Причина решения"), reason),
-          prev],
-        foot: [save, h("button", { class: "da-btn is-text", onclick: () => d.close() }, "Отмена")]
-      });
-      refresh();
-      save.addEventListener("click", () => {
-        const before = ev.total;
-        DA.decideAppeal(appeal, action, newAnswer, reason.value.trim());
-        ev = DA.state.evaluations[cid];
-        d.close();
-        renderPanel();
-        if (totalNode) DA.countTo(totalNode, before, ev.total, 700);
-        DA.toast(action === "change" ? "Решение сохранено, итог пересчитан" : "Оценка подтверждена", critNodes.get(c.id));
-      });
-    }
-
     /* ---------- Шапка карточки ---------- */
     const evalBtn = h("button", { class: "da-btn", onclick: (e) => evaluate(e.currentTarget) }, DA.icon("refresh"), ev ? "Переоценить" : "Оценить");
     function setHeadBusy(b) { evalBtn.disabled = b; evalBtn.classList.toggle("is-busy", b); evalBtn.lastChild.textContent = b ? "Оценка идёт" : "Переоценить"; }
     const durSec = DA.tx.duration(conv);
     root.append(h("div", { class: "da-page" },
+      readOnly ? h("a", { class: "da-btn is-text is-sm", href: "#/review", style: { marginBottom: "8px" } }, DA.icon("back", 16), "Вернуться к очереди") : null,
       h("div", { class: "da-card-head" },
-        h("a", { class: "da-back", href: "#/", "aria-label": "К списку обращений" }, DA.icon("back")),
+        readOnly ? null : h("a", { class: "da-back", href: "#/", "aria-label": "К списку обращений" }, DA.icon("back")),
         h("h1", { class: "da-h1", tabindex: -1, title: cid }, `Обращение № ${DA.convNumber(cid)}`),
         h("span", { class: "da-chip" }, DA.langLabel[conv.language]),
         h("span", { class: "da-chip" }, DA.icon(isCall ? "phone" : "message"), DA.channelLabel(conv)),
         h("span", { class: "da-muted da-small" }, `${DA.fmt.dateTime(DA.tx.startedAt(conv))}, длительность ${DA.fmt.duration(durSec)}`),
-        h("div", { class: "da-card-actions" }, evalBtn)),
+        readOnly ? null : h("div", { class: "da-card-actions" }, evalBtn)),
       h("div", { class: "da-card-grid" }, transcript, panel)));
 
     renderPanel();
     if (params.query.turn) setTimeout(() => jumpTo(+params.query.turn, "yes"), 200);
     if (openId) setTimeout(() => { const n = critNodes.get(openId); n && n.scrollIntoView({ block: "nearest" }); }, 100);
-    if (params.query.decide && DA.state.role === "reviewer") {
-      const a = DA.state.appeals.find((x) => x.id === params.query.decide && x.status === "open");
-      if (a) setTimeout(() => decisionDrawer(a), 250);
-    }
     return () => timers.forEach(clearTimeout);
   };
 })();

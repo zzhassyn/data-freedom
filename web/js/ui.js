@@ -280,3 +280,57 @@
     return root;
   };
 })();
+
+/* Модальное окно по центру поверх затемнения, на телефоне выезжает снизу. */
+(function () {
+  const DA = window.DA, h = DA.h;
+  let seq = 0;
+
+  DA.modal = function ({ title, body, foot, onClose, width }) {
+    const prevFocus = document.activeElement;
+    const titleId = "da-modal-title-" + ++seq;
+    const scrim = h("div", { class: "da-scrim" });
+    const panel = h("div", { class: "da-modal", role: "dialog", "aria-modal": "true", "aria-labelledby": titleId, tabindex: -1, style: { width: `min(${width || 560}px, 100%)` } },
+      h("div", { class: "da-modal-head" },
+        h("h2", { id: titleId }, title),
+        h("button", { class: "da-close", type: "button", "aria-label": "Закрыть", onclick: () => close() }, DA.icon("x"))),
+      h("div", { class: "da-modal-body" }, body),
+      foot ? h("div", { class: "da-modal-foot" }, foot) : null);
+    const wrap = h("div", { class: "da-modal-wrap" }, panel);
+    let open = true;
+
+    const focusable = () => [...panel.querySelectorAll("button, input, textarea, a[href], [tabindex]:not([tabindex='-1'])")]
+      .filter((x) => !x.disabled && x.offsetParent !== null && !(x.type === "radio" && !x.checked));
+    function key(e) {
+      if (e.key === "Escape") { e.preventDefault(); close(); }
+      if (e.key === "Tab") {
+        const f = focusable();
+        if (!f.length) { e.preventDefault(); return; }
+        const i = f.indexOf(document.activeElement);
+        if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
+        else if (!e.shiftKey && (i === -1 || i === f.length - 1)) { e.preventDefault(); f[0].focus(); }
+      }
+    }
+    function close() {
+      if (!open) return;
+      open = false;
+      scrim.classList.remove("is-on"); panel.classList.remove("is-on");
+      document.removeEventListener("keydown", key);
+      window.removeEventListener("hashchange", close);
+      setTimeout(() => { scrim.remove(); wrap.remove(); }, 240);
+      if (prevFocus && prevFocus.focus && document.contains(prevFocus)) prevFocus.focus({ preventScroll: true });
+      onClose && onClose();
+    }
+    scrim.addEventListener("click", close);
+    document.addEventListener("keydown", key);
+    window.addEventListener("hashchange", close);
+    document.body.append(scrim, wrap);
+    requestAnimationFrame(() => { scrim.classList.add("is-on"); panel.classList.add("is-on"); });
+    setTimeout(() => {
+      if (!open || panel.contains(document.activeElement)) return;
+      const f = panel.querySelector("[autofocus], .da-seg button[aria-pressed='true'], input:checked, .da-input");
+      (f || panel).focus();
+    }, 60);
+    return { close, panel };
+  };
+})();
