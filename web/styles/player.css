@@ -73,3 +73,34 @@
   .da-player-play, .da-player-play-icon, .da-player-pause-icon, .da-player-speed button, .da-player-wave { transition: none; }
   .da-player-play:active, .da-player-speed button:active { transform: none; }
 }
+
+/* Источник расшифровки и переход к месту в записи. */
+.da-transcript .da-player { top: 16px; }
+.da-transcript .da-player-external { position: static; display: flex; align-items: center; gap: 12px; background: var(--da-surface-2); }
+.da-transcript-tools { display: grid; gap: 8px; margin-bottom: 16px; }
+.da-transcript-tools:not(:has(> :not([hidden]))) { display: none; }
+.da-transcription-controls { display: grid; gap: 8px; min-width: 0; }
+.da-transcription-controls .da-seg { width: 100%; }
+.da-transcription-controls .da-seg button { flex: 1; height: auto; min-height: 36px; padding: 7px 10px; line-height: 1.3; }
+.da-transcription-controls .da-seg button:disabled { color: var(--da-text-3); cursor: default; }
+.da-transcription-status { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; color: var(--da-text-2); font-size: 13px; line-height: 1.5; }
+.da-transcription-status .da-thinking { padding: 0; }
+.da-transcription-evidence { margin: 0 0 16px; padding: 10px 12px; background: var(--da-surface-2); border-radius: var(--da-r-control); color: var(--da-text-2); font-size: 13px; line-height: 1.5; }
+.da-turns[hidden], .da-transcription-controls[hidden], .da-transcription-status[hidden], .da-transcription-evidence[hidden] { display: none; }
+.da-turn-meta { align-items: center; }
+.da-turn-listen { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-height: 28px; margin: -2px -5px; padding: 4px 5px; border: 0; border-radius: 7px; background: transparent; color: var(--da-brand-press); font: inherit; font-weight: 500; cursor: pointer; transition: background-color 150ms, transform 100ms var(--da-ease); }
+.da-turn-listen:hover { background: var(--da-brand-soft); }
+.da-turn-listen:active { transform: scale(.96); }
+.da-turn-listen:focus-visible { outline: 2px solid var(--da-brand); outline-offset: 2px; }
+.da-mask { padding: 1px 5px; border-radius: 4px; background: var(--da-surface-3); color: var(--da-text-2); font-size: .9em; white-space: normal; }
+.da-turn.r-unknown .da-bubble { background: var(--da-surface-2); border-color: transparent; border-top-left-radius: 6px; }
+.da-turn-doubtful { font-size: 12px; color: var(--da-text-2); }
+.da-turn.is-speaking .da-bubble { outline: 1px solid var(--da-brand); outline-offset: 2px; }
+@media (max-width: 900px) {
+  .da-transcript .da-player { top: 118px; }
+  .da-turn-listen { min-height: 36px; padding-inline: 6px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .da-turn-listen { transition: none; }
+  .da-turn-listen:active { transform: none; }
+}
