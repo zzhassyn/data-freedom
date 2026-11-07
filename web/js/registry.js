@@ -67,6 +67,11 @@
     "registry.totalAll": { ru: "Всего обращений", kk: "Барлық өтініш", en: "Total conversations" },
     "registry.evaluatedLabel": { ru: "Оценено", kk: "Бағаланды", en: "Evaluated" },
     "registry.averageLabel": { ru: "Средний итог", kk: "Орташа қорытынды", en: "Average score" },
+    "registry.conversationNoun": { ru: { one: "обращение", few: "обращения", many: "обращений", other: "обращения" }, kk: "өтініш", en: { one: "conversation", other: "conversations" } },
+    "registry.evaluatedBefore": { ru: "оценено ", kk: "", en: "evaluated " },
+    "registry.evaluatedAfter": { ru: "", kk: " бағаланды", en: "" },
+    "registry.averageInline": { ru: "средний итог ", kk: "орташа қорытынды ", en: "average score " },
+    "registry.allEvaluated": { ru: "все оценены", kk: "бәрі бағаланды", en: "all evaluated" },
     "registry.pendingAppeals": {
       ru: { one: "апелляция ждёт решения", few: "апелляции ждут решения", many: "апелляций ждут решения", other: "апелляции ждут решения" },
       kk: "апелляция шешім күтуде", en: { one: "appeal awaiting a decision", other: "appeals awaiting a decision" }
@@ -189,6 +194,12 @@
     return cell;
   }
 
+  function topic(record) {
+    const modelTopic = record.summary?.topic;
+    if (typeof modelTopic === "string" && modelTopic.trim()) return modelTopic;
+    return record.transcript.find((turn) => turn.speaker === "client")?.text || "";
+  }
+
   function marks(cid) {
     const ev = DA.state.evaluations[cid];
     const open = DA.state.appeals.some((a) => a.conversationId === cid && a.status === "open");
@@ -220,19 +231,22 @@
     const tbody = h("tbody");
     const counter = h("span", { class: "da-registry-scope", "aria-live": "polite" });
     const totalValue = h("b"), evaluatedValue = h("b"), averageValue = h("b"), appealValue = h("b"), grossValue = h("b");
-    const appealLabel = h("span"), grossLabel = h("span");
-    const metric = (value, label, cls) => h("div", { class: `da-registry-metric${cls ? " " + cls : ""}` }, value, h("span", {}, label));
-    const averageMetric = metric(averageValue, m("averageLabel"), "is-average");
-    const evaluatedMetric = h("div", { class: "da-registry-evaluation" }, metric(evaluatedValue, m("evaluatedLabel")), averageMetric);
-    const appealMetric = h("a", { class: "da-registry-metric is-link", href: "#/appeals?status=open" }, appealValue, appealLabel);
+    const totalLabel = h("span"), appealLabel = h("span"), grossLabel = h("span");
+    const totalMetric = h("div", { class: "da-registry-metric" }, totalValue, " ", totalLabel);
+    const averageMetric = h("div", { class: "da-registry-metric is-average" }, m("averageInline"), averageValue);
+    const evaluatedPart = h("span", {}, m("evaluatedBefore"), evaluatedValue, m("evaluatedAfter"));
+    const evaluatedAll = h("span", { hidden: true }, m("allEvaluated"));
+    const progressFill = h("i"), progress = h("span", { class: "da-registry-evaluation-progress", "aria-hidden": "true" }, progressFill);
+    const evaluatedMetric = h("div", { class: "da-registry-metric da-registry-evaluation" }, evaluatedPart, evaluatedAll, progress);
+    const appealMetric = h("a", { class: "da-registry-metric is-link is-appeal", href: "#/appeals?status=open" }, appealValue, " ", appealLabel);
     const grossMetric = h("a", { class: "da-registry-metric is-link is-gross", href: "#/?state=gross", onclick: (event) => {
       if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       event.preventDefault();
       GROUPS.forEach((g) => filter[g.key].clear());
       filter.state.add("gross"); filter.q = ""; filter.batch = null; search.value = "";
       filtersChanged(); view.page = 1; menu.refresh(); render();
-    } }, grossValue, grossLabel);
-    const summary = h("section", { class: "da-registry-summary", "aria-label": m("summary") }, metric(totalValue, m("totalAll")), evaluatedMetric, appealMetric, grossMetric);
+    } }, grossValue, " ", grossLabel);
+    const summary = h("section", { class: "da-registry-summary", "aria-label": m("summary"), tabindex: 0 }, totalMetric, evaluatedMetric, averageMetric, appealMetric, grossMetric);
     const chips = h("div", { class: "da-active-filters" });
     const menu = DA.filterMenu(GROUPS, filter, () => { filter.batch = null; filtersChanged(); view.page = 1; render(); });
     const range = h("span", { class: "da-pager-range", "aria-live": "polite" });
@@ -332,6 +346,7 @@
         return ev && !ev.stale && ev.grossFlagged;
       }).length;
       DA.i18n.bindText(totalValue, () => records.length.toLocaleString(DA.fmt.locale()));
+      DA.i18n.bindText(totalLabel, m("conversationNoun", { count: records.length }));
       DA.i18n.bindText(evaluatedValue, () => evaluated.length.toLocaleString(DA.fmt.locale()));
       DA.i18n.bindText(averageValue, () => average == null ? "" : average.toLocaleString(DA.fmt.locale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 }));
       DA.i18n.bindText(appealValue, () => appeals.toLocaleString(DA.fmt.locale()));
@@ -339,7 +354,11 @@
       DA.i18n.bindText(appealLabel, m("pendingAppeals", { count: appeals }));
       DA.i18n.bindText(grossLabel, m("grossCount", { count: gross }));
       summary.hidden = !records.length;
-      evaluatedMetric.hidden = !evaluated.length;
+      const complete = records.length > 0 && evaluated.length === records.length;
+      evaluatedPart.hidden = complete;
+      evaluatedAll.hidden = !complete;
+      progress.hidden = complete;
+      progressFill.style.transform = `scaleX(${records.length ? evaluated.length / records.length : 0})`;
       averageMetric.hidden = !scored.length;
       appealMetric.hidden = !appeals;
       grossMetric.hidden = !gross;
@@ -519,7 +538,7 @@
           onkeydown: (e) => { if (e.key === "Enter" && e.target === e.currentTarget) open(); } },
           h("td", { class: "c-select", onclick: (e) => e.stopPropagation() }, control),
           h("td", { class: "da-num c-num", title: cid }, DA.convNumber(cid)),
-          h("td", { class: "c-prev" }, h("div", { class: "da-preview" }, r.summary?.topic || DA.tx.preview(r)),
+          h("td", { class: "c-prev" }, h("div", { class: "da-preview" }, topic(r)),
             h("div", { class: "da-record-meta" },
               h("span", { class: "c-chan" }, h("span", { class: "da-channel" }, DA.icon(r.channel === "voice call" ? "phone" : "message", 14), DA.msg(() => DA.channelLabel(r)))),
               h("span", { class: "c-lang" }, DA.msg(() => DA.langLabel[r.language])),
@@ -557,10 +576,19 @@
       h("h2", {}, m("emptyTitle")), h("p", {}, m(DA.mode === "server" ? "emptyHelp" : "emptyFileHelp")),
       h("button", { class: "da-btn is-primary", type: "button", onclick: () => DA.openUpload(render) }, DA.icon("upload", 18), m("upload")));
     wrap.append(toolbar, selectionBar, table, pager, emptyState);
-    const page = h("div", { class: "da-page da-registry-page" },
-      h("div", { class: "da-page-head da-registry-heading" }, h("h1", { class: "da-h1", tabindex: -1 }, m("title")), upload), summary, wrap);
+    const headingTitle = h("h1", { class: "da-h1", tabindex: -1 }, m("title"));
+    const heading = h("div", { class: "da-page-head da-registry-heading" }, headingTitle, summary, upload);
+    const page = h("div", { class: "da-page da-registry-page" }, heading, wrap);
     root.append(page);
     render();
+    const summaryLayout = new ResizeObserver(() => {
+      if (!mounted || summary.hidden) return;
+      const widths = [...summary.children].map((node) => node.getBoundingClientRect().width).filter(Boolean);
+      const needed = widths.reduce((sum, width) => sum + width, 0) + Math.max(0, widths.length - 1) * 8;
+      const available = heading.clientWidth - headingTitle.getBoundingClientRect().width - upload.getBoundingClientRect().width - 32;
+      heading.classList.toggle("has-summary-row", innerWidth < 1100 || needed > available);
+    });
+    [heading, headingTitle, upload, ...summary.children].forEach((node) => summaryLayout.observe(node));
     const unsubscribe = DA.bulk?.subscribe(refreshProgress);
     const unsubscribeStt = DA.stt?.subscribe(refreshStt);
     window.addEventListener("da:appeals-changed", updateCounter);
@@ -569,6 +597,7 @@
       clearTimeout(t);
       unsubscribe?.();
       unsubscribeStt?.();
+      summaryLayout.disconnect();
       window.removeEventListener("da:appeals-changed", updateCounter);
       DA.bulk?.clearSelection();
     };

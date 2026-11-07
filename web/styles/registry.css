@@ -1,18 +1,27 @@
 /* Реестр: страницы, подсветка новых строк, карточки строк на телефоне, модальное окно и загрузка обращений. */
 
 /* Сводка относится ко всему реестру, инструменты и счётчик фильтров принадлежат списку. */
-.da-registry-heading { align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.da-registry-heading { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px 16px; margin-bottom: 20px; }
+.da-registry-heading .da-h1 { grid-column: 1; grid-row: 1; }
+.da-registry-heading .da-registry-upload { grid-column: 3; grid-row: 1; }
 .da-registry-heading .da-registry-upload { min-height: 44px; }
-.da-registry-summary { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 18px 36px; margin: 0 0 24px; }
-.da-registry-metric { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; }
-.da-registry-metric > b { font-size: 22px; font-weight: 650; line-height: 1.2; letter-spacing: -.02em; font-variant-numeric: tabular-nums; color: var(--da-text); }
-.da-registry-metric > span { font-size: 13px; line-height: 1.4; color: var(--da-text-2); }
-.da-registry-evaluation { display: flex; gap: 24px; }
-.da-registry-metric.is-link { max-width: 190px; min-height: 44px; text-decoration: none; border-radius: 6px; }
-.da-registry-metric.is-link > span { color: var(--da-brand-press); text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; transition: text-decoration-color var(--da-fast); }
-.da-registry-metric.is-link:hover > span { text-decoration-color: currentColor; }
-.da-registry-metric.is-link:active { transform: translateY(1px); }
-.da-registry-metric.is-gross > b, .da-registry-metric.is-gross > span { color: var(--da-gross); }
+.da-registry-summary { grid-column: 2; grid-row: 1; display: flex; align-items: center; gap: 8px; min-width: 0; padding: 4px 1px 6px; overflow-x: auto; scrollbar-width: thin; }
+.da-registry-heading.has-summary-row .da-registry-summary { grid-column: 1 / -1; grid-row: 2; }
+.da-registry-metric { display: block; flex: none; height: 32px; padding: 0 12px; border: 1px solid var(--da-line); border-radius: 10px; background: var(--da-surface); box-shadow: var(--da-shadow-rest); font-size: 14px; font-weight: 400; line-height: 30px; color: var(--da-text-2); white-space: nowrap; cursor: default; }
+.da-registry-metric b { font-size: inherit; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--da-text); }
+.da-registry-evaluation { display: flex; align-items: center; gap: 8px; }
+.da-registry-evaluation-progress { display: block; flex: none; width: 32px; height: 4px; overflow: hidden; border-radius: 2px; background: var(--da-surface-3); }
+.da-registry-evaluation-progress i { display: block; width: 100%; height: 100%; border-radius: inherit; background: var(--da-brand); transform-origin: left; }
+.da-registry-metric.is-link { text-decoration: none; cursor: pointer; transition: transform var(--da-fast), box-shadow var(--da-fast); }
+.da-registry-metric.is-link:hover { transform: translateY(-1px); box-shadow: var(--da-shadow-raised); }
+.da-registry-metric.is-link:active { transform: scale(.97); }
+.da-registry-metric.is-appeal { background: var(--da-partial-soft); }
+.da-registry-metric.is-appeal b { color: var(--da-partial-ink); }
+.da-registry-metric.is-gross { background: var(--da-gross-soft); }
+.da-registry-metric.is-gross b { color: var(--da-gross); }
+@media (max-width: 1099px) {
+  .da-registry-heading .da-registry-summary { grid-column: 1 / -1; grid-row: 2; }
+}
 .da-registry-tools { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px 24px; padding: 16px 20px 12px; border-bottom: 1px solid var(--da-line); }
 .da-registry-find { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .da-registry-find .da-search { flex: 1; min-width: 0; }
@@ -159,14 +168,8 @@
 
 /* ---------- Узкий экран ---------- */
 @media (max-width: 760px) {
-  .da-registry-heading { gap: 8px; margin-bottom: 18px; flex-wrap: nowrap; }
+  .da-registry-heading { gap: 10px 16px; margin-bottom: 14px; }
   .da-registry-heading .da-registry-upload { padding: 0 12px; font-size: 14px; flex: none; }
-  .da-registry-summary { gap: 10px 24px; margin-bottom: 18px; }
-  .da-registry-summary > .da-registry-metric:not(.is-link) { width: 100px; }
-  .da-registry-evaluation { flex: 1; gap: 20px; }
-  .da-registry-metric > span { max-width: 130px; }
-  .da-registry-metric.is-link { flex: 1 1 140px; flex-direction: row; align-items: center; gap: 10px; max-width: none; }
-  .da-registry-metric.is-link > span { max-width: 250px; }
   .da-registry-tools { grid-template-columns: auto minmax(0, 1fr); gap: 10px; padding: 12px; }
   .da-registry-find { display: contents; }
   .da-registry-find .da-search { grid-column: 1 / -1; }
