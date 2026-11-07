@@ -338,3 +338,61 @@ def test_retained_raw_is_opt_in_and_cleared_when_disabled(tmp_path):
     Store(db, keep_raw=False)
     with db.transaction() as conn:
         assert conn.execute("SELECT name FROM sqlite_master WHERE name='transcriptions_raw'").fetchone() is None
+
+
+def test_new_transcription_persists_distinct_roles_for_a_shared_provider_voice(tmp_path, monkeypatch):
+    install_audio(monkeypatch)
+    greeting = 'Здравствуйте вы позвонили в справочную службу нашей компании'
+    request = 'Мне нужна помощь с настройкой приложения на телефоне сегодня пожалуйста и ещё хочу уточнить порядок получения подробного отчёта'
+    payload = records()
+    payload[0]['transcript'] = [{'timestamp': '00:00', 'speaker': 'bot', 'text': greeting},
+                                {'timestamp': '00:10', 'speaker': 'client', 'text': request}]
+    async def transcribe(*_):
+        groups = [(greeting, 0), (request, 10), ('Да', 25)]
+        return {'words': [{'word': word, 'start': start + i * .3, 'end': start + i * .3 + .2,
+                           'speaker': 'shared'} for text, start in groups for i, word in enumerate(text.split())]}
+    monkeypatch.setattr(provider, 'transcribe', transcribe)
+    app = create_app(enabled_settings(tmp_path / 'turn-roles.sqlite'))
+    with TestClient(app) as client:
+        client.post('/api/conversations/upload', json=payload)
+        assert wait_jobs(client, 1)['done'] == 1
+        saved = Store(app.state.db).get('call-0')
+        assert saved['speakers'] == [{'speakerId': 'speaker_0', 'role': 'client'}]
+        assert [(turn['role'], turn['roleSource']) for turn in saved['turns']] == [
+            ('bot', 'aligned'), ('client', 'aligned'), ('client', 'speaker')]
+        shown = client.get('/api/conversations/call-0/transcription').json()
+        assert shown['turns'] == saved['turns']
+
+
+def test_saved_transcription_roles_are_corrected_read_only_without_new_provider_call(tmp_path, monkeypatch):
+    from app.translation_service import transcription_source_hash
+    greeting = 'Здравствуйте вы позвонили в справочную службу нашей компании'
+    payload = records()
+    payload[0]['transcript'][0] = {'timestamp': '00:00', 'speaker': 'bot', 'text': greeting}
+    settings = enabled_settings(tmp_path / 'legacy-roles.sqlite')
+    db = Database(settings.db_path)
+    import_records(db, payload, 'UPLOAD')
+    store = Store(db)
+    cid, generation = store.enqueue(['call-0'], settings.stt_model)[0]
+    original = {'turns': [{'idx': 0, 'start': 0, 'end': 5, 'text': greeting,
+                           'speakerId': 'shared', 'orgIdx': 0, 'doubtful': False},
+                          {'idx': 7, 'start': 9, 'end': 10, 'text': 'Да',
+                           'speakerId': 'shared', 'orgIdx': 0, 'doubtful': False}],
+                'speakers': [{'speakerId': 'shared', 'role': 'client'}]}
+    store.finish(cid, generation, original)
+    before = store.get(cid)
+    before_hash = transcription_source_hash({**original, 'transcriptHash': before['transcript_hash']})
+    async def no_provider_call(*_):
+        pytest.fail('Reading saved roles must not call the provider')
+    monkeypatch.setattr(provider, 'transcribe', no_provider_call)
+    with TestClient(create_app(settings)) as client:
+        first = client.get('/api/conversations/call-0/transcription').json()
+        second = client.get('/api/conversations/call-0/transcription').json()
+        assert first == second
+        assert [(turn['role'], turn['roleSource']) for turn in first['turns']] == [
+            ('bot', 'aligned'), ('client', 'speaker')]
+        assert [{key: value for key, value in turn.items() if key not in {'role', 'roleSource'}}
+                for turn in first['turns']] == original['turns']
+        assert first['sourceHash'] == before_hash
+        assert first['speakers'] == original['speakers']
+        assert store.get(cid) == before

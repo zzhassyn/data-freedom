@@ -437,3 +437,73 @@ def build(masked: MaskedTranscript) -> dict[str, Any]:
     if not isinstance(masked, MaskedTranscript):
         raise TypeError('Перед сборкой необходимо скрыть личные данные')
     return {'turns': copy.deepcopy(list(masked.turns)), 'speakers': copy.deepcopy(list(masked.speakers))}
+
+
+def annotate_roles(turns: list[dict[str, Any]], speakers: list[dict[str, Any]],
+                   organizer_turns: list[Any]) -> list[dict[str, Any]]:
+    """Add roles to sanitized turns without regrouping or changing their content.
+
+    A provider speaker can include both an IVR and a person. Strong lexical
+    evidence may override that speaker's role for one turn; seek-only orgIdx
+    fallbacks and words inside privacy labels supply no role evidence.
+    """
+    valid_roles = {'operator', 'client', 'bot'}
+    speaker_roles = {speaker['speakerId']: speaker.get('role', 'unknown') for speaker in speakers}
+    result = copy.deepcopy(turns)
+    for turn in result:
+        fallback = speaker_roles.get(turn.get('speakerId'), 'unknown')
+        turn['role'] = fallback if fallback in valid_roles else 'unknown'
+        turn['roleSource'] = 'speaker'
+
+    ours = [{'text': token['text'], 'turn': index}
+            for index, turn in enumerate(turns) for token in _tokens(turn['text'])]
+    org = []
+    for row_index, row in enumerate(organizer_turns):
+        role = _get(row, 'speaker', _get(row, 'role', 'unknown'))
+        text = _get(row, 'text', '')
+        if role == 'system' or not isinstance(text, str):
+            continue
+        org.extend({'text': token['text'], 'role': role, 'row': row_index}
+                   for token in _tokens(text, _SOURCE_MASK))
+    # Existing source/output size limits normally enforce this. Older stored
+    # rows can still be returned safely with speaker fallbacks if oversized.
+    if len(org) + len(ours) > 60_000:
+        return result
+    org_values, our_values = [t['text'] for t in org], [t['text'] for t in ours]
+    prefixes: dict[tuple[str, ...], list[int]] = defaultdict(list)
+    for index in range(len(org) - 2):
+        if org[index]['row'] == org[index + 2]['row']:
+            prefixes[tuple(org_values[index:index + 3])].append(index)
+    votes: dict[int, Counter] = defaultdict(Counter)
+    for block in difflib.SequenceMatcher(None, org_values, our_values, autojunk=False).get_matching_blocks():
+        if block.size < 3:
+            continue
+        offset = 0
+        while offset < block.size:
+            source, target = org[block.a + offset], ours[block.b + offset]
+            stop = offset + 1
+            while (stop < block.size and org[block.a + stop]['row'] == source['row']
+                   and ours[block.b + stop]['turn'] == target['turn']):
+                stop += 1
+            size = stop - offset
+            if size >= 3:
+                phrase = org_values[block.a + offset:block.a + stop]
+                # A repeated phrase from different roles is ambiguous, even if
+                # the sequence matcher selected only one occurrence.
+                ambiguous = any(org[first]['role'] != source['role'] and first + size <= len(org)
+                                and org[first]['row'] == org[first + size - 1]['row']
+                                and org_values[first:first + size] == phrase
+                                for first in prefixes[tuple(phrase[:3])])
+                if not ambiguous:
+                    votes[target['turn']][source['role']] += size
+            offset = stop
+    for index, turn in enumerate(result):
+        counts = votes[index]
+        if not counts:
+            continue
+        role, count = counts.most_common(1)[0]
+        required = 6 if turn['role'] in valid_roles and role != turn['role'] else 3
+        if role in valid_roles and count >= required and count / sum(counts.values()) >= 0.8:
+            turn['role'] = role
+            turn['roleSource'] = 'aligned'
+    return result

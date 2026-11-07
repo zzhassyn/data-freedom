@@ -92,7 +92,7 @@ class TranscriptionQueue:
                 await asyncio.gather(task, return_exceptions=True)
 
     async def _run(self, cid, generation):
-        from .processing import PrivacyError, prepare, mask_prepared, build
+        from .processing import PrivacyError, prepare, mask_prepared, build, annotate_roles
         row = self.store.get(cid)
         if not row or row['generation'] != generation or row['status'] != 'queued':
             return
@@ -129,6 +129,8 @@ class TranscriptionQueue:
                 step = 'build'
                 self._change(cid, generation, step=step, progress=95)
                 result = await asyncio.to_thread(build, masked)
+                result['turns'] = await asyncio.to_thread(annotate_roles, result['turns'],
+                                                         result['speakers'], conversation['transcript'])
                 self.store.finish(cid, generation, result, raw if self.settings.stt_keep_raw else None)
         except StaleJob:
             return
@@ -152,6 +154,7 @@ class TranscriptionQueue:
 
     def transcription(self, cid):
         from ..translation_service import transcription_source_hash
+        from .processing import annotate_roles
         conversation = self.db.get_conversation(cid)
         row = self.store.get(cid) if self.settings.stt_enabled else None
         status = row['status'] if row else 'not_queued' if self.settings.stt_enabled else 'disabled'
@@ -166,6 +169,10 @@ class TranscriptionQueue:
             'costUsd': row['cost_usd'] if row else 0, 'model': row['model'] if row else self.settings.stt_model,
             'audioCheck': row['audio_check'] if row else 'pending',
         }
+        if status == 'done':
+            # Store.get only returns rows for the current organizer transcript.
+            # Re-annotate old paid results in memory; no provider call or write.
+            result['turns'] = annotate_roles(result['turns'], result['speakers'], conversation['transcript'])
         result['sourceHash'] = transcription_source_hash(result) if status == 'done' else None
         return result
 

@@ -1,10 +1,11 @@
 """All transcription values here are synthetic, including names and number groups."""
+import copy
 import json
 import math
 
 import pytest
 
-from app.stt.processing import PrivacyError, build, mask, mask_prepared, prepare
+from app.stt.processing import PrivacyError, annotate_roles, build, mask, mask_prepared, prepare
 
 
 def words(text, speaker='test-speaker', start=0, step=.3):
@@ -215,3 +216,76 @@ def test_pause_uses_previous_word_not_earlier_stretched_interval():
 ])
 def test_four_spoken_three_digit_groups_without_keyword(text):
     assert mask(text)[0] == '[ИИН скрыт]'
+
+
+def role_turn(text, idx=0, **extra):
+    return {'idx': idx, 'text': text, 'start': idx * 4.0, 'end': idx * 4.0 + 2,
+            'speakerId': 'shared', 'orgIdx': 99, 'doubtful': False, **extra}
+
+
+def test_turn_roles_correct_shared_bot_client_voice_without_changing_content():
+    greeting = 'Здравствуйте вы позвонили в справочную службу нашей компании'
+    request = 'Мне нужна помощь с настройкой приложения на телефоне сегодня пожалуйста'
+    turns = [role_turn(greeting), role_turn(request, 5), role_turn('Да', 9)]
+    speakers = [{'speakerId': 'shared', 'role': 'client'}]
+    organizer = [{'idx': 99, 'speaker': 'bot', 'text': greeting},
+                 {'idx': 100, 'speaker': 'client', 'text': request}]
+    before = copy.deepcopy((turns, speakers, organizer))
+    result = annotate_roles(turns, speakers, organizer)
+    assert [(t['role'], t['roleSource']) for t in result] == [
+        ('bot', 'aligned'), ('client', 'aligned'), ('client', 'speaker')]
+    assert [{key: value for key, value in turn.items() if key not in {'role', 'roleSource'}}
+            for turn in result] == turns
+    assert (turns, speakers, organizer) == before
+    assert annotate_roles(result, speakers, organizer) == result
+
+
+@pytest.mark.parametrize(('speaker_role', 'matched_words', 'expected', 'source'), [
+    ('client', 5, 'client', 'speaker'), ('client', 6, 'bot', 'aligned'),
+    ('unknown', 2, 'unknown', 'speaker'), ('unknown', 3, 'bot', 'aligned'),
+])
+def test_turn_role_minimum_evidence(speaker_role, matched_words, expected, source):
+    text = 'Здравствуйте вы позвонили в справочную службу'.split()
+    result = annotate_roles([role_turn(' '.join(text[:matched_words]))],
+                            [{'speakerId': 'shared', 'role': speaker_role}],
+                            [{'speaker': 'bot', 'text': ' '.join(text)}])
+    assert (result[0]['role'], result[0]['roleSource']) == (expected, source)
+
+
+@pytest.mark.parametrize(('client_text', 'expected', 'source'), [
+    ('Пожалуйста помогите мне разобраться', 'unknown', 'speaker'),
+    ('Пожалуйста помогите мне', 'bot', 'aligned'),
+])
+def test_turn_role_needs_eighty_percent_dominance(client_text, expected, source):
+    bot_text = 'Здравствуйте вы позвонили в нашу справочную службу ожидайте свободного оператора оставайтесь на линии'
+    result = annotate_roles([role_turn(bot_text + '. ' + client_text)], [],
+                            [{'speaker': 'bot', 'text': bot_text},
+                             {'speaker': 'client', 'text': client_text}])
+    assert (result[0]['role'], result[0]['roleSource']) == (expected, source)
+
+
+def test_order_fallback_masks_and_system_text_are_not_role_evidence():
+    turns = [role_turn('Совершенно другая речь'), role_turn('[Имя скрыто] [ИИН скрыт]', 1),
+             role_turn('Служебная отметка о переводе', 2)]
+    organizer = [{'idx': 99, 'speaker': 'bot', 'text': 'Здравствуйте вы позвонили в справочную службу'},
+                 {'idx': 100, 'speaker': 'bot', 'text': '[Имя скрыто] [ИИН скрыт]'},
+                 {'idx': 101, 'speaker': 'system', 'text': turns[2]['text']}]
+    result = annotate_roles(turns, [{'speakerId': 'shared', 'role': 'client'}], organizer)
+    assert [(turn['role'], turn['roleSource']) for turn in result] == [('client', 'speaker')] * 3
+
+
+def test_phrase_shared_by_different_roles_remains_ambiguous():
+    text = 'Уточните пожалуйста ваш вопрос'
+    result = annotate_roles([role_turn(text)], [],
+                            [{'speaker': 'client', 'text': text}, {'speaker': 'operator', 'text': text}])
+    assert (result[0]['role'], result[0]['roleSource']) == ('unknown', 'speaker')
+
+
+def test_short_chains_must_not_join_across_turn_or_source_boundaries():
+    source = [{'speaker': 'bot', 'text': 'Здравствуйте вы позвонили'}]
+    result = annotate_roles([role_turn('Здравствуйте вы'), role_turn('позвонили', 1)], [], source)
+    assert all(turn['role'] == 'unknown' for turn in result)
+    result = annotate_roles([role_turn('Здравствуйте вы позвонили')], [],
+                            [{'speaker': 'bot', 'text': 'Здравствуйте вы'},
+                             {'speaker': 'bot', 'text': 'позвонили'}])
+    assert result[0]['role'] == 'unknown'

@@ -138,7 +138,7 @@ def _translation_input(app, conversation, source_name):
         raise ApiError("stale_source", "Расшифровка изменилась или ещё не готова. Повторите запрос", 409)
     roles = {speaker["speakerId"]: speaker.get("role", "unknown") for speaker in payload["speakers"]}
     source = translation_service.TranslationSource(conversation["language"], [
-        translation_service.SourceTurn(turn["idx"], roles.get(turn["speakerId"], "unknown"), turn["text"])
+        translation_service.SourceTurn(turn["idx"], turn.get("role") or roles.get(turn["speakerId"], "unknown"), turn["text"])
         for turn in payload["turns"]
     ])
     return source, translation_service.transcription_source_hash(payload)
