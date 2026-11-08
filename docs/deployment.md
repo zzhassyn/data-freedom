@@ -13,7 +13,7 @@ Production: [data-freedom.vercel.app](https://data-freedom.vercel.app). Осно
 ## Конфигурация
 
 - `index.py` — HTTP-вход Vercel, режим `WORKER_MODE=api`.
-- `scripts/deploy.py` — перед вызовом Vercel CLI запускает `scripts/build_static.py`, который копирует только `web/index.html`, favicon и верхнеуровневые JS/CSS в `public/`. Каталог исключён из Git, но входит в загрузку Vercel; данные и API туда не копируются. Браузер перепроверяет актуальность файлов, а CDN хранит их отдельно для каждого deployment.
+- `scripts/deploy.py` перед вызовом Vercel CLI запускает `scripts/build_static.py`, который копирует `web/index.html`, favicon, верхнеуровневые JS/CSS и SVG из `web/assets/` в `public/`. Каталог исключён из Git, но входит в загрузку Vercel; данные и API туда не копируются. Браузер перепроверяет актуальность файлов, а CDN хранит их отдельно для каждого deployment.
 - `backend/Dockerfile.worker` — Python 3.12, ffmpeg и `python -m app.worker`, режим `WORKER_MODE=worker`.
 - `vercel.json` — FastAPI в `iad1`, до 300 секунд на HTTP-запрос; один daemon в том же регионе, 1 GiB памяти, до 210 секунд на завершение при остановке.
 - `.vercelignore` и `backend/.dockerignore` исключают ключи, локальные базы, окружения Python, тестовые артефакты и выгрузки результатов. Содержимое локальной SQLite автоматически не переносится.
