@@ -211,7 +211,7 @@
     if (total == null) return h('span', { class: (item?.status || ev?.status) === 'failed' ? 'da-error da-small' : 'da-muted da-small' },
       m(({ new: 'notEvaluated', stale: 'stale', failed: 'failed', running: 'running' })[item?.status || ev?.status] || 'notEvaluated'));
     if (item && item.total != null && (ev?.id !== item.qualityEvaluationId || ev?.status !== 'done' || ev?.stale)) {
-      return h('div', { class: 'da-score-cell' }, h('span', { class: 'da-score-num' }, DA.msg(() => DA.fmt.score(item.total))),
+      return h('div', { class: 'da-score-cell' }, h('span', { class: 'da-score-num' }, DA.msg(() => DA.fmt.score(item.total)),
         item.originalTotal != null && item.originalTotal !== item.total ? h('s', {}, DA.msg(() => DA.fmt.score(item.originalTotal))) : null),
       item.readyIsPreviousAttempt ? h('span', { class: 'da-score-note' }, m(item.status === 'failed' ? 'failed' : item.status === 'running' ? 'running' : 'previousScore')) : null);
     }
