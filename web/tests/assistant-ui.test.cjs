@@ -6,8 +6,9 @@ const vm = require('node:vm');
 const plain = value => JSON.parse(JSON.stringify(value));
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const validReply = (answer = 'Подтверждённый ответ') => ({ answer, citations: [], sources: [], actions: [] });
+const savedChats = e => [...e.store.entries()].filter(([key]) => key.startsWith('da.assistant.history.v1.')).map(([, value]) => JSON.parse(value));
 
-function environment(savedStorage, prepareState) {
+function environment(savedStorage, prepareState, options = {}) {
   let document;
   class Node extends EventTarget {
     constructor(tag, text) { super(); this.tagName = tag; this._text = text || ''; this.childNodes = []; this.attrs = {}; this.hidden = false; this.value = ''; this.disabled = false; this.scrollTop = 0; this.scrollHeight = 100; this.clientHeight = 100; }
@@ -27,7 +28,11 @@ function environment(savedStorage, prepareState) {
     remove() { if (this.parent) this.parent.childNodes = this.parent.childNodes.filter(node => node !== this); this.parent = null; }
   }
   document = { body: new Node('body'), activeElement: null, createTextNode: value => new Node('#text', value) };
-  const store = savedStorage || new Map(), requests = [], events = new EventTarget(), catalog = {};
+  const store = savedStorage || new Map(), tabStore = options.tabStore || new Map(), requests = [], events = new EventTarget(), catalog = {};
+  const failures = { local: false, session: false }, writes = { local: 0, session: 0 };
+  const storageAdapter = (map, kind) => ({ get length() { return map.size; }, key: index => [...map.keys()][index] || null,
+    getItem: key => map.get(key) || null, removeItem: key => { if (failures[kind]) throw new Error('Storage unavailable'); map.delete(key); },
+    setItem: (key, value) => { if (failures[kind]) throw new Error('QuotaExceededError'); writes[kind]++; map.set(key, value); } });
   let language = 'ru';
   const translate = (key, params) => {
     let value = catalog[key]?.[language] ?? key;
@@ -48,7 +53,7 @@ function environment(savedStorage, prepareState) {
   };
   const context = { DA, document, console, URLSearchParams, AbortController, setTimeout, clearTimeout,
     navigator: { clipboard: { writeText: async () => {} } }, location: { hash: '#/' },
-    sessionStorage: { getItem: key => store.get(key) || null, setItem: (key, value) => store.set(key, value) },
+    localStorage: storageAdapter(store, 'local'), sessionStorage: storageAdapter(tabStore, 'session'),
     addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events) };
   context.window = context; vm.createContext(context);
   for (const file of ['filters.js', 'assistant.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../js', file), 'utf8'), context);
@@ -61,7 +66,7 @@ function environment(savedStorage, prepareState) {
     context.location.hash = '#/c/' + encodeURIComponent(id);
     return DA.conversationAssistant({ conversation: { conversation_id: id, transcriptHash: id === 'a' ? 'ha' : 'hb', language: 'RU' }, evaluation, onCitation: turn => { env.jumped = turn; } });
   };
-  const env = { DA, ui, context, document, store, requests, get, submit, click, bind,
+  const env = { DA, ui, context, document, store, tabStore, failures, writes, requests, get, submit, click, bind,
     advance(index, step) { try { requests[index].options.onProgress(step); } catch (error) { requests[index].reject(error); } },
     language(value) { language = value; events.dispatchEvent(new Event('da:locale-changed')); }, change(name) { events.dispatchEvent(new Event(name)); } };
   return env;
@@ -89,14 +94,14 @@ test('real answer deltas display incrementally and only the validated final answ
   assert.equal(e.get('.da-assistant-stream').textContent, 'Сначала ');
   e.advance(0, { type: 'answer_delta', text: 'посмотрите оценки.' });
   assert.equal(e.get('.da-assistant-stream').textContent, 'Сначала посмотрите оценки.');
-  const stored = JSON.parse(e.store.get('da.assistant.chat.v5'));
+  const stored = { sessions: savedChats(e) };
   assert.deepEqual(stored.sessions[0].history, []);
   e.advance(0, { type: 'progress', stage: 'checking' });
   assert.match(e.get('.da-assistant-thinking').textContent, /Проверяю источники/);
   e.requests[0].resolve(validReply('Проверенный окончательный ответ')); await tick();
   assert.equal(e.get('.da-assistant-stream'), null);
   assert.match(e.get('.da-assistant-prose').textContent, /Проверенный окончательный ответ/);
-  assert.equal(JSON.parse(e.store.get('da.assistant.chat.v5')).sessions[0].history.length, 2);
+  assert.equal(savedChats(e)[0].history.length, 2);
   e.ui.dispose();
 });
 
@@ -250,7 +255,7 @@ test('large application data is not stored in chat and does not prevent restored
   }; };
   const e = environment(null, populate); e.ui.open(); e.submit('Сводка всей базы');
   e.requests[0].resolve(validReply('Проверенная сводка')); await tick(); e.ui.dispose();
-  const serialized = e.store.get('da.assistant.chat.v5');
+  const serialized = JSON.stringify(savedChats(e));
   assert.ok(serialized.length <= 180000);
   assert.doesNotMatch(serialized, /Объяснение и подтверждение из диалога/);
   const next = environment(e.store, populate); next.ui.open();
@@ -277,10 +282,10 @@ test('previous mode-specific chats migrate to a continuous bounded thread', () =
     { key: 'analyst', history: messagePair('Ранний ответ'), draft: '', updatedAt: 1 },
     { key: 'reviewer', history: messagePair('Поздний ответ'), draft: 'Последний черновик', updatedAt: 2 }
   ] })]]);
-  const e = environment(stored); e.ui.open();
+  const e = environment(null, null, { tabStore: stored }); e.ui.open();
   assert.match(e.get('.da-assistant-messages').textContent, /Ранний ответ.*Поздний ответ/);
   assert.equal(e.get('textarea').value, 'Последний черновик');
-  assert.equal(JSON.parse(e.store.get('da.assistant.chat.v5')).sessions.length, 1);
+  assert.equal(savedChats(e).length, 1);
   e.ui.dispose();
 });
 
@@ -309,7 +314,7 @@ test('preflight stale focus refreshes once without losing history or exposing la
   assert.doesNotMatch(e.get('.da-assistant-messages').textContent, /Поздний текст/);
   e.requests[2].resolve({ ...validReply('Обновлённый ответ'), citations: [{ id: 'fresh', conversationId: 'a', evaluationId: 'ev-new', transcriptHash: 'new-hash', turnIdx: 0, quote: 'Новая цитата' }] }); await tick();
   assert.equal(e.DA.state.conversations.a.transcriptHash, 'ha', 'request-local refresh does not rewrite the displayed card');
-  assert.equal(JSON.parse(e.store.get('da.assistant.chat.v5')).sessions[0].history.length, 4);
+  assert.equal(savedChats(e)[0].history.length, 4);
   e.click('.da-assistant-citation');
   assert.equal(e.jumped, undefined, 'fresh quote never jumps into the old visible transcript');
   assert.equal(e.context.location.hash, '#/c/a?evaluation=ev-new&turn=0');
@@ -400,7 +405,7 @@ test('server answer_reset discards only provisional text and keeps the same ques
   e.requests[0].resolve(validReply('Актуальный ответ')); await tick();
   assert.equal(e.requests.length, 1);
   assert.doesNotMatch(e.get('.da-assistant-messages').textContent, /Устаревший/);
-  assert.equal(JSON.parse(e.store.get('da.assistant.chat.v5')).sessions[0].history.length, 2);
+  assert.equal(savedChats(e)[0].history.length, 2);
   e.ui.dispose();
 });
 
@@ -445,5 +450,239 @@ test('an explicit historical route stays pinned even when the cached assessment 
   assert.deepEqual(reads, [['snapshot', 'ev-a'], ['evaluation', 'ev-a']]);
   assert.deepEqual(e.requests[1].body.focus.conversation, { conversationId: 'a', evaluationId: 'ev-a', transcriptHash: 'exact-snapshot-hash' });
   e.requests[1].resolve(validReply('Ответ по сохранённой оценке')); await tick();
+  e.ui.dispose();
+});
+
+
+function chooseChat(e, title) {
+  if (e.get('.da-assistant-history').hidden) e.click('.da-assistant-history-toggle');
+  const entry = e.get('.da-assistant-history-list').querySelectorAll('.da-assistant-history-entry').find(node => node.textContent.includes(title));
+  assert.ok(entry, 'saved chat is listed: ' + title); entry.onclick();
+}
+
+test('new chat preserves the previous answer and draft and reopening sends only that chat history', async () => {
+  const e = environment(); e.ui.open(); e.submit('Первый диалог');
+  e.requests[0].resolve(validReply('Первый ответ')); await tick();
+  e.get('textarea').value = 'Черновик первого'; e.get('textarea').oninput();
+  e.click('.da-assistant-new');
+  assert.equal(e.get('textarea').value, '');
+  assert.equal(e.get('.da-assistant-messages').textContent, '');
+  e.submit('Второй диалог'); e.requests[1].resolve(validReply('Второй ответ')); await tick();
+  assert.equal(savedChats(e).length, 2);
+  chooseChat(e, 'Первый диалог');
+  assert.equal(e.get('textarea').value, 'Черновик первого');
+  assert.match(e.get('.da-assistant-messages').textContent, /Первый ответ/);
+  assert.doesNotMatch(e.get('.da-assistant-messages').textContent, /Второй ответ/);
+  e.submit('Продолжение первого');
+  assert.deepEqual(e.requests[2].body.history.map(item => item.content), ['Первый диалог', 'Первый ответ']);
+  e.requests[2].resolve(validReply('Продолжение')); await tick(); e.ui.dispose();
+});
+
+test('switching chats cancels the old stream and preserves its question without cross-appending late text', async () => {
+  const e = environment(); e.ui.open(); e.submit('Готовый диалог');
+  e.requests[0].resolve(validReply('Сохранённый ответ')); await tick(); e.click('.da-assistant-new');
+  e.submit('Ожидающий диалог'); e.advance(1, { type: 'answer_delta', text: 'Незавершённый ответ' });
+  chooseChat(e, 'Готовый диалог');
+  assert.equal(e.requests[1].options.signal.aborted, true);
+  e.advance(1, { type: 'answer_delta', text: 'Поздний текст' });
+  e.requests[1].resolve(validReply('Поздний ответ')); await tick();
+  assert.doesNotMatch(e.get('.da-assistant-messages').textContent, /Поздний|Незавершённый/);
+  chooseChat(e, 'Ожидающий диалог');
+  assert.equal(e.get('textarea').value, 'Ожидающий диалог');
+  assert.equal(e.get('.da-assistant-messages').textContent, '');
+  e.ui.dispose();
+});
+
+test('switching chats during stale-focus refresh prevents the retry and leaves the selected chat intact', async () => {
+  const e = environment(); e.ui.open(); e.submit('Старый диалог'); e.requests[0].resolve(validReply('Старый ответ')); await tick();
+  e.click('.da-assistant-new'); e.bind(); let releaseSource;
+  e.DA.api.getConversation = () => new Promise(resolve => { releaseSource = resolve; });
+  e.DA.api.listEvaluations = async () => ({ items: [] });
+  e.submit('Диалог с обновлением'); e.requests[1].reject(new e.DA.ApiError('assistant_focus_stale', 'stale', 409)); await tick();
+  chooseChat(e, 'Старый диалог');
+  releaseSource({ id: 'a', transcriptHash: 'new' }); await tick();
+  assert.equal(e.requests.length, 2);
+  assert.match(e.get('.da-assistant-messages').textContent, /Старый ответ/);
+  chooseChat(e, 'Диалог с обновлением');
+  assert.equal(e.get('textarea').value, 'Диалог с обновлением');
+  e.ui.dispose();
+});
+
+test('saved chats survive a fresh tab and the active chat survives reload without changing its date', async () => {
+  const e = environment(); e.ui.open(); e.submit('Чат A'); e.requests[0].resolve(validReply('Ответ A')); await tick();
+  e.click('.da-assistant-new'); e.submit('Чат B'); e.requests[1].resolve(validReply('Ответ B')); await tick();
+  const dates = Object.fromEntries(savedChats(e).map(chat => [chat.key, chat.updatedAt]));
+  chooseChat(e, 'Чат A'); e.ui.dispose();
+  const reload = environment(e.store, null, { tabStore: e.tabStore }); reload.ui.open();
+  assert.match(reload.get('.da-assistant-messages').textContent, /Ответ A/);
+  assert.deepEqual(Object.fromEntries(savedChats(reload).map(chat => [chat.key, chat.updatedAt])), dates);
+  const freshTab = environment(e.store); freshTab.ui.open(); freshTab.click('.da-assistant-history-toggle');
+  assert.equal(freshTab.get('.da-assistant-history-list').querySelectorAll('.da-assistant-history-entry').length, 2);
+  reload.ui.dispose(); freshTab.ui.dispose();
+});
+
+test('v5 migration keeps the original dialogue and draft and removes legacy data only after durable save', () => {
+  const pair = [{ role: 'user', content: 'Старый вопрос' }, { role: 'assistant', content: 'Старый ответ', reply: validReply('Старый ответ') }];
+  const legacy = new Map([['da.assistant.chat.v5', JSON.stringify({ version: 5, sessions: [{ key: 'global', history: pair, draft: 'Старый черновик', updatedAt: 1234567890000 }] })]]);
+  const e = environment(null, null, { tabStore: legacy }); e.failures.local = true; e.ui.open();
+  assert.equal(e.get('textarea').value, 'Старый черновик');
+  assert.match(e.get('.da-assistant-messages').textContent, /Старый ответ/);
+  assert.equal(legacy.has('da.assistant.chat.v5'), true);
+  assert.match(e.get('.da-assistant-storage-notice').textContent, /до её закрытия/);
+  e.ui.dispose();
+  const recovered = environment(e.store, null, { tabStore: legacy }); recovered.ui.open();
+  assert.equal(savedChats(recovered).length, 1);
+  assert.equal(savedChats(recovered)[0].updatedAt, 1234567890000);
+  assert.equal(legacy.has('da.assistant.chat.v5'), false);
+  assert.equal(recovered.get('textarea').value, 'Старый черновик');
+  recovered.ui.dispose();
+});
+
+test('quota failure preserves the last durable copy and full tab fallback until save succeeds', async () => {
+  const e = environment(); e.ui.open(); e.submit('Первый вопрос'); e.requests[0].resolve(validReply('Первый ответ')); await tick();
+  const durableBefore = [...e.store.values()][0]; e.failures.local = true;
+  e.submit('Новый вопрос'); e.requests[1].resolve(validReply('Новый ответ')); await tick();
+  assert.equal([...e.store.values()][0], durableBefore);
+  const backup = [...e.tabStore.entries()].find(([key]) => key.startsWith('da.assistant.history.tab.v1.'));
+  assert.equal(JSON.parse(backup[1]).history.length, 4);
+  assert.equal(e.get('.da-assistant-storage-notice').hidden, false);
+  assert.match(e.get('.da-assistant-storage-notice').textContent, /этой вкладке/);
+  e.failures.local = false; e.get('.da-assistant-storage-notice').querySelector('button').onclick();
+  assert.equal(savedChats(e)[0].history.length, 4);
+  assert.equal(e.get('.da-assistant-storage-notice').hidden, true);
+  assert.equal([...e.tabStore.keys()].some(key => key.startsWith('da.assistant.history.tab.v1.')), false);
+  e.ui.dispose();
+});
+
+test('a quota backup follows a concurrent-edit fork and never reappears as an extra recovered chat', async () => {
+  for (const recoverImmediately of [true, false]) {
+    const e = environment(); e.ui.open(); e.submit('Общий диалог'); e.requests[0].resolve(validReply('Общий ответ')); await tick();
+    const other = environment(e.store); other.ui.open();
+    e.failures.local = true;
+    e.get('textarea').value = 'Черновик первой вкладки'; e.get('textarea').oninput(); e.ui.close();
+    other.get('textarea').value = 'Черновик другой вкладки'; other.get('textarea').oninput(); other.ui.close();
+    e.ui.open(); e.failures.local = !recoverImmediately;
+    e.get('.da-assistant-storage-notice').querySelector('button').onclick();
+    const backups = [...e.tabStore.keys()].filter(key => key.startsWith('da.assistant.history.tab.v1.'));
+    assert.equal(backups.length, recoverImmediately ? 0 : 1);
+    if (!recoverImmediately) {
+      assert.notEqual(backups[0], 'da.assistant.history.tab.v1.' + savedChats(e)[0].key);
+      e.failures.local = false; e.get('.da-assistant-storage-notice').querySelector('button').onclick();
+    }
+    assert.equal(savedChats(e).length, 2);
+    assert.equal([...e.tabStore.keys()].some(key => key.startsWith('da.assistant.history.tab.v1.')), false);
+    e.ui.dispose(); other.ui.dispose();
+    const reload = environment(e.store, null, { tabStore: e.tabStore }); reload.ui.open(); reload.click('.da-assistant-history-toggle');
+    assert.equal(reload.get('.da-assistant-history-list').querySelectorAll('.da-assistant-history-entry').length, 2);
+    assert.ok(savedChats(reload).some(chat => chat.draft === 'Черновик первой вкладки'));
+    assert.ok(savedChats(reload).some(chat => chat.draft === 'Черновик другой вкладки'));
+    reload.ui.dispose();
+  }
+});
+
+test('restoring an already durable revision removes its obsolete tab backup before later edits', async () => {
+  const e = environment(); e.ui.open(); e.submit('Сохранённый диалог'); e.requests[0].resolve(validReply('Ответ')); await tick(); e.ui.dispose();
+  const chat = savedChats(e)[0], backupKey = 'da.assistant.history.tab.v1.' + chat.key;
+  e.tabStore.set(backupKey, JSON.stringify(chat));
+  const reload = environment(e.store, null, { tabStore: e.tabStore }); reload.ui.open();
+  assert.equal(e.tabStore.has(backupKey), false);
+  reload.get('textarea').value = 'Поздний черновик'; reload.get('textarea').oninput(); reload.ui.dispose();
+  const next = environment(e.store, null, { tabStore: e.tabStore }); next.ui.open(); next.click('.da-assistant-history-toggle');
+  assert.equal(next.get('.da-assistant-history-list').querySelectorAll('.da-assistant-history-entry').length, 1);
+  next.ui.dispose();
+});
+
+test('invalid stored dates are normalized without losing saved or migrated dialogue content', () => {
+  const pair = [{ role: 'user', content: 'Вопрос' }, { role: 'assistant', content: 'Ответ', reply: validReply('Ответ') }];
+  const store = new Map([['da.assistant.history.v1.saved', JSON.stringify({ version: 1, key: 'saved', title: 'Сохранённый',
+    history: pair, draft: 'Черновик', createdAt: 1e100, updatedAt: 'Infinity', revision: 'saved-revision', baseRevision: null })]]);
+  const tabStore = new Map([['da.assistant.chat.v5', JSON.stringify({ version: 5, sessions: [{ history: pair, draft: 'Старый черновик', updatedAt: -1e100 }] })]]);
+  const e = environment(store, null, { tabStore }); e.ui.open(); e.click('.da-assistant-history-toggle');
+  const entries = e.get('.da-assistant-history-list').querySelectorAll('.da-assistant-history-entry');
+  assert.equal(entries.length, 2);
+  for (const entry of entries) assert.ok(Number.isFinite(new Date(entry.querySelector('time').getAttribute('datetime')).getTime()));
+  chooseChat(e, 'Сохранённый');
+  assert.equal(e.get('textarea').value, 'Черновик');
+  assert.match(e.get('.da-assistant-messages').textContent, /Ответ/);
+  e.ui.dispose();
+});
+
+test('when both stores fail the answer remains in memory with an honest unsaved warning', async () => {
+  const e = environment(); e.ui.open(); e.failures.local = true; e.failures.session = true;
+  e.submit('Важный вопрос'); e.requests[0].resolve(validReply('Важный ответ')); await tick();
+  assert.match(e.get('.da-assistant-messages').textContent, /Важный ответ/);
+  assert.match(e.get('.da-assistant-storage-notice').textContent, /Скопируйте важные ответы/);
+  assert.doesNotMatch(e.get('.da-assistant-storage-notice').textContent, /до её закрытия/);
+  e.click('.da-assistant-new'); chooseChat(e, 'Важный вопрос');
+  assert.match(e.get('.da-assistant-messages').textContent, /Важный ответ/);
+  e.ui.dispose();
+});
+
+test('stream tokens never write history and draft writes are flushed on close', async () => {
+  const e = environment(); e.ui.open(); e.submit('Запрос'); const before = e.writes.local;
+  for (let i = 0; i < 10; i++) e.advance(0, { type: 'answer_delta', text: 'часть ' });
+  assert.equal(e.writes.local, before);
+  e.requests[0].resolve(validReply('Полный ответ')); await tick();
+  assert.equal(e.writes.local, before + 1);
+  const afterAnswer = e.writes.local;
+  e.get('textarea').value = 'Черновик'; e.get('textarea').oninput();
+  assert.equal(e.writes.local, afterAnswer);
+  e.ui.close(); assert.equal(e.writes.local, afterAnswer + 1);
+  e.ui.dispose();
+});
+
+test('saved history exceeds the model window while the original title and last12 request bound remain stable', async () => {
+  const e = environment(); e.ui.open();
+  for (let i = 0; i < 8; i++) { e.submit('Вопрос ' + i); e.requests[i].resolve(validReply('Ответ ' + i)); await tick(); }
+  assert.equal(savedChats(e)[0].history.length, 16);
+  assert.equal(savedChats(e)[0].title, 'Вопрос 0');
+  e.submit('Вопрос 8');
+  assert.equal(e.requests[8].body.history.length, 12);
+  assert.equal(e.requests[8].body.history[0].content, 'Вопрос 2');
+  e.ui.dispose();
+});
+
+test('history deletion requires explicit confirmation and the chat limit never silently evicts saved data', async () => {
+  const store = new Map();
+  for (let i = 0; i < 30; i++) store.set('da.assistant.history.v1.saved-' + i, JSON.stringify({ version: 1, key: 'saved-' + i,
+    title: 'Сохранённый ' + i, history: [{ role: 'user', content: 'Вопрос ' + i }, { role: 'assistant', content: 'Ответ ' + i, reply: validReply('Ответ ' + i) }],
+    draft: '', createdAt: 1000 + i, updatedAt: 1000 + i, revision: 'r-' + i, baseRevision: null }));
+  const e = environment(store); e.ui.open(); e.click('.da-assistant-new');
+  assert.equal(savedChats(e).length, 30);
+  assert.match(e.get('.da-assistant-storage-notice').textContent, /Сохранено 30 диалогов/);
+  e.get('.da-assistant-history-list').querySelector('.da-assistant-history-delete').onclick();
+  assert.equal(savedChats(e).length, 30);
+  e.click('.da-assistant-delete-confirmed');
+  assert.equal(savedChats(e).length, 29);
+  e.click('.da-assistant-new'); e.submit('Новый после удаления'); e.requests[0].resolve(validReply('Ответ')); await tick();
+  assert.equal(savedChats(e).length, 30);
+  e.ui.dispose();
+});
+
+test('separate browser tabs cannot overwrite unrelated chats or silently replace a concurrent edit', async () => {
+  const shared = new Map(), a = environment(shared), b = environment(shared);
+  a.ui.open(); b.ui.open(); a.submit('Чат первой вкладки'); a.requests[0].resolve(validReply('Ответ первой')); await tick();
+  b.submit('Чат второй вкладки'); b.requests[0].resolve(validReply('Ответ второй')); await tick();
+  assert.equal(savedChats(a).length, 2);
+  const c = environment(shared); c.ui.open(); chooseChat(c, 'Чат первой вкладки');
+  a.submit('Продолжение первой'); a.requests[1].resolve(validReply('Обновлённый ответ')); await tick();
+  c.get('textarea').value = 'Другой черновик'; c.get('textarea').oninput(); c.ui.close();
+  assert.equal(savedChats(a).length, 3);
+  assert.ok(savedChats(a).some(chat => chat.history.some(item => item.content === 'Обновлённый ответ')));
+  assert.ok(savedChats(a).some(chat => chat.draft === 'Другой черновик'));
+  a.ui.dispose(); b.ui.dispose(); c.ui.dispose();
+});
+
+test('history empty state and controls localize, and Escape returns to the chat before closing', () => {
+  const e = environment(); e.ui.open(); e.click('.da-assistant-history-toggle');
+  assert.match(e.get('.da-assistant-history-list').textContent, /Диалогов пока нет/);
+  e.language('en'); assert.match(e.get('.da-assistant-history-list').textContent, /No chats yet/);
+  e.language('kk'); assert.match(e.get('.da-assistant-history-list').textContent, /Әзірге диалогтар жоқ/);
+  const escape = () => { const event = new Event('keydown', { cancelable: true }); Object.defineProperty(event, 'key', { value: 'Escape' }); e.get('.da-assistant').dispatchEvent(event); };
+  escape();
+  assert.equal(e.get('.da-assistant-history').hidden, true);
+  assert.equal(e.document.activeElement, e.get('.da-assistant-history-toggle'));
+  assert.equal(e.get('.da-assistant-panel').hidden, false);
+  escape(); assert.equal(e.get('.da-assistant-panel').hidden, true);
   e.ui.dispose();
 });

@@ -1,4 +1,4 @@
-/* Рабочее место проверяющего: очередь апелляций над разбором, список решённых. */
+/* Рабочее место проверяющего: очередь апелляций, отдельный разбор и список решённых. */
 (function () {
   const DA = window.DA, h = DA.h;
   const m = (key, params) => DA.msg("review." + key, params);
@@ -78,6 +78,20 @@
     "review.appealResolved": { ru: "Апелляция разобрана", kk: "Апелляция қаралды", en: "Appeal resolved" },
     "review.confirmed": { ru: "Подтверждено", kk: "Расталды", en: "Confirmed" },
     "review.openAppeals": { ru: "Открытые апелляции", kk: "Ашық апелляциялар", en: "Open appeals" },
+    "review.queueTitle": { ru: "Очередь апелляций", kk: "Апелляциялар кезегі", en: "Appeal queue" },
+    "review.number": { ru: "№ обращения", kk: "Өтініш №", en: "Conversation" },
+    "review.criterion": { ru: "Критерий", kk: "Критерий", en: "Criterion" },
+    "review.language": { ru: "Язык", kk: "Тіл", en: "Language" },
+    "review.channel": { ru: "Канал", kk: "Арна", en: "Channel" },
+    "review.wait": { ru: "Ожидание", kk: "Күту уақыты", en: "Waiting" },
+    "review.pageSize": { ru: "Апелляций на странице", kk: "Беттегі апелляциялар саны", en: "Appeals per page" },
+    "review.perPage": { ru: "На странице", kk: "Бетте", en: "Per page" },
+    "review.pages": { ru: "Страницы", kk: "Беттер", en: "Pages" },
+    "review.page": { ru: "Страница {number}", kk: "{number}-бет", en: "Page {number}" },
+    "review.previous": { ru: "Назад", kk: "Алдыңғы", en: "Previous" },
+    "review.next": { ru: "Вперёд", kk: "Келесі", en: "Next" },
+    "review.shownRange": { ru: "Показаны {from}–{to} из {total}", kk: "{total} апелляцияның {from}–{to} аралығы көрсетілген", en: "Showing {from}–{to} of {total}" },
+    "review.shownAll": { ru: "Показаны все {count}", kk: "Барлық {count} апелляция көрсетілген", en: "Showing all {count}" },
     "review.waitingTitle": { ru: "Сколько апелляция ждёт решения", kk: "Апелляцияның шешім күткен уақыты", en: "Time awaiting a decision" },
     "review.allResolved": { ru: "Все апелляции разобраны", kk: "Барлық апелляциялар қаралды", en: "All appeals resolved" },
     "review.noAppeals": { ru: "Апелляций пока нет", kk: "Әзірге апелляциялар жоқ", en: "No appeals yet" },
@@ -525,44 +539,22 @@
   }
 
   /* ---------- Очередь ---------- */
-  DA.views.review = function mount(root, params) {
-    const timers = [];
-    let current = null, work = null, disposed = false, stageVersion = 0;
+  const queueView = { page: 1, size: 10 };
+  function queuePages(page, pages) {
+    if (pages <= 7) return Array.from({ length: pages }, (_, i) => i + 1);
+    let from = Math.max(2, page - 1), to = Math.min(pages - 1, page + 1);
+    if (page <= 3) to = 4;
+    if (page >= pages - 2) from = pages - 3;
+    const result = [1];
+    if (from > 2) result.push(null);
+    for (let n = from; n <= to; n++) result.push(n);
+    if (to < pages - 1) result.push(null);
+    result.push(pages);
+    return result;
+  }
 
-    const count = h("span", { class: "da-count" });
-    const list = h("div", { class: "rv-q-list" });
-    const queue = h("nav", { class: "rv-queue", "aria-label": m("openAppeals") },
-      h("div", { class: "rv-queue-head" }, h("h2", {}, m("openAppeals")), count), list);
-    const stage = h("div", { class: "rv-stage" });
-    const page = h("div", { class: "rv" }, queue, stage);
-    root.append(page);
-
-    function queueItem(a) {
-      const { c } = context(a);
-      return h("a", {
-        class: "rv-q-item", href: `#/review/${a.id}`, "data-id": a.id, "aria-current": a.id === current ? "true" : null,
-        onclick: (e) => {
-          if (e.ctrlKey || e.metaKey || e.shiftKey || e.button) return;
-          e.preventDefault();
-          if (a.id === current) return;
-          history.pushState(null, "", `#/review/${a.id}`);
-          select(a.id, "swap");
-        }
-      },
-      h("span", { class: "rv-q-selection", "aria-hidden": "true" }, DA.icon("check", 14)),
-      h("span", { class: "rv-q-num" }, m("conversationNumber", { number: DA.convNumber(a.conversationId) })),
-      h("span", { class: "rv-q-crit" }, c.title),
-      h("span", { class: "rv-q-wait", title: m("waitingTitle") }, DA.msg(() => waited(a))));
-    }
-    function renderQueue() {
-      const items = openQueue();
-      count.textContent = items.length;
-      count.hidden = !items.length;
-      const existing = new Map([...list.children].map((n) => [n.dataset.id, n]));
-      list.replaceChildren(...items.map((a) => existing.get(a.id) || queueItem(a)));
-      [...list.children].forEach((n) => (n.dataset.id === current ? n.setAttribute("aria-current", "true") : n.removeAttribute("aria-current")));
-      page.classList.toggle("has-queue", items.length > 0);
-    }
+  DA.views.review = function mount(root, params = {}) {
+    let work = null, disposed = false, savedTimer = null;
 
     function emptyState() {
       if (!DA.state.appeals.length) return h("div", { class: "rv-empty" },
@@ -584,100 +576,112 @@
         h("a", { class: "da-btn", href: "#/review" }, m("backToQueue")));
     }
 
-    /* Смена содержимого справа: старое уходит вверх, новое приходит снизу. */
-    function swap(next) {
-      const version = ++stageVersion;
-      const prev = stage.firstElementChild;
-      if (!prev || reduced()) { stage.replaceChildren(next); return; }
-      prev.classList.add("rv-out");
-      timers.push(setTimeout(() => {
-        if (disposed || version !== stageVersion) return;
-        stage.replaceChildren(next);
-        next.classList.add("rv-enter");
-        window.scrollTo({ top: 0 });
-      }, 180));
-    }
-    function select(id, how) {
-      work?.dispose();
-      const appeal = DA.state.appeals.find((a) => a.id === id);
-      current = appeal ? appeal.id : null;
-      renderQueue();
-      work = appeal ? workspace(appeal, saved) : null;
-      const next = work || notFound();
-      if (how === "swap") swap(next); else { stageVersion++; stage.replaceChildren(next); }
-      if (how === "swap") timers.push(setTimeout(() => { const t = next.isConnected && next.querySelector("h1"); t && t.focus({ preventScroll: true }); }, 200));
-    }
-
-    /* После сохранения: апелляция уходит из очереди, через секунду открывается следующая. */
-    function saved(appeal) {
-      if (disposed) return;
-      if (current !== appeal.id) { renderQueue(); return; }
-      count.textContent = DA.openAppeals().length;
-      count.hidden = !DA.openAppeals().length;
-      timers.push(setTimeout(() => {
-        if (disposed || current !== appeal.id) { if (!disposed) renderQueue(); return; }
-        const node = list.querySelector(`[data-id="${appeal.id}"]`);
-        if (node && !reduced()) {
-          node.style.height = node.offsetHeight + "px";
-          node.classList.add("rv-q-leave");
-        }
-        timers.push(setTimeout(() => {
-          if (disposed || current !== appeal.id) { if (!disposed) renderQueue(); return; }
-          const rest = openQueue();
-          if (rest.length) {
-            history.replaceState(null, "", `#/review/${rest[0].id}`);
-            select(rest[0].id, "swap");
-          } else {
-            history.replaceState(null, "", "#/review");
-            current = null;
-            work?.dispose();
-            work = null;
-            renderQueue();
-            swap(emptyState());
-          }
-        }, reduced() ? 0 : 260));
-      }, 1100));
-    }
-
-    function onKey(e) {
-      const d = work && work.decision;
-      if (!d || (work.querySelector(".rv-decide.is-saved"))) return;
-      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-        e.preventDefault();
-        d.ready() ? d.save() : d.nudge();
+    if (!params.id) {
+      const items = openQueue();
+      if (!items.length) {
+        root.append(h("div", { class: "da-page" }, emptyState()));
         return;
       }
-      const typing = /^(TEXTAREA|INPUT)$/.test(e.target.tagName) || e.target.isContentEditable;
-      if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
-      if (e.key !== "1" && e.key !== "2") return;
-      e.preventDefault();
-      d.choose(e.key === "1" ? "confirm" : "change", true);
+      const tbody = h("tbody");
+      const range = h("span", { class: "da-pager-range", "aria-live": "polite" });
+      const nav = h("nav", { class: "da-pager-nav", "aria-label": m("pages") });
+      const sizes = DA.dropdown([10, 25, 50].map((n) => ({ value: n, label: String(n) })), queueView.size, (size) => {
+        const first = (queueView.page - 1) * queueView.size;
+        queueView.size = Number(size);
+        queueView.page = Math.floor(first / queueView.size) + 1;
+        render();
+      }, m("pageSize"));
+      const pager = h("div", { class: "da-pager" }, range,
+        h("div", { class: "da-pager-size" }, h("span", { "aria-hidden": "true" }, m("perPage")), sizes), nav);
+      const table = h("table", { class: "da-table rv-queue-table", "aria-label": m("openAppeals") },
+        h("thead", {}, h("tr", {}, ...["number", "criterion", "language", "channel", "wait"].map((key) => h("th", { scope: "col" }, m(key))))), tbody);
+      const wrap = h("div", { class: "da-table-wrap" }, table, pager);
+      root.append(h("div", { class: "da-page rv-queue-page" },
+        h("div", { class: "da-page-head" }, h("h1", { class: "da-h1", tabindex: -1 }, m("queueTitle")), h("span", { class: "da-count" }, items.length)), wrap));
+
+      function row(appeal) {
+        const { c, conv } = context(appeal);
+        const href = `#/review/${encodeURIComponent(appeal.id)}`;
+        const open = () => { location.hash = href; };
+        return h("tr", { "data-id": appeal.id, tabindex: 0,
+          onclick: (event) => {
+            if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.target.closest("a")) return;
+            open();
+          },
+          onkeydown: (event) => {
+            if (event.key === "Enter" && event.target === event.currentTarget) { event.preventDefault(); open(); }
+          }
+        },
+        h("td", { class: "da-num rv-q-number" }, h("a", { href, tabindex: -1, "aria-label": m("conversation", { number: DA.convNumber(appeal.conversationId) }) }, DA.convNumber(appeal.conversationId))),
+        h("td", { class: "rv-q-criterion" }, c.title),
+        h("td", { class: "rv-q-language" }, DA.msg(() => DA.langLabel[conv.language])),
+        h("td", { class: "rv-q-channel" }, h("span", { class: "da-channel" }, DA.icon(conv.channel === "voice call" ? "phone" : "message", 14), DA.msg(() => DA.channelLabel(conv)))),
+        h("td", { class: "rv-q-wait", title: m("waitingTitle") }, DA.msg(() => waited(appeal))));
+      }
+      function goTo(page) {
+        queueView.page = page;
+        render();
+        const top = wrap.getBoundingClientRect().top, offset = matchMedia("(max-width: 900px)").matches ? 68 : 12;
+        if (top < offset) window.scrollTo({ top: scrollY + top - offset, behavior: reduced() ? "auto" : "smooth" });
+      }
+      function render() {
+        const total = items.length, size = queueView.size, pages = Math.ceil(total / size);
+        queueView.page = Math.max(1, Math.min(queueView.page, pages));
+        const from = (queueView.page - 1) * size, to = Math.min(total, from + size);
+        tbody.replaceChildren(...items.slice(from, to).map(row));
+        DA.i18n.bindText(range, pages > 1 ? m("shownRange", { from: from + 1, to, total }) : m("shownAll", { count: total }));
+        const had = nav.contains(document.activeElement) ? document.activeElement.dataset.go : null;
+        const step = (go, label, icon, disabled) => h("button", { class: "da-pager-btn is-step", type: "button", "data-go": go, disabled,
+          "aria-label": label, onclick: () => goTo(queueView.page + (go === "next" ? 1 : -1)) },
+          go === "prev" ? DA.icon(icon, 16) : null, h("span", {}, label), go === "next" ? DA.icon(icon, 16) : null);
+        nav.replaceChildren(
+          step("prev", m("previous"), "back", queueView.page === 1),
+          ...queuePages(queueView.page, pages).map((number) => number == null
+            ? h("span", { class: "da-pager-gap", "aria-hidden": "true" }, "…")
+            : h("button", { class: "da-pager-btn", type: "button", "data-go": String(number), "aria-label": m("page", { number }),
+              "aria-current": number === queueView.page ? "page" : null, onclick: () => number !== queueView.page && goTo(number) }, number)),
+          step("next", m("next"), "chevron", queueView.page === pages));
+        if (had) (nav.querySelector(`[data-go="${had}"]:not([disabled])`) || nav.querySelector("[aria-current]"))?.focus();
+      }
+      render();
+      const tick = setInterval(() => {
+        for (const node of tbody.children) DA.i18n.refresh(node.querySelector(".rv-q-wait").firstChild);
+      }, 30000);
+      return () => clearInterval(tick);
+    }
+
+    const appeal = DA.state.appeals.find((item) => item.id === params.id);
+    const page = h("div", { class: "rv" });
+    if (appeal) {
+      work = workspace(appeal, saved);
+      page.append(h("a", { class: "rv-back", href: "#/review" }, DA.icon("back", 16), m("backToQueue")), work);
+    } else page.append(notFound());
+    root.append(page);
+
+    /* Показываем подтверждение, затем возвращаем человека к выбору в очереди. */
+    function saved() {
+      if (disposed) return;
+      clearTimeout(savedTimer);
+      savedTimer = setTimeout(() => { if (!disposed) location.hash = "#/review"; }, 1100);
+    }
+    function onKey(event) {
+      const decision = work?.decision;
+      if (!decision || work.querySelector(".rv-decide.is-saved")) return;
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+        event.preventDefault();
+        decision.ready() ? decision.save() : decision.nudge();
+        return;
+      }
+      const typing = /^(TEXTAREA|INPUT)$/.test(event.target.tagName) || event.target.isContentEditable;
+      if (typing || event.ctrlKey || event.metaKey || event.altKey || (event.key !== "1" && event.key !== "2")) return;
+      event.preventDefault();
+      decision.choose(event.key === "1" ? "confirm" : "change", true);
     }
     document.addEventListener("keydown", onKey);
-
-    /* Время ожидания в очереди идёт само. */
-    const tick = setInterval(() => {
-      for (const n of list.children) {
-        const a = DA.state.appeals.find((x) => x.id === n.dataset.id);
-        if (a) DA.i18n.refresh(n.querySelector(".rv-q-wait").firstChild);
-      }
-    }, 30000);
-
-    const first = openQueue()[0];
-    if (params.id) select(params.id);
-    else if (first) {
-      history.replaceState(null, "", `#/review/${first.id}`);
-      select(first.id);
-    } else {
-      renderQueue();
-      stage.replaceChildren(emptyState());
-    }
-
     return () => {
       disposed = true;
       work?.dispose();
-      timers.forEach(clearTimeout);
-      clearInterval(tick);
+      clearTimeout(savedTimer);
       document.removeEventListener("keydown", onKey);
     };
   };

@@ -1,35 +1,16 @@
 /* Рабочее место проверяющего и списки апелляций. */
 
-/* ---------- Каркас: очередь над рабочей областью ---------- */
+/* ---------- Очередь и отдельный разбор ---------- */
 .rv { max-width: 1680px; margin: 0 auto; padding: 20px 24px 40px; display: grid; gap: 16px; align-items: start; }
-.rv.has-queue { grid-template-columns: minmax(0, 1fr); }
-.rv:not(.has-queue) .rv-queue { display: none; }
-.rv-stage { min-width: 0; }
-
-/* ---------- Очередь ---------- */
-.rv-queue { display: flex; align-items: center; gap: 16px; min-width: 0; }
-.rv-queue-head { flex: none; display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 650; }
-.rv-queue-head h2 { margin: 0; font: inherit; }
-.rv-q-list { display: flex; flex: 1; gap: 8px; min-width: 0; padding: 4px; overflow-x: auto; scroll-snap-type: x proximity; }
-.rv-q-item {
-  display: grid; grid-template-columns: 16px auto minmax(0, 1fr) auto; align-items: center; gap: 6px 8px;
-  flex: 0 0 auto; width: max-content; max-width: min(100%, 560px); min-height: 44px; padding: 8px 12px;
-  border: 1px solid var(--da-line); border-radius: var(--da-r-control); background: var(--da-surface);
-  text-decoration: none; overflow: hidden; scroll-snap-align: start;
-  transition: border-color var(--da-fast), background var(--da-fast), transform 90ms var(--da-ease);
-}
-.rv-q-item:hover { border-color: #c9cfd8; background: var(--da-surface-2); }
-.rv-q-item:active { transform: scale(0.98); }
-.rv-q-item:focus-visible { outline: 2px solid var(--da-brand); outline-offset: 2px; }
-.rv-q-item[aria-current="true"] { border-color: var(--da-brand); background: var(--da-brand-soft); }
-.rv-q-selection { display: flex; align-items: center; color: var(--da-brand-press); visibility: hidden; }
-.rv-q-item[aria-current="true"] .rv-q-selection { visibility: visible; }
-.rv-q-num { font-size: 14px; font-weight: 650; white-space: nowrap; }
-.rv-q-wait { font-size: 12px; color: var(--da-text-2); white-space: nowrap; }
-.rv-q-item[aria-current="true"] .rv-q-wait { color: var(--da-brand-press); }
-.rv-q-crit { min-width: 0; font-size: 14px; color: var(--da-text-2); line-height: 1.35; overflow-wrap: anywhere; }
-.rv-q-leave { animation: rv-leave-x 260ms var(--da-ease) forwards; }
-@keyframes rv-leave-x { to { flex-basis: 0; max-width: 0; padding-left: 0; padding-right: 0; border-width: 0; opacity: 0; } }
+.rv-back { display: inline-flex; align-items: center; justify-self: start; gap: 5px; color: var(--da-text-2); font-size: 14px; text-decoration: none; border-radius: 4px; }
+.rv-back:hover { color: var(--da-brand-press); text-decoration: underline; text-underline-offset: 3px; }
+.rv-queue-page .da-page-head { align-items: center; }
+.rv-queue-table .rv-q-number { width: 130px; }
+.rv-queue-table .rv-q-number a { color: inherit; text-decoration: none; }
+.rv-queue-table .rv-q-number a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.rv-queue-table .rv-q-criterion { width: 50%; padding-top: 12px; padding-bottom: 12px; line-height: 1.45; }
+.rv-queue-table .rv-q-language, .rv-queue-table .rv-q-channel { white-space: nowrap; color: var(--da-text-2); }
+.rv-queue-table .rv-q-wait { width: 120px; color: var(--da-text-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* ---------- Рабочая область ---------- */
 .rv-work { display: grid; gap: 16px; }
@@ -247,13 +228,16 @@
   .rv-option { grid-template-columns: 1fr; gap: 8px; }
 }
 @media (max-width: 900px) {
-  .rv, .rv.has-queue { grid-template-columns: 1fr; padding: 16px; }
-  .rv-queue { display: grid; align-items: stretch; gap: 6px; }
-  .rv-queue-head { padding: 0 4px; }
-  .rv-q-list { width: 100%; }
-  .rv-q-item { max-width: 100%; }
+  .rv { padding: 16px; }
 }
 @media (max-width: 760px) {
+  .rv-queue-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; }
+  .rv-queue-table .rv-q-number, .rv-queue-table .rv-q-wait { width: auto; }
+  .rv-queue-table .rv-q-number { grid-column: 1; grid-row: 1; }
+  .rv-queue-table .rv-q-wait { grid-column: 2; grid-row: 1; text-align: right; font-size: 13px; }
+  .rv-queue-table .rv-q-criterion { grid-column: 1 / -1; grid-row: 2; width: auto; padding: 2px 0; font-weight: 550; }
+  .rv-queue-table .rv-q-language { grid-column: 1; grid-row: 3; font-size: 13px; }
+  .rv-queue-table .rv-q-channel { grid-column: 2; grid-row: 3; font-size: 13px; }
   .rv-h1 { font-size: 26px; }
   .rv-panel, .rv-side, .rv-decide { padding: 16px; }
   .rv-dispute { padding: 0; }
@@ -273,7 +257,7 @@
   .rv-empty { margin-top: 24px; padding: 32px 20px; }
 }
 
-/* ---------- Раскладка «очередь сверху, диалог слева, решение справа» ---------- */
+/* ---------- Диалог слева, решение справа ---------- */
 /* Диалог занимает всю высоту экрана слева, решение идёт справа сверху вниз. */
 .rv-body { grid-template-columns: minmax(0, 1fr) minmax(420px, 1fr); }
 @media (min-width: 1281px) {

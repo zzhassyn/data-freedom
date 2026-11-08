@@ -1,4 +1,4 @@
-/* Один рабочий чат с инструментами приложения и проверяемыми источниками. */
+/* Сохранённые диалоги с инструментами приложения и проверяемыми источниками. */
 (function () {
   const DA = window.DA, h = DA.h;
   const COPY = {
@@ -39,6 +39,21 @@
     quote: ["№{number}, реплика {turn}", "№{number}, {turn}-реплика", "#{number}, turn {turn}"],
     quoteHere: ["Реплика {turn}", "{turn}-реплика", "Turn {turn}"],
     clear: ["Начать новый чат", "Жаңа чат бастау", "Start a new chat"],
+    history: ["История диалогов", "Диалогтар тарихы", "Chat history"],
+    backToChat: ["К диалогу", "Диалогқа оралу", "Back to chat"],
+    newChat: ["Новый диалог", "Жаңа диалог", "New chat"],
+    emptyHistory: ["Диалогов пока нет", "Әзірге диалогтар жоқ", "No chats yet"],
+    emptyHistoryHelp: ["Задайте первый вопрос ассистенту.", "Көмекшіге алғашқы сұрағыңызды қойыңыз.", "Ask the assistant your first question."],
+    deleteChat: ["Удалить диалог", "Диалогты жою", "Delete chat"],
+    deleteConfirm: ["Удалить этот диалог?", "Осы диалогты жою керек пе?", "Delete this chat?"],
+    delete: ["Удалить", "Жою", "Delete"],
+    keep: ["Отмена", "Бас тарту", "Cancel"],
+    chatLimit: ["Сохранено 30 диалогов. Удалите ненужный, чтобы начать новый.", "30 диалог сақталды. Жаңасын бастау үшін қажетсізін жойыңыз.", "You have 30 saved chats. Delete one to start another."],
+    messageLimit: ["Этот диалог заполнен. Начните новый, чтобы продолжить.", "Бұл диалог толды. Жалғастыру үшін жаңасын бастаңыз.", "This chat is full. Start a new one to continue."],
+    savedInTab: ["Не удалось сохранить историю в браузере. Она доступна в этой вкладке до её закрытия.", "Тарихты браузерге сақтау мүмкін болмады. Ол осы қойынды жабылғанша қолжетімді.", "Could not save history in the browser. It remains available in this tab until you close it."],
+    notSaved: ["Не удалось сохранить историю. Скопируйте важные ответы перед закрытием страницы.", "Тарихты сақтау мүмкін болмады. Бетті жаппас бұрын маңызды жауаптарды көшіріңіз.", "Could not save history. Copy any important answers before closing the page."],
+    saveAgain: ["Повторить сохранение", "Қайта сақтау", "Try saving again"],
+    deleteFailed: ["Не удалось удалить диалог. Повторите попытку.", "Диалогты жою мүмкін болмады. Қайталап көріңіз.", "Could not delete the chat. Try again."],
     stopped: ["Ответ остановлен. Вопрос сохранён в поле ввода.", "Жауап тоқтатылды. Сұрақ енгізу өрісінде сақталды.", "The response stopped. Your question is preserved in the input."],
     sourceChanged: ["Данные изменились во время ответа. Повторите вопрос.", "Жауап дайындалған кезде деректер өзгерді. Сұрақты қайталаңыз.", "The data changed while answering. Try the question again."],
     retry: ["Повторить вопрос", "Сұрақты қайталау", "Retry question"],
@@ -53,12 +68,18 @@
     ["assistant." + key, { ru: values[0], kk: values[1], en: values[2] }])));
   const m = (key, params) => DA.msg("assistant." + key, params);
   const t = (key, params) => DA.t("assistant." + key, params);
-  const STORAGE = "da.assistant.chat.v5", MAX_SESSIONS = 1, MAX_MESSAGES = 12, MAX_STORAGE = 180000;
+  const STORAGE = "da.assistant.history.v1.", BACKUP = "da.assistant.history.tab.v1.", ACTIVE = "da.assistant.active.v1";
+  const LEGACY = ["da.assistant.chat.v5", "da.assistant.chat.v4", "da.assistant.sessions.v3"];
+  const MAX_CHATS = 30, MAX_MESSAGES = 12, MAX_HISTORY = 120, MAX_STORAGE = 2000000;
   const text = (value, max, empty) => typeof value === "string" && value.length <= max && (empty || value.trim()) ? value : null;
   const id = (value) => text(value, 200, false);
   const positive = (value) => Number.isInteger(value) && value > 0 && value < 1000000;
   const plain = (value) => value && typeof value === "object" && !Array.isArray(value);
   const clone = (value) => JSON.parse(JSON.stringify(value));
+  const newId = () => globalThis.crypto?.randomUUID?.() || Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+  const contentKey = (chat) => JSON.stringify([chat.title || "", chat.history, chat.draft]);
+  const hasContent = (chat) => chat.history.length > 0 || !!chat.draft.trim();
+  const timestamp = (value) => Number.isFinite(Number(value)) && Number(value) > 0 && Number(value) <= 8640000000000000 ? Number(value) : Date.now();
 
   function safeScope(value) {
     if (!plain(value)) return null;
@@ -124,33 +145,87 @@
     }
     return result;
   }
-  function restoreSessions() {
+  function safeHistory(value) {
+    if (!Array.isArray(value) || value.length > MAX_HISTORY || value.length % 2) return null;
+    const result = [];
+    for (let i = 0; i < value.length; i++) {
+      const item = value[i], role = i % 2 ? "assistant" : "user";
+      if (!plain(item) || item.role !== role || !text(item.content, role === "user" ? 2000 : 8000, false)) return null;
+      const normalized = { role, content: item.content };
+      if (role === "assistant") {
+        normalized.reply = safeReply(item.reply);
+        if (!normalized.reply || normalized.reply.answer !== item.content) return null;
+      }
+      result.push(normalized);
+    }
+    return result;
+  }
+  function storage(kind) { try { return window[kind]; } catch (_) { return null; } }
+  function storedValue(kind, key) { try { return storage(kind)?.getItem(key) || null; } catch (_) { return null; } }
+  function readChat(raw) {
     try {
-      const saved = JSON.parse(sessionStorage.getItem(STORAGE) || sessionStorage.getItem("da.assistant.chat.v4") ||
-        sessionStorage.getItem("da.assistant.sessions.v3"));
-      if (!plain(saved) || ![3, 4, 5].includes(saved.version) || !Array.isArray(saved.sessions)) return [];
-      const restored = saved.sessions.slice(-8).flatMap((entry) => {
-        if (!plain(entry) || !text(entry.key, 100000, false) ||
-            !Array.isArray(entry.history) || entry.history.length > MAX_MESSAGES || entry.history.length % 2) return [];
-        const history = [];
-        for (let i = 0; i < entry.history.length; i++) {
-          const item = entry.history[i], role = i % 2 ? "assistant" : "user";
-          if (!plain(item) || item.role !== role || !text(item.content, role === "user" ? 2000 : 8000, false)) return [];
-          const normalized = { role, content: item.content };
-          if (role === "assistant") {
-            normalized.reply = safeReply(item.reply);
-            if (!normalized.reply || normalized.reply.answer !== item.content) return [];
-          }
-          history.push(normalized);
-        }
-        return [{ key: entry.key, history, draft: text(entry.draft, 2000, true) || "",
-          updatedAt: Number(entry.updatedAt) || 0, notice: null }];
-      });
-      if (!restored.length) return [];
-      restored.sort((a, b) => a.updatedAt - b.updatedAt);
-      return [{ key: "global", history: restored.flatMap((entry) => entry.history).slice(-MAX_MESSAGES),
-        draft: restored.at(-1).draft, updatedAt: restored.at(-1).updatedAt, notice: null }];
+      const value = JSON.parse(raw), history = safeHistory(value?.history);
+      if (!plain(value) || value.version !== 1 || !id(value.key) || !history || !id(value.revision)) return null;
+      const chat = { key: value.key, title: text(value.title, 140, true) || "", history,
+        draft: text(value.draft, 2000, true) || "", createdAt: timestamp(value.createdAt),
+        updatedAt: timestamp(value.updatedAt), revision: value.revision,
+        baseRevision: id(value.baseRevision) || null, notice: null, dirty: false, saved: "local", migration: value.migration === true };
+      chat.signature = contentKey(chat);
+      return chat;
+    } catch (_) { return null; }
+  }
+  function readChats(kind, prefix) {
+    try {
+      const target = storage(kind), result = [];
+      for (let i = 0; i < (target?.length || 0); i++) {
+        const key = target.key(i);
+        if (!key?.startsWith(prefix)) continue;
+        const chat = readChat(target.getItem(key));
+        if (chat && key === prefix + chat.key) result.push(chat);
+      }
+      return result;
     } catch (_) { return []; }
+  }
+  function restoreSessions() {
+    const records = new Map(readChats("localStorage", STORAGE).map((chat) => {
+      chat.baseRevision = chat.revision; return [chat.key, chat];
+    }));
+    for (const backup of readChats("sessionStorage", BACKUP)) {
+      const durable = records.get(backup.key);
+      if (durable?.revision === backup.revision) {
+        try { storage("sessionStorage")?.removeItem(BACKUP + backup.key); } catch (_) { /* The durable copy already contains this backup. */ }
+        continue;
+      }
+      backup.backupKey = backup.key; backup.saved = "tab"; backup.dirty = true;
+      if (durable && durable.revision !== backup.baseRevision) {
+        backup.key = backup.key + "-recovered-" + backup.revision.slice(-12); backup.baseRevision = null;
+      }
+      records.set(backup.key, backup);
+    }
+    for (const key of LEGACY) {
+      const raw = storedValue("sessionStorage", key);
+      if (!raw) continue;
+      try {
+        const saved = JSON.parse(raw);
+        if (!plain(saved) || ![3, 4, 5].includes(saved.version) || !Array.isArray(saved.sessions)) continue;
+        const old = saved.sessions.flatMap((entry) => {
+          if (!Array.isArray(entry?.history) || entry.history.length > MAX_MESSAGES) return [];
+          const history = safeHistory(entry?.history);
+          return history ? [{ history, draft: text(entry.draft, 2000, true) || "", updatedAt: timestamp(entry.updatedAt) }] : [];
+        }).sort((a, b) => a.updatedAt - b.updatedAt);
+        if (!old.length) continue;
+        let hash = 2166136261;
+        for (let i = 0; i < raw.length; i++) hash = Math.imul(hash ^ raw.charCodeAt(i), 16777619);
+        const migratedKey = "imported-" + (hash >>> 0).toString(16);
+        if (!records.has(migratedKey)) records.set(migratedKey, { key: migratedKey, title: "",
+          history: old.flatMap((entry) => entry.history), draft: old.at(-1).draft,
+          createdAt: old[0].updatedAt, updatedAt: old.at(-1).updatedAt, revision: newId(), baseRevision: null,
+          notice: null, dirty: true, saved: "tab", migration: true, signature: "" });
+        break;
+      } catch (_) { /* A malformed record never becomes rendered HTML or overwrites saved chats. */ }
+    }
+    for (const chat of records.values()) if (chat.migration) chat.signature = contentKey(chat);
+    return [...records.values()];
   }
   function replace(node, ...children) {
     [...node.childNodes].forEach((child) => DA.i18n.release(child));
@@ -180,6 +255,7 @@
     if (singleton) return singleton;
     let sessions = restoreSessions(), current = null, pending = null, sequence = 0, ownerSequence = 0;
     let conversation = null, expanded = false, wide = false, returnFocus = null;
+    let historyOpen = false, deleteCandidate = null, draftTimer = null, storageMessage = null;
     let workspace = { filters: {}, route: null };
     const events = new AbortController(), timers = new Set();
     const avatar = (extra) => h("span", { class: "da-assistant-avatar " + (extra || ""), "aria-hidden": "true" },
@@ -194,7 +270,7 @@
     const body = h("div", { class: "da-assistant-body" }, welcome, log, notice);
     const suggestions = h("div", { class: "da-assistant-suggestions" });
     const input = h("textarea", { id: "da-assistant-input", rows: 3, maxlength: 2000, "aria-label": m("inputLabel"),
-      oninput: () => { if (current) current.draft = input.value; persist(); syncControls(); },
+      oninput: () => { if (current) current.draft = input.value; schedulePersist(); syncControls(); },
       onkeydown: (event) => {
         if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); send(); }
       } });
@@ -212,15 +288,26 @@
         DA.i18n.bindAttr(expandButton, "aria-label", m(wide ? "compact" : "expand"));
         DA.i18n.bindAttr(expandButton, "title", m(wide ? "compact" : "expand"));
       } }, DA.icon("external", 18));
-    const clear = h("button", { class: "da-assistant-control", type: "button", "aria-label": m("clear"), title: m("clear"),
-      onclick: () => { cancel(); current.history = []; current.draft = ""; current.notice = null;
-        input.value = ""; persist(); renderLog(); syncControls(); input.focus(); } }, DA.icon("plus", 19));
+    const historyButton = h("button", { class: "da-assistant-control da-assistant-history-toggle", type: "button",
+      "aria-label": m("history"), title: m("history"), "aria-controls": "da-assistant-history", "aria-expanded": "false",
+      onclick: () => setHistory(!historyOpen) }, DA.icon("clock", 18));
+    const clear = h("button", { class: "da-assistant-control da-assistant-new", type: "button", "aria-label": m("clear"), title: m("clear"),
+      onclick: () => newChat() }, DA.icon("plus", 19));
     const close = h("button", { class: "da-assistant-control", type: "button", "aria-label": m("minimize"),
       title: m("minimize"), onclick: () => setOpen(false) }, DA.icon("x", 18));
+    const historyList = h("div", { class: "da-assistant-history-list" });
+    const historyBack = h("button", { class: "da-assistant-history-back", type: "button", onclick: () => setHistory(false) }, DA.icon("back", 15), m("backToChat"));
+    const historyPanel = h("section", { id: "da-assistant-history", class: "da-assistant-history", hidden: true, "aria-labelledby": "da-assistant-history-title" },
+      h("div", { class: "da-assistant-history-head" }, h("h3", { id: "da-assistant-history-title" }, m("history")), historyBack), historyList);
+    const storageText = h("span", {});
+    const storageRetry = h("button", { type: "button", onclick: () => {
+      storageMessage = null; sessions.filter((chat) => chat.dirty).forEach(saveChat); renderStorage(); if (historyOpen) renderHistory();
+    } }, m("saveAgain"));
+    const storageNotice = h("div", { class: "da-assistant-storage-notice", role: "status", hidden: true }, storageText, storageRetry);
     const panel = h("section", { id: "da-assistant-panel", class: "da-assistant-panel", role: "dialog",
       "aria-modal": "false", "aria-labelledby": "da-assistant-title", hidden: true },
-      h("header", { class: "da-assistant-head" }, avatar(), h("h2", { id: "da-assistant-title" }, m("title")), expandButton, clear, close),
-      body, suggestions, composer);
+      h("header", { class: "da-assistant-head" }, avatar(), h("h2", { id: "da-assistant-title" }, m("title")), historyButton, expandButton, clear, close),
+      storageNotice, historyPanel, body, suggestions, composer);
     const element = h("div", { class: "da-assistant" }, panel, launcher);
     document.body.append(element);
     function pageFocus() {
@@ -247,31 +334,147 @@
       }
       return focus;
     }
+    function writeActive() { try { if (current) storage("sessionStorage")?.setItem(ACTIVE, current.key); } catch (_) { /* The current chat remains open. */ } }
+    function saveChat(chat) {
+      if (!chat) return;
+      const signature = contentKey(chat);
+      if (signature !== chat.signature) {
+        chat.signature = signature; chat.updatedAt = Date.now(); chat.revision = newId(); chat.dirty = true;
+      }
+      if (!chat.dirty || !hasContent(chat) && !chat.baseRevision) return;
+      const durable = readChat(storedValue("localStorage", STORAGE + chat.key));
+      if (durable && durable.revision !== chat.baseRevision && durable.revision !== chat.revision) {
+        // Preserve both edits if another tab changed this same chat.
+        durable.baseRevision = durable.revision;
+        sessions = sessions.filter((entry) => entry !== chat);
+        sessions.push(durable, chat); chat.key = newId(); chat.baseRevision = null;
+      }
+      const record = { version: 1, key: chat.key, title: chat.title || "", history: chat.history, draft: chat.draft,
+        createdAt: chat.createdAt, updatedAt: chat.updatedAt, revision: chat.revision, baseRevision: chat.baseRevision, migration: !!chat.migration };
+      const serialized = JSON.stringify(record);
+      try {
+        const target = storage("localStorage");
+        if (!target) throw new Error("Storage unavailable");
+        let size = serialized.length;
+        for (let i = 0; i < target.length; i++) {
+          const key = target.key(i);
+          if (key?.startsWith(STORAGE) && key !== STORAGE + chat.key) size += (target.getItem(key) || "").length;
+        }
+        if (size > MAX_STORAGE) throw new Error("History is full");
+        target.setItem(STORAGE + chat.key, serialized);
+        chat.baseRevision = chat.revision; chat.dirty = false; chat.saved = "local";
+        try {
+          storage("sessionStorage")?.removeItem(BACKUP + (chat.backupKey || chat.key));
+          delete chat.backupKey;
+          if (chat.migration) { LEGACY.forEach((key) => storage("sessionStorage")?.removeItem(key)); chat.migration = false; }
+        } catch (_) { /* A durable saved record is already available. */ }
+      } catch (_) {
+        try {
+          const target = storage("sessionStorage");
+          if (!target) throw new Error("Storage unavailable");
+          target.setItem(BACKUP + chat.key, serialized); chat.saved = "tab";
+          const previousBackup = chat.backupKey; chat.backupKey = chat.key;
+          if (previousBackup && previousBackup !== chat.key) {
+            try { target.removeItem(BACKUP + previousBackup); } catch (_) { /* The newer fallback remains available. */ }
+          }
+        } catch (_) { chat.saved = "memory"; }
+      }
+      writeActive();
+    }
     function persist() {
-      if (current) current.updatedAt = Date.now();
-      sessions.sort((a, b) => a.updatedAt - b.updatedAt);
-      while (sessions.length > MAX_SESSIONS) sessions.shift();
-      const serializable = () => JSON.stringify({ version: 5, sessions: sessions.map(({ notice: _, ...entry }) => entry) });
-      let serialized = serializable();
-      while (serialized.length > MAX_STORAGE && sessions.length > 1) {
-        const index = sessions.findIndex((entry) => entry !== current);
-        if (index < 0) break;
-        sessions.splice(index, 1); serialized = serializable();
+      if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
+      saveChat(current); writeActive(); renderStorage();
+      if (historyOpen) renderHistory();
+    }
+    function schedulePersist() {
+      if (draftTimer) clearTimeout(draftTimer);
+      draftTimer = setTimeout(() => { draftTimer = null; persist(); }, 250);
+    }
+    function renderStorage() {
+      const unsaved = sessions.filter((chat) => chat.dirty && hasContent(chat));
+      const key = storageMessage || (unsaved.length ? unsaved.some((chat) => chat.saved === "memory") ? "notSaved" : "savedInTab" : null);
+      storageNotice.hidden = !key;
+      if (key) replace(storageText, DA.i18n.text(m(key)));
+      storageRetry.hidden = !unsaved.length || !!storageMessage;
+    }
+    function refreshSavedChats() {
+      for (const saved of restoreSessions()) {
+        const existing = sessions.find((chat) => chat.key === saved.key);
+        if (!existing) sessions.push(saved);
+        else if (existing !== current && !existing.dirty) sessions[sessions.indexOf(existing)] = saved;
       }
-      while (serialized.length > MAX_STORAGE && current?.history.length) {
-        current.history = current.history.slice(2); serialized = serializable();
-      }
-      try { if (serialized.length <= MAX_STORAGE) sessionStorage.setItem(STORAGE, serialized); }
-      catch (_) { /* Чат продолжает работать в памяти вкладки. */ }
+    }
+    function freshChat() {
+      const chat = { key: newId(), title: "", history: [], draft: "", createdAt: Date.now(), updatedAt: Date.now(),
+        revision: newId(), baseRevision: null, notice: null, dirty: false, saved: "memory" };
+      chat.signature = contentKey(chat); return chat;
     }
     function activate() {
-      const key = "global";
-      if (current?.key === key) { renderChrome(); return; }
-      cancel();
-      let session = sessions.find((entry) => entry.key === key);
-      if (!session) { session = { key, history: [], draft: "", updatedAt: Date.now(), notice: null }; sessions.push(session); }
-      current = session; input.value = session.draft;
+      if (current) { renderChrome(); return; }
+      const active = storedValue("sessionStorage", ACTIVE);
+      current = sessions.find((chat) => chat.key === active) || [...sessions].sort((a, b) => b.updatedAt - a.updatedAt)[0];
+      if (!current) { current = freshChat(); sessions.push(current); }
+      input.value = current.draft;
       persist(); renderChrome(); renderLog(); syncControls();
+    }
+    function chatTitle(chat) {
+      return chat.title || (chat.history.find((item) => item.role === "user")?.content || chat.draft).trim().replace(/\s+/g, " ").slice(0, 120) || t("newChat");
+    }
+    function renderHistory() {
+      const chats = sessions.filter(hasContent).sort((a, b) => b.updatedAt - a.updatedAt);
+      const locale = { RU: "ru", KZ: "kk", EN: "en" }[DA.i18n.languageCode()] || "ru";
+      replace(historyList, ...(chats.length ? chats.map((chat) => {
+        const date = new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(chat.updatedAt);
+        const entry = h("button", { class: "da-assistant-history-entry", type: "button", "data-chat-id": chat.key,
+          "aria-current": chat === current ? "true" : null, onclick: () => selectChat(chat.key) },
+          h("span", { class: "da-assistant-history-title" }, chatTitle(chat)), h("time", { datetime: new Date(chat.updatedAt).toISOString() }, date));
+        const remove = h("button", { class: "da-assistant-history-delete", type: "button", title: m("deleteChat"), "aria-label": m("deleteChat"), onclick: () => {
+          deleteCandidate = chat.key; renderHistory(); historyList.querySelector(".da-assistant-delete-cancel")?.focus();
+        } }, DA.icon("trash", 16));
+        return h("div", { class: "da-assistant-history-row" }, h("div", { class: "da-assistant-history-choice" }, entry, remove),
+          deleteCandidate === chat.key ? h("div", { class: "da-assistant-delete-confirm" }, h("span", {}, m("deleteConfirm")),
+            h("button", { type: "button", class: "da-assistant-delete-cancel", onclick: () => { deleteCandidate = null; renderHistory(); historyList.querySelector(".da-assistant-history-entry")?.focus(); } }, m("keep")),
+            h("button", { type: "button", class: "da-assistant-delete-confirmed", onclick: () => deleteChat(chat.key) }, m("delete"))) : null);
+      }) : [h("div", { class: "da-assistant-history-empty" }, h("h4", {}, m("emptyHistory")), h("p", {}, m("emptyHistoryHelp")))]));
+    }
+    function renderView() {
+      historyPanel.hidden = !historyOpen; body.hidden = historyOpen; composer.hidden = historyOpen;
+      suggestions.hidden = historyOpen || !!current?.history.length || !!pending;
+      historyButton.setAttribute("aria-expanded", String(historyOpen));
+    }
+    function setHistory(value, focus = true) {
+      historyOpen = value; deleteCandidate = null;
+      if (value) { persist(); refreshSavedChats(); renderHistory(); }
+      renderView();
+      if (focus) (value ? historyList.querySelector(".da-assistant-history-entry") || historyBack : historyButton).focus();
+    }
+    function selectChat(key) {
+      const next = sessions.find((chat) => chat.key === key);
+      if (!next) return;
+      if (next !== current) { cancel("stopped"); persist(); current = next; input.value = current.draft; }
+      storageMessage = null; persist(); renderChrome(); renderLog(); setHistory(false, false); input.focus();
+    }
+    function newChat() {
+      activate(); refreshSavedChats();
+      if (hasContent(current) && sessions.filter(hasContent).length >= MAX_CHATS) {
+        storageMessage = "chatLimit"; setHistory(true); renderStorage(); return;
+      }
+      if (hasContent(current) || pending) { cancel("stopped"); persist(); current = freshChat(); sessions.push(current); }
+      input.value = ""; storageMessage = null; writeActive(); renderChrome(); renderLog(); setHistory(false, false); input.focus();
+    }
+    function deleteChat(key) {
+      const chat = sessions.find((entry) => entry.key === key);
+      if (!chat) return;
+      if (chat === current) { cancel(); persist(); }
+      try {
+        const durable = storage("localStorage"), backup = storage("sessionStorage");
+        if (!durable && chat.baseRevision || !backup && chat.saved === "tab") throw new Error("Storage unavailable");
+        durable?.removeItem(STORAGE + key); backup?.removeItem(BACKUP + (chat.backupKey || key));
+        if (chat.migration) LEGACY.forEach((legacy) => backup?.removeItem(legacy));
+      } catch (_) { storageMessage = "deleteFailed"; renderStorage(); return; }
+      sessions = sessions.filter((entry) => entry !== chat); deleteCandidate = null; storageMessage = null;
+      if (current === chat) { current = null; activate(); }
+      renderStorage(); renderHistory(); historyList.querySelector(".da-assistant-history-entry")?.focus();
     }
     function renderChrome() {
       replace(welcome, avatar("is-large"), h("h3", {}, m("welcomeTitle")), h("p", {}, m("welcomeIntro")));
@@ -281,7 +484,7 @@
         onclick: () => { if (pending) return; activate(); input.value = t(key + "Question"); current.draft = input.value; persist(); send(); } }, m(key))));
       DA.i18n.bindAttr(input, "placeholder", m("placeholder"));
       launcher.hidden = expanded;
-      syncControls();
+      syncControls(); renderView(); renderStorage(); if (historyOpen) renderHistory();
     }
     function showNotice(value, canRetry) {
       current.notice = value ? { ...(typeof value === "string" ? { text: value } : value), retry: !!canRetry } : null;
@@ -301,9 +504,10 @@
     }
     function setOpen(value) {
       if (value) { activate(); returnFocus = document.activeElement; }
+      else persist();
       expanded = value; panel.hidden = !value; launcher.hidden = value;
       element.classList.toggle("is-expanded", value); launcher.setAttribute("aria-expanded", String(value));
-      if (value) { (pending ? stop : input).focus(); scrollEnd(); }
+      if (value) { (historyOpen ? historyList.querySelector(".da-assistant-history-entry") || historyBack : pending ? stop : input).focus(); scrollEnd(); }
       else if (returnFocus?.isConnected && !element.contains(returnFocus)) returnFocus.focus();
       else {
         const pageTrigger = document.querySelector?.(".da-ins-ask:not([disabled]):not([hidden])");
@@ -408,7 +612,7 @@
           h("span", { class: "da-assistant-spinner", "aria-hidden": "true" }), pending.statusNode));
       }
       welcome.hidden = current.history.length > 0 || !!pending;
-      suggestions.hidden = current.history.length > 0 || !!pending;
+      renderView();
       body.scrollTop = oldScroll; renderNotice();
     }
     async function refreshFocus(focus, pinnedEvaluationId, signal, stillCurrent) {
@@ -445,6 +649,7 @@
       const message = input.value.trim();
       if (pending || !message || message.length > 2000) return;
       activate();
+      if (current.history.length >= MAX_HISTORY) { showNotice({ key: "messageLimit" }); return; }
       let focus = pageFocus();
       const session = current, requestNumber = ++sequence, controller = new AbortController();
       const query = new URLSearchParams((location.hash || "").split("?")[1] || "");
@@ -452,6 +657,7 @@
       const history = session.history.slice(-MAX_MESSAGES).map(({ role, content }) => ({ role, content: content.slice(0, 6000) }));
       const language = DA.i18n.languageCode();
       session.draft = message; session.notice = null;
+      if (!session.title) session.title = message.replace(/\s+/g, " ").slice(0, 120);
       pending = { controller, message, session, focus, number: requestNumber, attempt: 0, stage: "analyzing", text: "",
         statusNode: null, streamNode: null, answerNode: null };
       input.value = ""; persist(); renderLog(); syncControls(); scrollEnd();
@@ -511,7 +717,7 @@
         if (!reply) throw new DA.ApiError("invalid_response", "Invalid assistant response", 502);
         const stick = body.scrollHeight - body.scrollTop - body.clientHeight < 100;
         session.history.push({ role: "user", content: message }, { role: "assistant", content: reply.answer, reply });
-        session.history = session.history.slice(-MAX_MESSAGES); session.draft = ""; session.notice = null;
+        session.draft = ""; session.notice = null;
         pending = null; input.value = ""; persist(); renderLog(); syncControls();
         if (stick) scrollEnd();
       } catch (error) {
@@ -531,7 +737,7 @@
       renderChrome();
     }
     element.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && expanded) { event.preventDefault(); event.stopPropagation(); setOpen(false); }
+      if (event.key === "Escape" && expanded) { event.preventDefault(); event.stopPropagation(); if (historyOpen) setHistory(false); else setOpen(false); }
     }, { signal: events.signal });
     for (const name of ["da:evaluations-changed", "da:appeals-changed", "da:checklists-changed"])
       window.addEventListener(name, refreshData, { signal: events.signal });
