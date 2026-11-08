@@ -1,32 +1,35 @@
 /* Рабочее место проверяющего и списки апелляций. */
 
-/* ---------- Каркас: очередь слева, разбор справа ---------- */
-.rv { max-width: 1680px; margin: 0 auto; padding: 20px 24px 40px; display: grid; gap: 20px; align-items: start; }
-.rv.has-queue { grid-template-columns: 264px minmax(0, 1fr); }
+/* ---------- Каркас: очередь над рабочей областью ---------- */
+.rv { max-width: 1680px; margin: 0 auto; padding: 20px 24px 40px; display: grid; gap: 16px; align-items: start; }
+.rv.has-queue { grid-template-columns: minmax(0, 1fr); }
 .rv:not(.has-queue) .rv-queue { display: none; }
 .rv-stage { min-width: 0; }
 
 /* ---------- Очередь ---------- */
-.rv-queue {
-  position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: auto; overscroll-behavior: contain;
-  padding: 8px; border-radius: var(--da-r-panel); background: var(--da-surface); box-shadow: var(--da-shadow-rest);
-}
-.rv-queue-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px 10px; font-size: 14px; font-weight: 650; }
-.rv-q-list { display: grid; gap: 2px; }
+.rv-queue { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.rv-queue-head { flex: none; display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 650; }
+.rv-queue-head h2 { margin: 0; font: inherit; }
+.rv-q-list { display: flex; flex: 1; gap: 8px; min-width: 0; padding: 4px; overflow-x: auto; scroll-snap-type: x proximity; }
 .rv-q-item {
-  display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 10px 12px;
-  border-radius: var(--da-r-control); text-decoration: none; overflow: hidden;
-  transition: background var(--da-fast), transform 90ms var(--da-ease), box-shadow var(--da-fast);
+  display: grid; grid-template-columns: 16px auto minmax(0, 1fr) auto; align-items: center; gap: 6px 8px;
+  flex: 0 0 auto; width: max-content; max-width: min(100%, 560px); min-height: 44px; padding: 8px 12px;
+  border: 1px solid var(--da-line); border-radius: var(--da-r-control); background: var(--da-surface);
+  text-decoration: none; overflow: hidden; scroll-snap-align: start;
+  transition: border-color var(--da-fast), background var(--da-fast), transform 90ms var(--da-ease);
 }
-.rv-q-item:hover { background: var(--da-surface-2); }
+.rv-q-item:hover { border-color: #c9cfd8; background: var(--da-surface-2); }
 .rv-q-item:active { transform: scale(0.98); }
-.rv-q-item[aria-current="true"] { background: var(--da-brand-soft); box-shadow: inset 0 0 0 1px rgb(0 151 83 / 0.18); }
-.rv-q-num { font-weight: 650; }
-.rv-q-wait { font-size: 13px; color: var(--da-text-3); white-space: nowrap; }
+.rv-q-item:focus-visible { outline: 2px solid var(--da-brand); outline-offset: 2px; }
+.rv-q-item[aria-current="true"] { border-color: var(--da-brand); background: var(--da-brand-soft); }
+.rv-q-selection { display: flex; align-items: center; color: var(--da-brand-press); visibility: hidden; }
+.rv-q-item[aria-current="true"] .rv-q-selection { visibility: visible; }
+.rv-q-num { font-size: 14px; font-weight: 650; white-space: nowrap; }
+.rv-q-wait { font-size: 12px; color: var(--da-text-2); white-space: nowrap; }
 .rv-q-item[aria-current="true"] .rv-q-wait { color: var(--da-brand-press); }
-.rv-q-crit { grid-column: 1 / -1; font-size: 14px; color: var(--da-text-2); line-height: 1.35; }
-.rv-q-leave { animation: rv-leave 260ms var(--da-ease) forwards; }
-@keyframes rv-leave { to { height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; transform: translateX(-12px); } }
+.rv-q-crit { min-width: 0; font-size: 14px; color: var(--da-text-2); line-height: 1.35; overflow-wrap: anywhere; }
+.rv-q-leave { animation: rv-leave-x 260ms var(--da-ease) forwards; }
+@keyframes rv-leave-x { to { flex-basis: 0; max-width: 0; padding-left: 0; padding-right: 0; border-width: 0; opacity: 0; } }
 
 /* ---------- Рабочая область ---------- */
 .rv-work { display: grid; gap: 16px; }
@@ -245,12 +248,10 @@
 }
 @media (max-width: 900px) {
   .rv, .rv.has-queue { grid-template-columns: 1fr; padding: 16px; }
-  .rv-queue { position: static; max-height: none; padding: 6px; }
-  .rv-queue-head { padding: 6px 8px 8px; }
-  .rv-q-list { display: flex; gap: 6px; overflow-x: auto; scroll-snap-type: x proximity; }
-  .rv-q-item { flex: 0 0 220px; scroll-snap-align: start; }
-  .rv-q-leave { animation-name: rv-leave-x; }
-  @keyframes rv-leave-x { to { flex-basis: 0; padding-left: 0; padding-right: 0; opacity: 0; } }
+  .rv-queue { display: grid; align-items: stretch; gap: 6px; }
+  .rv-queue-head { padding: 0 4px; }
+  .rv-q-list { width: 100%; }
+  .rv-q-item { max-width: 100%; }
 }
 @media (max-width: 760px) {
   .rv-h1 { font-size: 26px; }
@@ -273,14 +274,6 @@
 }
 
 /* ---------- Раскладка «очередь сверху, диалог слева, решение справа» ---------- */
-/* Очередь полосой над рабочей областью: левая колонка больше не пустует под коротким списком. */
-.rv.has-queue { grid-template-columns: minmax(0, 1fr); }
-.rv-queue { position: static; max-height: none; display: flex; align-items: center; gap: 12px; padding: 8px; overflow: visible; }
-.rv-queue-head { flex: none; padding: 0 6px 0 10px; }
-.rv-q-list { display: flex; gap: 6px; overflow-x: auto; scroll-snap-type: x proximity; flex: 1; min-width: 0; padding: 2px; }
-.rv-q-item { flex: 0 0 236px; scroll-snap-align: start; }
-.rv-q-leave { animation-name: rv-leave-x; }
-@keyframes rv-leave-x { to { flex-basis: 0; padding-left: 0; padding-right: 0; opacity: 0; } }
 /* Диалог занимает всю высоту экрана слева, решение идёт справа сверху вниз. */
 .rv-body { grid-template-columns: minmax(0, 1fr) minmax(420px, 1fr); }
 @media (min-width: 1281px) {
@@ -289,9 +282,4 @@
 }
 @media (max-width: 1280px) {
   .rv-body { grid-template-columns: minmax(0, 1fr); }
-}
-@media (max-width: 900px) {
-  .rv-queue { display: grid; align-items: stretch; gap: 8px; }
-  .rv-queue-head { padding: 4px 8px 0; }
-  .rv-q-list { width: 100%; }
 }

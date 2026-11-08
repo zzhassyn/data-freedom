@@ -1,4 +1,4 @@
-/* Рабочее место проверяющего: очередь апелляций слева, разбор одной апелляции справа, список решённых. */
+/* Рабочее место проверяющего: очередь апелляций над разбором, список решённых. */
 (function () {
   const DA = window.DA, h = DA.h;
   const m = (key, params) => DA.msg("review." + key, params);
@@ -532,7 +532,7 @@
     const count = h("span", { class: "da-count" });
     const list = h("div", { class: "rv-q-list" });
     const queue = h("nav", { class: "rv-queue", "aria-label": m("openAppeals") },
-      h("div", { class: "rv-queue-head" }, h("span", {}, m("openAppeals")), count), list);
+      h("div", { class: "rv-queue-head" }, h("h2", {}, m("openAppeals")), count), list);
     const stage = h("div", { class: "rv-stage" });
     const page = h("div", { class: "rv" }, queue, stage);
     root.append(page);
@@ -549,9 +549,10 @@
           select(a.id, "swap");
         }
       },
+      h("span", { class: "rv-q-selection", "aria-hidden": "true" }, DA.icon("check", 14)),
       h("span", { class: "rv-q-num" }, m("conversationNumber", { number: DA.convNumber(a.conversationId) })),
-      h("span", { class: "rv-q-wait", title: m("waitingTitle") }, DA.msg(() => waited(a))),
-      h("span", { class: "rv-q-crit" }, c.title));
+      h("span", { class: "rv-q-crit" }, c.title),
+      h("span", { class: "rv-q-wait", title: m("waitingTitle") }, DA.msg(() => waited(a))));
     }
     function renderQueue() {
       const items = openQueue();
