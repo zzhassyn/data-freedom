@@ -1,9 +1,9 @@
 """Real AI entry point."""
 
 from .openrouter import (
-    IS_FAKE, assistant, cache_identity, coach, coach_stream, configure, second_opinion,
+    IS_FAKE, assistant, assistant_workspace_round, cache_identity, coach, coach_stream, configure, second_opinion,
     suggest_criterion, summarize, summarize_stream,
 )
 
 __all__ = ["summarize", "summarize_stream", "coach", "coach_stream", "suggest_criterion",
-           "second_opinion", "configure", "cache_identity", "assistant"]
+           "second_opinion", "configure", "cache_identity", "assistant", "assistant_workspace_round"]

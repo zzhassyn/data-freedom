@@ -61,6 +61,7 @@ def create_app(settings=None, *, providers=None, background_guard=None):
         from .checklists import seed_checklist
         from .evaluations import EvaluationQueue
         from .stt.service import TranscriptionQueue
+        from .topic_jobs import TopicJobs
         application.state.settings = config
         if config.worker_mode == 'worker' and background_guard is None:
             raise RuntimeError('Start a cloud worker through python -m app.worker')
@@ -75,15 +76,18 @@ def create_app(settings=None, *, providers=None, background_guard=None):
         application.state.stt.background_guard = background_guard
         application.state.stt.store.guard = background_guard
         application.state.background_guard = background_guard
+        application.state.topic_jobs = TopicJobs(application)
         application.state.background_tasks = set()
         application.state.health_cache = None
         application.state.health_lock = asyncio.Lock()
         application.state.source_lock = asyncio.Lock()
         await application.state.queue.start()
         await application.state.stt.start()
+        await application.state.topic_jobs.start()
         try:
             yield
         finally:
+            await application.state.topic_jobs.close()
             await application.state.stt.close()
             for task in application.state.background_tasks:
                 task.cancel()
@@ -141,8 +145,8 @@ def create_app(settings=None, *, providers=None, background_guard=None):
         logger.error('Request failed on %s (%s)', request.url.path, type(exc).__name__)
         return error_response('internal_error', 'Не удалось обработать запрос. Повторите попытку', 500)
 
-    from . import conversations, checklists, evaluations, appeals, apply, stats, extras, export, operators, stt, topics, bootstrap
-    for feature in (conversations, checklists, evaluations, appeals, apply, stats, extras, export, operators, stt, topics, bootstrap):
+    from . import conversations, checklists, evaluations, appeals, apply, stats, extras, export, operators, stt, topics, bootstrap, assistant_workspace
+    for feature in (conversations, checklists, evaluations, appeals, apply, stats, extras, export, operators, stt, topics, bootstrap, assistant_workspace):
         application.include_router(feature.router)
 
     @application.get('/api/health')
@@ -185,7 +189,17 @@ def create_app(settings=None, *, providers=None, background_guard=None):
         from .evaluations import is_evaluation_visible
         with db.read_connection() as conn:
             evaluations = db.all_evaluations(conn)
-            metrics = conn.execute("SELECT AVG(CASE WHEN kind='evaluation' THEN latency_ms END) AS avg_ms, SUM(cost_usd) AS cost FROM model_calls").fetchone()
+            metrics = conn.execute("""SELECT
+                AVG(CASE WHEN kind='evaluation' THEN latency_ms END) AS avg_ms,
+                SUM(cost_usd) AS cost,
+                EXISTS(SELECT 1 FROM ai_cache WHERE kind='assistant_attempt'
+                    AND json_extract(body_json, '$.requestSent') = 1
+                    AND COALESCE(json_extract(body_json, '$.usageKnown'), 0) = 0) AS assistant_incomplete,
+                EXISTS(SELECT 1 FROM ai_cache WHERE kind='topic_attempt'
+                    AND json_extract(body_json, '$.requestSent') = 1
+                    AND CASE WHEN json_type(body_json, '$.usageIncomplete') IS NULL THEN 1
+                        ELSE COALESCE(json_extract(body_json, '$.usageIncomplete'), 0) END = 1) AS topics_incomplete
+                FROM model_calls""").fetchone()
         visible = [ev for ev in evaluations if is_evaluation_visible(ev)]
         costs = [ev['usage']['costUsd'] for ev in visible if ev['status'] == 'done' and not ev.get('usageIncomplete')]
         average_ms = metrics['avg_ms'] or 0
@@ -202,7 +216,8 @@ def create_app(settings=None, *, providers=None, background_guard=None):
                     avgBatchMs=round(sum(batch_timings) / len(batch_timings), 2) if batch_timings else None,
                     avgEvaluationCostUsd=sum(costs)/len(costs) if costs else 0,
                     totalCostUsd=metrics['cost'] or 0,
-                    totalCostIncomplete=any(ev.get('usageIncomplete') for ev in visible))
+                    totalCostIncomplete=(any(ev.get('usageIncomplete') for ev in visible)
+                                         or bool(metrics['assistant_incomplete']) or bool(metrics['topics_incomplete'])))
 
     application.mount('/', StaticFiles(directory=str(BASE_DIR.parent / 'web'), html=True), name='web')
     return application

@@ -21,6 +21,12 @@ from .scoring import score_evaluation, validate_answer
 router = APIRouter(prefix="/api")
 
 
+@router.get('/analytics')
+def analytics(request: Request):
+    from .analytics import build_report
+    return build_report(request.app, dict(request.query_params))
+
+
 def _mean(values: list[float | int], rounded: bool = False) -> float | None:
     if not values:
         return None

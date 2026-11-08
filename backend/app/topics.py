@@ -1,15 +1,16 @@
 """Persistent semantic topic assignments; frequency affects display, never classification."""
-import asyncio
 import hashlib
 import logging
 from typing import Literal
 
 from fastapi import APIRouter, Request
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import llm_switch
 from .errors import ApiError
-from .extras import _cache_lock, _cache_identity, _cached_result, _call, _conversation_hash
+from .extras import _cache_lock, _cache_identity, _cached_result, _conversation_hash
 from .models import Conversation, TopicAssignment
+from .topic_jobs import call_topic, read_job, topic_usage_incomplete
 
 router = APIRouter(prefix='/api/topics')
 logger = logging.getLogger(__name__)
@@ -21,8 +22,8 @@ def identity(app):
     return _cache_identity(app, 'topic') + ':' + VERSION
 
 
-def catalog(db):
-    saved = db.get_cache('topic_catalog', VERSION)
+def catalog(db, conn=None):
+    saved = db.get_cache('topic_catalog', VERSION, conn)
     return saved['body']['topics'] if saved else []
 
 
@@ -30,18 +31,35 @@ def assignment(app, conv):
     return _cached_result(app.state.db, 'topic', conv['id'], _conversation_hash(conv), identity(app))
 
 
-async def classify(app, cid):
+def assignments(app, conversations, conn=None):
+    """One cache read per snapshot; stale model or transcript assignments stay hidden."""
+    provider = identity(app)
+    cached = app.state.db.get_caches('topic', conn)
+    result = {}
+    for conversation in conversations:
+        item = cached.get(conversation['id'])
+        if (item and item['body'].get('sourceHash') == _conversation_hash(conversation)
+                and item['body'].get('providerIdentity') == provider):
+            result[conversation['id']] = item['body']['result']
+    return result
+
+
+async def classify(app, cid, *, source_hash=None, provider=None, attempt_id=None, job_id=None):
     # One shared lock prevents concurrent workers creating synonymous catalog entries.
-    async with _cache_lock(app, 'topic_catalog', VERSION):
+    async with _cache_lock(app, 'topic_catalog', VERSION) as lease:
         db = app.state.db
         conv = db.get_conversation(cid)
+        if ((source_hash is not None and source_hash != _conversation_hash(conv))
+                or (provider is not None and provider != identity(app))):
+            raise ApiError('stale_source', 'Данные или модель изменились. Запустите анализ заново', 409)
         cached = assignment(app, conv)
         if cached is not None:
             return cached
         source_hash, provider = _conversation_hash(conv), identity(app)
         topics = catalog(db)
-        raw, usage = await _call(app, llm_switch.get_ai().classify_topic,
-                                 Conversation.model_validate(conv), topics, priority=10)
+        raw, usage = await call_topic(app, llm_switch.get_ai().classify_topic,
+            Conversation.model_validate(conv), topics, source_hash=source_hash, provider=provider,
+            lease=lease, attempt_id=attempt_id, job_id=job_id)
         result = TopicAssignment.model_validate(raw)
         if _conversation_hash(db.get_conversation(cid)) != source_hash or identity(app) != provider:
             raise ApiError('stale_source', 'Транскрипт изменился во время анализа. Повторите анализ', 409)
@@ -57,19 +75,28 @@ async def classify(app, cid):
                 topics.append({'id': topic_id, 'title': title})
         body = {'topicId': topic_id, 'resolutionStatus': result.resolution_status}
         with db.transaction() as conn:
+            guard = getattr(app.state, 'background_guard', None)
+            if guard:
+                guard(conn)
+            if lease:
+                lease.check(conn)
+            if _conversation_hash(db.get_conversation(cid, conn)) != source_hash or identity(app) != provider:
+                raise ApiError('stale_source', 'Данные или модель изменились. Запустите анализ заново', 409)
             db.set_cache('topic_catalog', VERSION, {'topics': topics}, conn=conn)
             db.set_cache('topic', cid, {'sourceHash': source_hash, 'providerIdentity': provider, 'result': body}, usage, conn)
         return body
 
 
 def report(app, channel='all'):
-    convs = [c for c in app.state.db.all_conversations()
-             if channel == 'all' or c['channel'] == {'calls': 'voice call', 'chats': 'agent chat'}[channel]]
+    with app.state.db.read_connection() as conn:
+        convs = [c for c in app.state.db.all_conversations(conn)
+                 if channel == 'all' or c['channel'] == {'calls': 'voice call', 'chats': 'agent chat'}[channel]]
+        saved_assignments = assignments(app, convs, conn)
+        titles = {t['id']: t['title'] for t in catalog(app.state.db, conn)}
     groups = {}
     analyzed = unidentified = 0
-    titles = {t['id']: t['title'] for t in catalog(app.state.db)}
     for conv in convs:
-        item = assignment(app, conv)
+        item = saved_assignments.get(conv['id'])
         if item is None:
             continue
         analyzed += 1
@@ -84,10 +111,13 @@ def report(app, channel='all'):
         row['resolved'] += item['resolutionStatus'] == 'resolved'
         row['known'] += item['resolutionStatus'] in ('resolved', 'unresolved')
     visible = sorted((g for g in groups.values() if g['count'] >= MIN_COUNT), key=lambda g: (-g['count'], g['topic']))
+    for group in visible:
+        group['unresolved'] = group['known'] - group['resolved']
+        group['unknown'] = group['count'] - group['known']
     return {'total': len(convs), 'analyzed': analyzed, 'pending': len(convs) - analyzed,
             'unidentified': unidentified, 'hiddenCount': sum(g['count'] for g in groups.values() if g['count'] < MIN_COUNT),
             'minCount': MIN_COUNT, 'rows': visible,
-            'job': getattr(app.state, 'topic_job', {'status': 'idle'})}
+            'job': read_job(app.state.db)}
 
 
 @router.get('')
@@ -95,42 +125,12 @@ async def get_topics(request: Request, channel: Literal['all', 'calls', 'chats']
     return report(request.app, channel)
 
 
-async def analyze(app, ids, job):
-    try:
-        for cid in ids:
-            try:
-                await classify(app, cid)
-                job['processed'] += 1
-            except ApiError as exc:
-                job['failed'] += 1
-                job['error'] = exc.message
-                # Keep successful results; retry resumes from missing assignments.
-                if exc.code in ('model_unavailable', 'model_failed'):
-                    break
-            except Exception:
-                logger.exception('Topic classification failed')
-                job['failed'] += 1
-                job['error'] = 'Не удалось определить тему. Повторите анализ'
-                break
-        job['status'] = 'error' if job['failed'] else 'done'
-    except asyncio.CancelledError:
-        job['status'] = 'interrupted'
-        raise
+class TopicAnalysisRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    conversation_ids: list[str] | None = Field(default=None, alias='conversationIds', max_length=2000)
 
 
 @router.post('/analyze')
-async def start_analysis(request: Request):
-    app = request.app
-    async with _cache_lock(app, 'topics_job', VERSION):
-        if getattr(app.state, 'topic_job', {}).get('status') == 'running':
-            return app.state.topic_job
-        if not llm_switch.provider_configured('ai', app.state.settings):
-            raise ApiError('model_unavailable', 'Укажите ключ OpenRouter и модель в настройках сервера', 503)
-        ids = [c['id'] for c in app.state.db.all_conversations() if assignment(app, c) is None]
-        job = {'status': 'running' if ids else 'done', 'total': len(ids), 'processed': 0, 'failed': 0, 'error': None}
-        app.state.topic_job = job
-        if ids:
-            task = asyncio.create_task(analyze(app, ids, job))
-            app.state.background_tasks.add(task)
-            task.add_done_callback(app.state.background_tasks.discard)
-        return dict(job)
+async def start_analysis(request: Request, body: TopicAnalysisRequest | None = None):
+    requested = None if body is None else body.conversation_ids
+    return request.app.state.topic_jobs.enqueue(requested)

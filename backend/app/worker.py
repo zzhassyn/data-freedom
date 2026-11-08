@@ -39,6 +39,7 @@ async def serve(settings=None, stop=None):
                 lease.renew()
                 app.state.queue.poll_pending()
                 app.state.stt.poll_pending()
+                app.state.topic_jobs.poll_pending()
                 if summary_task is None or summary_task.done():
                     if summary_task is not None:
                         summary_task.result()
@@ -49,8 +50,10 @@ async def serve(settings=None, stop=None):
             # This bounded window fits the daemon's configured shutdown grace.
             deadline = loop.time() + min(190, config.model_timeout + 10)
             app.state.queue._closing = True
+            app.state.topic_jobs.closing = True
             while loop.time() < deadline:
                 active = bool(app.state.queue._evaluations or app.state.stt.scheduled
+                              or app.state.topic_jobs.task is not None and not app.state.topic_jobs.task.done()
                               or summary_task is not None and not summary_task.done())
                 if not active:
                     break

@@ -225,6 +225,11 @@ async def assistant(conversation, message, history, language, assessment):
         raise _error('Модель вернула некорректный ответ или цитату', usage) from exc
 
 
+async def assistant_workspace_round(data, on_attempt, on_delta=None):
+    from .workspace import request_step
+    return await request_step(_settings, data, on_attempt, on_delta)
+
+
 async def _sse_data(lines):
     """SSE framing is independent of HTTP chunks and JSON content boundaries."""
     data, size = [], 0
