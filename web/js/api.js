@@ -146,6 +146,8 @@
   DA.mode = "server";
   DA.backendAvailable = false;
   DA.api = {
+    askWorkspaceAssistant: (body, options) => post("/assistant" + query({ stream: options?.onProgress ? true : undefined }),
+      body, { ...aiOptions(options), timeout: options?.timeout ?? 300000 }),
     request,
     detect() {
       const unavailable = () => new ApiError("server_required", "Для работы нужен сервер приложения", 0);
@@ -195,8 +197,13 @@
     decideAppeal: (id, body, options) => post(`/appeals/${part(id)}/decision`, body, options),
     secondOpinion: (id, options) => post(`/appeals/${part(id)}/second-opinion` + query({ refresh: options?.refresh }), {}, aiOptions(options)),
     getStats: (filters, options) => get("/stats", filters, options),
+    getAnalytics: (filters, options) => get("/analytics", DA.registryFilters.toQuery(filters), options),
     getTopics: (channel, options) => get("/topics", { channel }, options),
     analyzeTopics: (options) => post("/topics/analyze", {}, options),
+    analyzeTopicSelection: (conversationIds, options) => {
+      if (!Array.isArray(conversationIds)) return Promise.reject(new ApiError("invalid_filter", "Выберите обращения для определения тем", 400));
+      return post("/topics/analyze", { conversationIds }, options);
+    },
     getOperators: (filters, options) => get("/operators", filters, options),
     getSource: (options) => request("/source", options),
     putSource: (body, options) => request("/source", { ...options, method: "PUT", body }),

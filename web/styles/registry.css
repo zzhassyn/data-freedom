@@ -29,6 +29,64 @@
 .da-registry-tools .da-btn { min-height: 44px; }
 .da-registry-tools .da-registry-evaluate { max-width: 380px; height: auto; white-space: normal; }
 .da-registry-filter-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; grid-column: 1 / -1; min-width: 0; }
+.da-registry-filters { position: fixed; z-index: 35; display: grid; grid-template-rows: minmax(0, 1fr) auto; width: 540px; height: 378px; margin: 0; border: 1px solid var(--da-line); border-radius: 14px; background: var(--da-surface); box-shadow: var(--da-shadow-overlay); overflow: hidden; animation: da-menu-in 160ms var(--da-ease); }
+.da-registry-filters[hidden] { display: none; }
+.da-registry-filter-picker { display: grid; grid-template-columns: 174px minmax(0, 1fr); min-height: 0; }
+.da-registry-filter-nav { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 10px 8px; overflow-y: auto; background: var(--da-surface-2); }
+.da-filter-group-tab { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; min-height: 43px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--da-text-2); text-align: left; font-size: 13px; line-height: 1.35; font-weight: 500; transition: background var(--da-fast), color var(--da-fast); }
+.da-filter-group-tab:hover { background: var(--da-surface); color: var(--da-text); }
+.da-filter-group-tab[aria-selected="true"] { background: var(--da-surface); color: var(--da-brand-press); box-shadow: var(--da-shadow-rest); font-weight: 600; }
+.da-filter-group-count { flex: none; min-width: 18px; padding: 1px 4px; border-radius: 5px; background: var(--da-brand-soft); color: var(--da-brand-press); text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; }
+.da-filter-group-count[hidden] { display: none; }
+.da-registry-filter-content { min-width: 0; min-height: 0; padding: 18px 18px 12px; overflow-y: auto; overscroll-behavior: contain; }
+.da-registry-filter-pane { display: grid; gap: 16px; }
+.da-registry-filter-pane[hidden] { display: none; }
+.da-registry-filter-group { min-width: 0; margin: 0; padding: 0; border: 0; }
+.da-registry-filter-group legend { margin-bottom: 8px; padding: 0; font-size: 13px; font-weight: 650; line-height: 1.4; color: var(--da-text); }
+.da-registry-filter-group .da-check { align-items: flex-start; padding: 6px 2px; min-height: 34px; font-size: 13px; line-height: 1.45; }
+.da-registry-filter-group .da-check > span:last-child { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.da-registry-filter-group .da-check-box { margin-top: 0; }
+.da-registry-filter-range { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+.da-registry-filter-field { display: grid; align-content: start; gap: 6px; min-width: 0; font-size: 13px; color: var(--da-text-2); }
+.da-registry-filter-field .da-input { min-width: 0; width: 100%; height: 40px; padding: 8px; background: var(--da-surface); font-size: 13px; color: var(--da-text); }
+.da-registry-filter-field .da-input[aria-invalid="true"] { border-color: var(--da-no-ink); }
+.da-registry-date-range { display: grid; gap: 8px; }
+.da-registry-date-range .da-registry-filter-field { gap: 4px; }
+.da-registry-date-range .da-input { height: 34px; padding: 6px 8px; }
+.da-registry-date-range .da-ins-calendar { margin-top: 0; }
+.da-registry-date-range .da-ins-calendar-head { margin-bottom: 4px; }
+.da-registry-date-range .da-ins-calendar-head .da-btn { width: 28px; height: 28px; min-height: 28px; }
+.da-registry-date-range .da-ins-calendar-week { margin-bottom: 4px; font-size: 11px; line-height: 18px; }
+.da-registry-date-range .da-ins-calendar-grid { gap: 2px 0; }
+.da-registry-date-range .da-ins-calendar-day { height: 26px; font-size: 13px; }
+.da-registry-filter-error { font-size: 12px; line-height: 1.4; color: var(--da-no-ink); }
+.da-registry-filter-error[hidden] { display: none; }
+.da-registry-filter-group .da-dd, .da-registry-filter-group .da-dd-btn { width: 100%; }
+.da-registry-filter-group .da-dd-btn { justify-content: space-between; font-size: 13px; }
+.da-registry-filter-group .da-dd-list { min-width: 100%; max-height: 216px; overflow-y: auto; }
+.da-registry-filters-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-top: 1px solid var(--da-line); background: var(--da-surface); }
+.da-registry-filters-foot .da-btn { min-height: 36px; height: 36px; padding: 6px 14px; font-size: 13px; }
+.da-registry-load-status { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 28px 20px; font-size: 14px; color: var(--da-text-2); }
+.da-registry-load-status[hidden] { display: none; }
+.da-registry-load-status.is-error { color: var(--da-no-ink); }
+.da-registry-page .da-active-filters { min-width: 0; }
+.da-registry-page .da-filter-chip { height: auto; min-height: 28px; max-width: 100%; padding-block: 5px; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.da-registry-page .da-filter-chip .da-icon { flex: none; }
+.da-registry-page .da-filter-edit-chip { gap: 0; padding: 0; overflow: hidden; }
+.da-filter-chip-edit, .da-filter-chip-remove { border: 0; background: transparent; color: inherit; font: inherit; min-height: 28px; }
+.da-filter-chip-edit { min-width: 0; padding: 5px 4px 5px 12px; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+.da-filter-chip-remove { display: inline-flex; flex: none; align-items: center; justify-content: center; align-self: stretch; width: 28px; padding: 4px; }
+.da-filter-chip-edit:hover, .da-filter-chip-remove:hover { background: rgba(0, 0, 0, .035); }
+.da-score-note { max-width: 138px; font-size: 11px; line-height: 1.3; font-weight: 400; color: var(--da-text-2); }
+.da-registry-appeals { display: flex; flex-wrap: wrap; gap: 4px; }
+.da-registry-appeals .da-pill { height: auto; min-height: 24px; padding: 4px 8px; font-size: 11px; line-height: 1.35; white-space: normal; }
+.da-registry-page .c-appeals { min-width: 116px; max-width: 148px; font-size: 13px; }
+@media (max-width: 700px) {
+  .da-registry-filter-picker { grid-template-columns: 134px minmax(0, 1fr); }
+  .da-registry-filter-content { padding: 14px 10px; }
+  .da-registry-filter-range { grid-template-columns: minmax(0, 1fr); }
+  .da-registry-page .c-appeals { order: 7; max-width: none; }
+}
 .da-registry-scope { font-size: 13px; color: var(--da-text-2); }
 .da-registry-filter-state .stt-registry-open { margin-left: auto; min-height: 32px; padding-top: 4px; padding-bottom: 4px; }
 .da-registry-filter-state .da-registry-export { margin-left: auto; min-height: 32px; padding: 4px 8px; }

@@ -567,14 +567,16 @@ body[data-sidebar="closed"] .da-side-link .da-count { position: absolute; top: 4
 .da-dd.is-open .da-dd-btn { border-color: var(--da-brand); box-shadow: 0 0 0 3px var(--da-brand-soft); }
 .da-dd.is-open .da-dd-btn .da-icon { transform: rotate(-90deg); }
 .da-dd-list {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; min-width: 100%; margin: 0; padding: 6px; list-style: none;
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; width: max-content; min-width: 100%; max-width: min(30rem, calc(100vw - 2rem)); margin: 0; padding: 6px; list-style: none;
   border-radius: var(--da-r-control); background: var(--da-surface); box-shadow: var(--da-shadow-overlay);
   transform-origin: top right; animation: da-menu-in 140ms var(--da-ease); outline: none;
 }
 .da-dd.is-up .da-dd-list { top: auto; bottom: calc(100% + 6px); transform-origin: bottom right; }
 .da-dd-list li {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 34px; padding: 0 10px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 34px; padding: 8px 10px;
   border-radius: 8px; cursor: pointer; font-variant-numeric: tabular-nums; transition: background var(--da-fast);
 }
 .da-dd-list li:hover, .da-dd-list li.is-active { background: var(--da-surface-2); }
 .da-dd-list li[aria-selected="true"] { color: var(--da-brand-press); font-weight: 600; }
+.da-dd-list li > span { min-width: 0; overflow-wrap: anywhere; }
+.da-dd-list li > .da-icon { flex: 0 0 auto; }

@@ -39,8 +39,7 @@
 
   DA.cardAI = function create(options) {
     const conv = options.conversation;
-    // Эти маршруты работают с текущим диалогом, а не с сохранённым снимком оценки.
-    if (options.historyView || !conv) return emptyController();
+    if (!conv) return emptyController();
     const cid = conv.conversation_id, originalKey = sourceKey(conv);
     const controller = new AbortController();
     let disposed = false, summaryData = null, collapsed = false;
@@ -51,13 +50,24 @@
     let displayedTurns = conv.transcript || [], displayedSourceHash = conv.transcriptHash || null;
     let displayedOriginHash = conv.transcriptHash || null;
     let coachingRequest = null, coachingKey = null, activeEvaluation = null;
-    const summary = h("section", { class: "cai-summary", "aria-label": msg("summary") });
-    const translationControl = h("div", { class: "cai-translation-control", hidden: conv.language === targetLanguage });
+    const summary = h("section", { class: "cai-summary", "aria-label": msg("summary"), hidden: true });
+    const translationControl = h("div", { class: "cai-translation-control", hidden: true });
     const translationStatus = h("div", { class: "cai-translation-status", hidden: true, "aria-live": "polite" });
     const coaching = h("section", { class: "cai-coaching", "aria-label": msg("coaching"), hidden: true });
     try { collapsed = localStorage.getItem("da.summary.collapsed") === "true"; } catch (_) { /* Настройка необязательна. */ }
     const validSource = () => !disposed && !controller.signal.aborted && sourceKey(DA.state.conversations[cid]) === originalKey;
-    const validEvaluation = (key) => validSource() && key === coachingKey && evaluationKey(DA.state.evaluations[cid]) === key;
+    function selectedEvaluation() {
+      const id = activeEvaluation?.id;
+      if (!id) return null;
+      const selected = DA.data?.cardContext?.(cid, id)?.ev;
+      if (selected?.id === id) return selected;
+      const saved = DA.state.evaluationHistory?.[id];
+      if (saved?.id === id) return saved;
+      const latest = DA.state.evaluations[cid];
+      return latest?.id === id ? latest : null;
+    }
+    const validEvaluation = (key) => validSource() && key === coachingKey
+      && evaluationKey(activeEvaluation) === key && evaluationKey(selectedEvaluation()) === key;
     const validDisplayedSource = () => validSource()
       && (!displayedOriginHash || !conv.transcriptHash || displayedOriginHash === conv.transcriptHash)
       && (transcriptSource !== "stt" || !!displayedSourceHash);
@@ -91,6 +101,7 @@
       const request = ++summaryRequest;
       summaryPending = true;
       summaryData = null;
+      summary.hidden = false;
       summary.classList.remove("is-collapsed");
       summary.setAttribute("aria-busy", "true");
       summary.replaceChildren(h("span", { class: "da-sr", role: "status" }, msg("summaryLoading")),
@@ -236,6 +247,7 @@
       })));
     }
     async function loadCoaching(evaluation, key, refresh) {
+      if (!validEvaluation(key)) return;
       coachingRequest?.abort();
       const request = new AbortController(); coachingRequest = request;
       const abort = () => request.abort();
@@ -277,9 +289,10 @@
     }
     function updateEvaluation(evaluation) {
       const nextKey = evaluationKey(evaluation);
+      activeEvaluation = evaluation;
       if (coachingKey === nextKey) return;
       coachingRequest?.abort();
-      coachingKey = nextKey; activeEvaluation = evaluation;
+      coachingKey = nextKey;
       coaching.hidden = true; coaching.replaceChildren();
       if (!evaluation || evaluation.status !== "done" || evaluation.stale || !validSource()) return;
       if (evaluation.transcriptHash && conv.transcriptHash && evaluation.transcriptHash !== conv.transcriptHash) return;

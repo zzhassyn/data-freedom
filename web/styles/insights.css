@@ -290,3 +290,133 @@
 @media (prefers-reduced-motion: reduce) {
   .da-ins-tab, .da-ins-stack, .da-ins-col i, .da-ins-meter i, .da-ins-cover-bar i, .da-ins-kpi b { animation: none; }
 }
+
+/* Дополнения к исходной сводке: компактные фильтры и прежняя таблица. */
+.da-ins-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: -2px 0 24px; }
+.da-ins-toolbar .da-dd-btn { height: 40px; font-size: 14px; }
+.da-ins-toolbar .da-btn { min-height: 40px; }
+.da-ins-toolbar .da-dd-value { white-space: nowrap; }
+.da-ins-ask { margin-left: auto; }
+.da-ins-cover a { color: inherit; text-decoration: none; }
+.da-ins-cover a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.da-ins-popover { position: absolute; z-index: 45; top: calc(100% + 8px); left: 0; border-radius: var(--da-r-panel); background: var(--da-surface); box-shadow: var(--da-shadow-overlay); border: 1px solid var(--da-line); }
+.da-ins-popover[hidden] { display: none; }
+.da-ins-version-popover { width: 340px; max-height: 65vh; overflow-y: auto; padding: 6px; }
+.da-ins-version-option { display: block; width: 100%; padding: 15px 14px; text-align: left; border: 0; border-radius: var(--da-r-control); background: transparent; color: var(--da-text); cursor: pointer; }
+.da-ins-version-option:hover, .da-ins-version-option:focus-visible { background: var(--da-surface-2); }
+.da-ins-version-option[aria-selected="true"] { background: var(--da-brand-soft); }
+.da-ins-version-option-head { display: flex; align-items: center; gap: 10px; }
+.da-ins-version-option-head b { font-size: 15px; font-weight: 650; }
+.da-ins-version-option-head small { font-size: 12px; color: var(--da-text-2); }
+.da-ins-version-option-head .da-icon { margin-left: auto; color: var(--da-yes-ink); }
+.da-ins-version-preview { display: grid; gap: 4px; margin-top: 10px; font-size: 13px; color: var(--da-text-2); line-height: 1.45; }
+.da-ins-version-count { display: block; margin-top: 8px; color: var(--da-text-3); font-size: 12px; }
+.da-ins-date-popover { width: 350px; padding: 18px; }
+.da-ins-date-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.da-ins-date-fields label { display: grid; gap: 7px; color: var(--da-text-2); font-size: 13px; }
+.da-ins-date-fields input { min-width: 0; width: 100%; font-size: 14px; }
+.da-ins-date-fields input[aria-invalid="true"] { border-color: var(--da-no); }
+.da-ins-calendar { margin-top: 16px; }
+.da-ins-calendar-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.da-ins-calendar-head b { font-size: 14px; font-weight: 600; text-transform: capitalize; }
+.da-ins-calendar-head .da-btn { width: 36px; min-height: 36px; padding: 0; }
+.da-ins-calendar-week, .da-ins-calendar-grid { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); text-align: center; gap: 3px 0; }
+.da-ins-calendar-week { margin-bottom: 6px; color: var(--da-text-3); font-size: 12px; line-height: 24px; }
+.da-ins-calendar-day { height: 40px; border: 0; background: transparent; color: var(--da-text); font: inherit; font-size: 14px; border-radius: 8px; cursor: pointer; }
+.da-ins-calendar-day:hover { background: var(--da-surface-2); }
+.da-ins-calendar-day:active { transform: scale(.95); }
+.da-ins-calendar-day.is-between { border-radius: 0; background: var(--da-brand-soft); }
+.da-ins-calendar-day.is-selected { background: var(--da-brand); color: #fff; font-weight: 650; }
+.da-ins-date-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 16px; }
+.da-ins-date-error { margin: 12px 0 0; font-size: 13px; line-height: 1.5; color: var(--da-no-ink); }
+.da-ins-date-error[hidden] { display: none; }
+.da-ins-text-link { color: var(--da-yes-ink); text-decoration: underline; text-decoration-color: var(--da-line); text-underline-offset: 3px; }
+.da-ins-text-link:hover { text-decoration-color: currentColor; }
+.da-ins-note { margin: 12px 0; color: var(--da-text-2); font-size: 13px; line-height: 1.55; }
+.da-ins-loading { margin: 32px 0; color: var(--da-text-2); }
+.da-ins-flag-link { display: inline-flex; text-decoration: none; }
+.da-ins-flag-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.da-ins-extras { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 40px; margin-top: 28px; }
+.da-ins-extra-section h2 { margin: 0 0 16px; font-size: 18px; font-weight: 650; }
+.da-ins-reason { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 9px 8px; margin: 0 -8px; border-radius: var(--da-r-control); color: var(--da-text); font-size: 14px; text-decoration: none; }
+.da-ins-reason:hover { background: var(--da-surface-2); }
+.da-ins-reason b { font-size: 17px; font-weight: 650; }
+.da-ins-reasons { margin-bottom: 16px; }
+.da-ins-period-row { display: grid; grid-template-columns: 1fr auto; gap: 7px 16px; margin-top: 18px; font-size: 13px; }
+.da-ins-period-row b, .da-ins-period-row span { display: block; line-height: 1.5; }
+.da-ins-period-row b { font-weight: 550; }
+.da-ins-period-row span { color: var(--da-text-2); }
+.da-ins-period-row > strong { font-size: 22px; font-weight: 650; }
+.da-ins-period-row > a { grid-column: 1 / -1; }
+.da-ins-period-delta { font-size: 20px; font-weight: 650; margin: 0 0 12px; }
+.da-ins-topic-controls { margin-bottom: 18px; }
+.da-ins-topic-panel > .da-ins-note { margin: -6px 0 18px; }
+.da-ins-chart-row summary { row-gap: 6px; }
+.da-ins-chart-row-note { grid-column: 2; margin: 0; color: var(--da-text-2); font-size: 12px; line-height: 1.5; }
+.da-ins-outcomes { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 12px; }
+.da-ins-outcome { color: var(--da-text); text-decoration-color: var(--da-line); text-underline-offset: 3px; }
+.da-ins-outcome.is-unresolved { color: var(--da-no-ink); }
+.da-ins-rare { margin-top: 22px; }
+.da-ins-rare > summary { cursor: pointer; font-size: 15px; font-weight: 600; padding: 8px 0; }
+.da-ins-source-list { display: grid; gap: 3px; }
+.da-ins-source-list > .da-ins-text-link { justify-self: start; margin-top: 8px; font-size: 13px; }
+.da-ins-source-score { text-align: right; font-weight: 600; }
+.da-ins-source-score small { display: block; font-size: 12px; font-weight: 400; color: var(--da-text-2); }
+.da-ins-op-wrap > summary { list-style: none; cursor: pointer; }
+.da-ins-op-wrap > summary::-webkit-details-marker { display: none; }
+.da-ins-op-wrap[open] .da-ins-chev { transform: rotate(90deg); color: var(--da-brand); }
+.da-ins-restored-op-content { padding: 0 12px 14px 36px; }
+.da-ins-small-sample { grid-column: 1 / -1; font-size: 12px; color: var(--da-text-3); }
+@media (max-width: 1100px) {
+  .da-ins-ask { margin-left: 0; }
+  .da-ins-head .da-seg { margin-left: 0; }
+  .da-ins-version-popover { left: auto; right: 0; }
+}
+
+/* Операторы открываются отдельной страницей, таблицы используют реестр. */
+.da-ins-operators-table { table-layout: fixed; }
+.da-ins-operators-table th:nth-child(1) { width: 20%; }
+.da-ins-operators-table th:nth-child(2) { width: 11%; }
+.da-ins-operators-table th:nth-child(3) { width: 18%; }
+.da-ins-operators-table th:nth-child(4) { width: 29%; }
+.da-ins-operators-table th:nth-child(5) { width: 13%; }
+.da-ins-operators-table th:nth-child(6) { width: 9%; }
+.da-ins-operators-table td { font-size: 14px; padding-top: 10px; padding-bottom: 10px; }
+.da-ins-table-name { color: var(--da-text); font-weight: 600; text-decoration: none; }
+.da-ins-table-name:hover { color: var(--da-brand-press); }
+.da-ins-table-score { display: grid; grid-template-columns: 56px minmax(30px,1fr); align-items: center; gap: 12px; }
+.da-ins-table-score b { font-size: 16px; font-weight: 650; }
+.da-ins-table-count { font-variant-numeric: tabular-nums; }
+.da-ins-table-criterion { line-height: 1.45; overflow-wrap: anywhere; }
+.da-ins-operators-table td:last-child, .da-ins-operators-table th:last-child { padding-right: 18px; }
+.da-ins-operator-back { margin: -6px 0 18px -10px; }
+.da-ins-operator-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 16px 28px; margin-bottom: 30px; }
+.da-ins-operator-heading h2 { margin: 0; font-size: 26px; line-height: 1.3; font-weight: 650; }
+.da-ins-operator-facts { display: flex; flex-wrap: wrap; gap: 10px 24px; color: var(--da-text-2); font-size: 14px; }
+.da-ins-operator-facts b { color: var(--da-text); font-weight: 650; margin-left: 3px; }
+.da-ins-operator-detail h3 { margin: 0 0 14px; font-size: 18px; font-weight: 650; }
+.da-ins-operator-criteria { margin-bottom: 30px; }
+.da-ins-criteria-list th:first-child { width: 57%; }
+.da-ins-criteria-list th:nth-child(2) { width: 17%; }
+.da-ins-criteria-list td { font-size: 14px; height: 54px; }
+.da-ins-criteria-list tbody tr { cursor: default; }
+.da-ins-criteria-list tbody tr:hover { background: transparent; }
+.da-ins-conversations-table th { white-space: nowrap; }
+.da-ins-conversations-table td { font-size: 14px; }
+.da-ins-conversation-date { white-space: nowrap; }
+.da-ins-conversation-subject { width: 100%; max-width: 0; }
+.da-ins-conversation-subject .da-preview { max-width: none; }
+.da-ins-conversations-table td:nth-child(1) { min-width: 70px; }
+.da-ins-conversations-table td:nth-child(3), .da-ins-conversations-table td:nth-child(4) { white-space: nowrap; }
+.da-ins-conversations-table td:last-child { padding-right: 20px; min-width: 88px; }
+.da-ins-list-wrap { overflow: visible; }
+.da-ins-list-wrap > table > thead > tr > th:first-child { border-top-left-radius: var(--da-r-card); }
+.da-ins-list-wrap > table > thead > tr > th:last-child { border-top-right-radius: var(--da-r-card); }
+
+/* Progress is updated independently so charts and the reader's place stay still. */
+.da-ins-topic-progress { display: flex; align-items: center; gap: 10px; min-height: 24px; margin: -6px 0 20px; color: var(--da-text-2); font-size: 13px; line-height: 24px; }
+.da-ins-topic-progress[hidden], .da-ins-topic-progress [hidden], .da-ins-topic-controls [hidden] { display: none; }
+.da-ins-topic-progress-count { color: var(--da-text); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.da-ins-topic-spinner { flex: none; width: 14px; height: 14px; border: 2px solid var(--da-line); border-top-color: var(--da-brand); border-radius: 50%; animation: da-ins-topic-spin 850ms linear infinite; }
+@keyframes da-ins-topic-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .da-ins-topic-spinner { animation: none; } }

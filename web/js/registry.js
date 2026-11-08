@@ -1,6 +1,6 @@
 /* Реестр обращений: поиск, фильтры, страницы, загрузка, итог с разбором при наведении. */
 (function () {
-  const DA = window.DA, h = DA.h;
+  const DA = window.DA, h = DA.h, F = DA.registryFilters;
   const m = (key, params) => DA.msg(`registry.${key}`, params);
   DA.i18n.addMessages({
     "registry.title": { ru: "Обращения", kk: "Өтініштер", en: "Conversations" },
@@ -95,18 +95,58 @@
     "registry.emptyHelp": { ru: "Загрузите выгрузку из CRM файлом или синхронизируйте обращения.", kk: "CRM жүйесінен экспортталған файлды жүктеңіз немесе өтініштерді синхрондаңыз.", en: "Upload a CRM export file or sync conversations." }
   });
 
+  DA.i18n.addMessages({
+    "registry.filters": { ru: "Фильтры", kk: "Сүзгілер", en: "Filters" },
+    "registry.applyFilters": { ru: "Применить фильтры", kk: "Сүзгілерді қолдану", en: "Apply filters" },
+    "registry.attention": { ru: "Требует внимания", kk: "Назар аудару қажет", en: "Needs attention" },
+    "registry.appeals": { ru: "Апелляции", kk: "Апелляциялар", en: "Appeals" },
+    "registry.noAppeals": { ru: "Нет", kk: "Жоқ", en: "None" },
+    "registry.openAppeals": { ru: "Ожидают решения", kk: "Шешім күтілуде", en: "Awaiting a decision" },
+    "registry.resolvedAppeals": { ru: "Решение принято", kk: "Шешім қабылданды", en: "Decided" },
+    "registry.scoreRange": { ru: "Итог, от 0 до 100", kk: "Қорытынды, 0 мен 100 арасы", en: "Score, 0 to 100" },
+    "registry.from": { ru: "От", kk: "Бастап", en: "From" },
+    "registry.to": { ru: "До", kk: "Дейін", en: "To" },
+    "registry.dateRange": { ru: "Дата обращения", kk: "Өтініш күні", en: "Conversation date" },
+    "registry.channelLanguage": { ru: "Канал и язык", kk: "Арна және тіл", en: "Channel and language" },
+    "registry.scoreFilter": { ru: "Баллы", kk: "Ұпайлар", en: "Score" },
+    "registry.periodFilter": { ru: "Период", kk: "Кезең", en: "Period" },
+    "registry.checklistFilter": { ru: "Чек-лист", kk: "Чек-лист", en: "Checklist" },
+    "registry.resetFiltersShort": { ru: "Сбросить", kk: "Тазалау", en: "Reset" },
+    "registry.applyFiltersShort": { ru: "Применить", kk: "Қолдану", en: "Apply" },
+    "registry.removeFilter": { ru: "Убрать условие", kk: "Шартты алып тастау", en: "Remove filter" },
+    "registry.checklist": { ru: "Версия чек-листа", kk: "Чек-лист нұсқасы", en: "Checklist version" },
+    "registry.activeChecklist": { ru: "Текущая версия", kk: "Ағымдағы нұсқа", en: "Active version" },
+    "registry.versionLabel": { ru: "Версия {version}", kk: "{version}-нұсқа", en: "Version {version}" },
+    "registry.exactSelection": { ru: "Обращения: {count}", kk: "Өтініштер: {count}", en: "Conversations: {count}" },
+    "registry.groupSelection": { ru: "Набор {group}", kk: "{group} жинағы", en: "Dataset {group}" },
+    "registry.scoreChip": { ru: "Итог: {from}–{to}", kk: "Қорытынды: {from}–{to}", en: "Score: {from}–{to}" },
+    "registry.dateChip": { ru: "Даты: {from}–{to}", kk: "Күндер: {from}–{to}", en: "Dates: {from}–{to}" },
+    "registry.searchChip": { ru: "Поиск: {query}", kk: "Іздеу: {query}", en: "Search: {query}" },
+    "registry.scoreError": { ru: "Укажите число от 0 до 100.", kk: "0 мен 100 арасындағы санды енгізіңіз.", en: "Enter a number from 0 to 100." },
+    "registry.scoreOrderError": { ru: "Начало диапазона не может быть больше конца.", kk: "Аралықтың басы соңынан үлкен болмауы керек.", en: "The lower score cannot exceed the upper score." },
+    "registry.dateError": { ru: "Укажите существующую дату.", kk: "Дұрыс күнді енгізіңіз.", en: "Enter a valid date." },
+    "registry.dateOrderError": { ru: "Начало периода не может быть позже конца.", kk: "Кезеңнің басы соңынан кейін болмауы керек.", en: "The start date cannot be after the end date." },
+    "registry.invalidFilters": { ru: "Не удалось применить условия из ссылки. Сбросьте фильтры и выберите их заново.", kk: "Сілтемедегі шарттар қолданылмады. Сүзгілерді тазалап, қайта таңдаңыз.", en: "The link contains invalid filters. Clear the filters and choose them again." },
+    "registry.loading": { ru: "Загружаем обращения…", kk: "Өтініштер жүктелуде…", en: "Loading conversations…" },
+    "registry.loadFailed": { ru: "Не удалось загрузить обращения", kk: "Өтініштерді жүктеу мүмкін болмады", en: "Could not load conversations" },
+    "registry.previousScore": { ru: "Сохранённый итог", kk: "Сақталған қорытынды", en: "Saved score" },
+    "registry.selectedSummary": { ru: "Сводка выбранных обращений", kk: "Таңдалған өтініштердің жиынтығы", en: "Selected conversation summary" }
+  });
   const GROUPS = [
-    { key: "lang", title: m("language"), options: ["RU", "KZ", "EN"].map((value) => ({ value, label: DA.msg(() => DA.langLabel[value]) })) },
-    { key: "channel", title: m("channel"), options: [{ value: "agent chat", label: m("chats") }, { value: "voice call", label: m("calls") }] },
-    { key: "state", title: m("state"), options: [
+    { key: "languages", title: m("language"), options: ["RU", "KZ", "EN"].map((value) => ({ value, label: DA.msg(() => DA.langLabel[value]) })) },
+    { key: "channels", title: m("channel"), options: [{ value: "agent chat", label: m("chats") }, { value: "voice call", label: m("calls") }] },
+    { key: "status", title: m("state"), options: [
       { value: "done", label: m("done") }, { value: "new", label: m("new") },
       { value: "running", label: m("running") }, { value: "failed", label: m("failed") },
-      { value: "appeal", label: m("hasAppeal") }, { value: "review", label: m("needsReview") }, { value: "gross", label: m("gross") }] }
+      { value: "stale", label: m("stale") }] },
+    { key: "attention", title: m("attention"), options: [{ value: "review", label: m("needsReview") }, { value: "gross", label: m("gross") }] },
+    { key: "appealStatus", title: m("appeals"), options: [{ value: "none", label: m("noAppeals") }, { value: "open", label: m("openAppeals") }, { value: "resolved", label: m("resolvedAppeals") }] }
   ];
   /* Фильтры, поиск и страница живут в модуле: возврат из карточки показывает реестр таким, каким его оставили. */
-  const filter = { lang: new Set(), channel: new Set(), state: new Set(), q: "", batch: null };
+  let filter = F.normalize();
+  let batchFilter = null;
   const view = { page: 1, selected: new Set(), anchor: null };
-  const filterKey = () => JSON.stringify([filter.q, filter.batch, ...GROUPS.map((g) => [...filter[g.key]].sort())]);
+  const filterKey = () => JSON.stringify([filter, batchFilter]);
   let selectionFilters = filterKey();
 
   function filtersChanged() {
@@ -130,34 +170,13 @@
     DA.save();
   }
 
-  function matchesState(cid) {
-    if (!filter.state.size) return true;
-    const ev = DA.state.evaluations[cid];
-    const checks = {
-      done: () => !!ev && ev.status === "done" && !ev.stale,
-      new: () => !ev,
-      running: () => !!ev && !ev.stale && ["queued", "running"].includes(ev.status),
-      failed: () => !!ev && !ev.stale && ev.status === "failed",
-      appeal: () => DA.state.appeals.some((a) => a.conversationId === cid),
-      review: () => !!ev && (ev.stale || ev.items.some((i) => i.needsReview)),
-      gross: () => !!ev && !ev.stale && ev.grossFlagged
-    };
-    return [...filter.state].some((k) => checks[k]());
-  }
-
-  function visible(records) {
-    const q = filter.q.trim().toLowerCase();
-    const batch = filter.batch && DA.bulk?.current();
-    const failed = filter.batch ? new Set(batch?.jobId === filter.batch ? batch.items.filter((item) => item.status === "failed").map((item) => item.conversationId) : []) : null;
-    return records.filter((r) => {
-      const cid = r.conversation_id;
-      if (failed && !failed.has(cid)) return false;
-      if (filter.lang.size && !filter.lang.has(r.language)) return false;
-      if (filter.channel.size && !filter.channel.has(r.channel)) return false;
-      if (!matchesState(cid)) return false;
-      if (q && !DA.convNumber(cid).includes(q) && !cid.toLowerCase().includes(q) && !r.transcript.some((t) => t.text.toLowerCase().includes(q))) return false;
-      return true;
-    });
+  function requestFilters() {
+    const result = F.normalize(filter);
+    if (!batchFilter) return result;
+    const batch = DA.bulk?.current();
+    const ids = batch?.jobId === batchFilter ? batch.items.filter((item) => item.status === "failed").map((item) => item.conversationId) : [];
+    result.conversationIds = result.conversationIds === null ? ids : result.conversationIds.filter((id) => ids.includes(id));
+    return result;
   }
 
   /* Сегодняшние и вчерашние обращения подписываются словом, остальные датой. */
@@ -184,8 +203,15 @@
     return out;
   }
 
-  function scoreCell(cid, reveal) {
+  function scoreCell(cid, reveal, item) {
+    if (item && item.total == null) return h("span", { class: item.status === "failed" ? "da-error da-small" : "da-muted da-small" },
+      m(({ new: "notEvaluated", stale: "stale", failed: "failed", running: "running" })[item.status] || "notEvaluated"));
     const ev = DA.state.evaluations[cid];
+    if (item && (ev?.id !== item.qualityEvaluationId || ev?.status !== "done" || ev?.stale)) {
+      return h("div", { class: "da-score-cell" }, h("span", { class: "da-score-num" }, DA.msg(() => DA.fmt.score(item.total)),
+        item.originalTotal != null && item.originalTotal !== item.total ? h("s", {}, DA.msg(() => DA.fmt.score(item.originalTotal))) : null),
+      item.readyIsPreviousAttempt ? h("span", { class: "da-score-note" }, m(item.status === "failed" ? "failed" : item.status === "running" ? "running" : "previousScore")) : null);
+    }
     if (!ev) return h("span", { class: "da-quiet" }, m("notEvaluated"));
     if (ev.stale) return h("span", { class: "da-muted da-small" }, m("stale"));
     if (ev.status === "queued") return h("span", { class: "da-muted da-small" }, m("queued"));
@@ -199,6 +225,7 @@
         ev.originalTotal !== ev.total ? h("s", {}, DA.msg(() => DA.fmt.score(ev.originalTotal))) : null),
       DA.ribbon(ev.items.map((i) => ({ ...i, c: DA.criterionById(cl, i.criterionId) })), { mini: true }));
     DA.hoverCard(cell, () => DA.ribbonLegend(ev));
+    if (item?.readyIsPreviousAttempt) cell.append(h("span", { class: "da-score-note" }, m(item.status === "failed" ? "failed" : item.status === "running" ? "running" : "previousScore")));
     if (reveal && ev.total != null) DA.countTo(value, 0, ev.total, 600);
     return cell;
   }
@@ -206,7 +233,7 @@
   function topic(record) {
     const modelTopic = record.summary?.topic;
     if (typeof modelTopic === "string" && modelTopic.trim()) return modelTopic;
-    return record.transcript.find((turn) => turn.speaker === "client")?.text || "";
+    return record.transcript?.find((turn) => turn.speaker === "client")?.text || "";
   }
 
   function organizerExport() {
@@ -247,7 +274,7 @@
       panel.style.width = `${width}px`;
       panel.style.left = `${Math.max(12, Math.min(innerWidth - width - 12, rect.right - width))}px`;
       panel.style.maxHeight = `${Math.max(120, innerHeight - 24)}px`;
-      const height = panel.getBoundingClientRect().height;
+      const height = panel.offsetHeight;
       panel.style.top = `${Math.max(12, Math.min(rect.bottom + 6, innerHeight - height - 12))}px`;
     }
     function close(returnFocus = false) {
@@ -334,30 +361,182 @@
     } };
   }
 
-  function marks(cid) {
-    const ev = DA.state.evaluations[cid];
-    const open = DA.state.appeals.some((a) => a.conversationId === cid && a.status === "open");
-    const decided = DA.state.appeals.some((a) => a.conversationId === cid && a.status !== "open");
+  function marks(item) {
     return h("div", { class: "da-marks" },
-      ev && ev.grossFlagged ? h("span", { class: "da-mark t-gross", title: m("gross") }, DA.icon("flag", 15)) : null,
-      ev && ev.items.some((i) => i.needsReview) ? h("span", { class: "da-mark t-review", title: m("uncertain") }, DA.icon("alert", 15)) : null,
-      open ? h("span", { class: "da-pill t-partial" }, m("appeal")) : decided ? h("span", { class: "da-pill t-pending" }, m("reviewed")) : null);
+      item.grossFlagged ? h("span", { class: "da-mark t-gross", title: m("gross"), "aria-label": m("gross") }, DA.icon("flag", 15)) : null,
+      item.needsReviewCount ? h("span", { class: "da-mark t-review", title: m("uncertain"), "aria-label": m("uncertain") }, DA.icon("alert", 15)) : null);
+  }
+
+  function appealCell(item) {
+    if (!item.openAppeals && !item.decidedAppeals) return h("span", { class: "da-muted" }, m("noAppeals"));
+    return h("div", { class: "da-registry-appeals" },
+      item.openAppeals ? h("span", { class: "da-pill t-partial" }, m("openAppeals"), item.openAppeals > 1 ? ` (${item.openAppeals})` : "") : null,
+      item.decidedAppeals ? h("span", { class: "da-pill t-pending" }, m("resolvedAppeals"), item.decidedAppeals > 1 ? ` (${item.decidedAppeals})` : "") : null);
+  }
+
+  /* Компактная панель показывает одну группу, сохраняя черновики остальных условий. */
+  function filterPanel(onApply) {
+    const count = h("span", { class: "da-count is-brand" });
+    const button = h("button", { class: "da-btn", type: "button", "aria-haspopup": "dialog", "aria-expanded": "false", "aria-controls": "registry-filter-panel" }, DA.icon("filter"), m("filters"), count);
+    const panel = h("section", { class: "da-registry-filters", id: "registry-filter-panel", hidden: true, role: "dialog", "aria-label": m("filters") });
+    const sections = [
+      { key: "status", title: m("state"), keys: ["status", "attention"] },
+      { key: "appealStatus", title: m("appeals"), keys: ["appealStatus"] },
+      { key: "channels", title: m("channelLanguage"), keys: ["channels", "languages"] },
+      { key: "score", title: m("scoreFilter"), keys: ["scoreFrom", "scoreTo"] },
+      { key: "date", title: m("periodFilter"), keys: ["dateFrom", "dateTo"] },
+      { key: "checklistId", title: m("checklistFilter"), keys: ["checklistId"] }
+    ];
+    let draft, active = "status", fields = new Map(), errors = new Map(), tabs = new Map(), panes = new Map(), refreshVersion = () => {};
+    const groupKey = (key) => sections.find((section) => section.key === key || section.keys.includes(key))?.key || "status";
+    function place() {
+      if (panel.hidden) return;
+      const anchor = button.getBoundingClientRect(), width = Math.min(540, innerWidth - 24);
+      panel.style.width = width + "px";
+      panel.style.maxHeight = Math.max(180, innerHeight - 24) + "px";
+      const height = panel.getBoundingClientRect().height;
+      panel.style.left = Math.max(12, Math.min(anchor.right - width, innerWidth - width - 12)) + "px";
+      panel.style.top = Math.max(12, Math.min(anchor.bottom + 8 + height <= innerHeight - 12 ? anchor.bottom + 8 : anchor.top - height - 8, innerHeight - height - 12)) + "px";
+    }
+    function close(returnFocus = false) {
+      panel.hidden = true; button.setAttribute("aria-expanded", "false");
+      document.removeEventListener("mousedown", outside); document.removeEventListener("keydown", keys);
+      window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true);
+      if (returnFocus) button.focus({ preventScroll: true });
+    }
+    function outside(event) { if (!panel.contains(event.target) && !button.contains(event.target)) close(); }
+    function keys(event) { if (event.key === "Escape") { event.preventDefault(); close(true); } }
+    function refreshCounts() {
+      sections.forEach((section) => {
+        const n = section.key === "score" ? Number(draft.scoreFrom != null && draft.scoreFrom !== "" || draft.scoreTo != null && draft.scoreTo !== "")
+          : section.key === "date" ? Number(!!(draft.dateFrom || draft.dateTo))
+          : section.key === "checklistId" ? Number(!!draft.checklistId)
+          : section.keys.reduce((total, key) => total + draft[key].length, 0);
+        const badge = tabs.get(section.key)?.querySelector(".da-filter-group-count");
+        if (badge) { badge.textContent = n; badge.hidden = !n; }
+      });
+    }
+    function activate(key, focus = false) {
+      active = groupKey(key);
+      tabs.forEach((tab, name) => { tab.setAttribute("aria-selected", String(name === active)); tab.tabIndex = name === active ? 0 : -1; });
+      panes.forEach((pane, name) => { pane.hidden = name !== active; });
+      if (focus) tabs.get(active)?.focus();
+      place();
+    }
+    function errorText(code) { return m(({ score: "scoreError", scoreOrder: "scoreOrderError", date: "dateError", dateOrder: "dateOrderError" })[code] || "invalidFilters"); }
+    function validate() {
+      const result = F.validate(draft);
+      errors.forEach((node) => { node.hidden = true; node.replaceChildren(); });
+      fields.forEach((node) => node.removeAttribute("aria-invalid"));
+      result.errors.forEach(({ field, code }) => {
+        const input = fields.get(field), error = errors.get(field);
+        if (input) input.setAttribute("aria-invalid", "true");
+        if (error) { error.hidden = false; error.append(DA.i18n.text(errorText(code))); }
+      });
+      return result;
+    }
+    function group(key) {
+      const g = GROUPS.find((entry) => entry.key === key);
+      return h("fieldset", { class: "da-registry-filter-group" }, h("legend", {}, g.title),
+        g.options.map((option) => DA.checkbox(option.label, draft[key].includes(option.value), (checked) => {
+          draft[key] = checked ? [...draft[key], option.value] : draft[key].filter((value) => value !== option.value);
+          refreshCounts();
+        })));
+    }
+    function range(title, from, to, type) {
+      let calendar;
+      const input = (key, label) => {
+        const error = h("span", { class: "da-registry-filter-error", id: `registry-${key}-error`, hidden: true, "aria-live": "polite" });
+        const node = h("input", { class: "da-input", type: "text", inputmode: type === "date" ? "numeric" : "decimal",
+          value: type === "date" ? DA.calendarDates.format(draft[key]) : draft[key] ?? "", "aria-describedby": error.id,
+          placeholder: type === "date" ? DA.msg("ui.calendarFormat") : key === from ? "0" : "100" });
+        node.addEventListener("input", () => {
+          const parsed = type === "date" ? DA.calendarDates.parse(node.value) : node.value;
+          draft[key] = parsed === null ? node.value : parsed;
+          if (type === "date") {
+            draft.timezoneOffsetMinutes = new Date().getTimezoneOffset();
+            calendar?.setRange({ from: draft[from], to: draft[to], ...(parsed ? { month: parsed } : {}) });
+          }
+          validate(); refreshCounts();
+        });
+        if (type === "date") node.addEventListener("blur", () => {
+          const parsed = DA.calendarDates.parse(node.value);
+          if (parsed !== null) node.value = DA.calendarDates.format(parsed);
+        });
+        fields.set(key, node); errors.set(key, error);
+        return h("label", { class: "da-registry-filter-field" }, h("span", {}, label), node, error);
+      };
+      const fieldsGroup = h("fieldset", { class: "da-registry-filter-group" }, h("legend", { class: type === "date" ? "da-sr" : null }, title),
+        h("div", { class: "da-registry-filter-range" }, input(from, m("from")), input(to, m("to"))));
+      if (type !== "date") return fieldsGroup;
+      calendar = DA.dateRangeCalendar({ from: draft[from], to: draft[to], onChange: (value) => {
+        draft[from] = value.from; draft[to] = value.to; draft.timezoneOffsetMinutes = new Date().getTimezoneOffset();
+        fields.get(from).value = DA.calendarDates.format(value.from); fields.get(to).value = DA.calendarDates.format(value.to);
+        validate(); refreshCounts();
+      } });
+      return h("div", { class: "da-registry-date-range" }, fieldsGroup, calendar);
+    }
+    function draw() {
+      draft = F.normalize(filter); fields = new Map(); errors = new Map(); tabs = new Map(); panes = new Map();
+      const versions = Object.values(DA.state.checklists || {}).sort((a, b) => b.version - a.version);
+      const versionOptions = [{ value: "", label: DA.t("registry.activeChecklist") },
+        ...versions.map((cl) => ({ value: cl.id, label: DA.t("registry.versionLabel", { version: cl.version }) }))];
+      const version = DA.dropdown(versionOptions, draft.checklistId, (value) => { draft.checklistId = value; refreshCounts(); }, m("checklist"));
+      refreshVersion = () => {
+        versionOptions[0].label = DA.t("registry.activeChecklist");
+        versions.forEach((cl, index) => { versionOptions[index + 1].label = DA.t("registry.versionLabel", { version: cl.version }); });
+        version.setValue(draft.checklistId);
+      };
+      const contents = {
+        status: [group("status"), group("attention")], appealStatus: [group("appealStatus")], channels: [group("channels"), group("languages")],
+        score: [range(m("scoreRange"), "scoreFrom", "scoreTo", "score")], date: [range(m("dateRange"), "dateFrom", "dateTo", "date")],
+        checklistId: [h("fieldset", { class: "da-registry-filter-group" }, h("legend", {}, m("checklist")), version)]
+      };
+      sections.forEach((section, index) => {
+        const id = `registry-filter-${section.key}`;
+        tabs.set(section.key, h("button", { type: "button", class: "da-filter-group-tab", role: "tab", id: id + "-tab", "data-filter-group": section.key,
+          "aria-controls": id, onclick: () => activate(section.key), onkeydown: (event) => {
+            const next = event.key === "ArrowDown" ? (index + 1) % sections.length : event.key === "ArrowUp" ? (index + sections.length - 1) % sections.length
+              : event.key === "Home" ? 0 : event.key === "End" ? sections.length - 1 : null;
+            if (next != null) { event.preventDefault(); activate(sections[next].key, true); }
+          } }, h("span", {}, section.title), h("span", { class: "da-filter-group-count", hidden: true })));
+        panes.set(section.key, h("div", { class: "da-registry-filter-pane", id, role: "tabpanel", "aria-labelledby": id + "-tab", hidden: true }, contents[section.key]));
+      });
+      panel.replaceChildren(
+        h("div", { class: "da-registry-filter-picker" },
+          h("div", { class: "da-registry-filter-nav", role: "tablist", "aria-orientation": "vertical", "aria-label": m("filters") }, ...tabs.values()),
+          h("div", { class: "da-registry-filter-content" }, ...panes.values())),
+        h("div", { class: "da-registry-filters-foot" },
+          h("button", { class: "da-btn is-text", type: "button", onclick: () => { filter = F.normalize(); batchFilter = null; draw(); onApply(); } }, m("resetFiltersShort")),
+          h("button", { class: "da-btn is-primary", type: "button", onclick: () => {
+            const result = validate();
+            if (!result.valid) { activate(result.errors[0].field); fields.get(result.errors[0].field)?.focus(); return; }
+            filter = F.normalize({ ...draft, q: filter.q }); batchFilter = null; close(true); onApply();
+          } }, m("applyFiltersShort"))));
+      activate(active); refreshCounts(); validate();
+    }
+    function open(key) {
+      if (panel.hidden) draw();
+      panel.hidden = false; button.setAttribute("aria-expanded", "true");
+      activate(key || active);
+      document.addEventListener("mousedown", outside); document.addEventListener("keydown", keys);
+      window.addEventListener("resize", place); window.addEventListener("scroll", place, true);
+      tabs.get(active)?.focus({ preventScroll: true });
+    }
+    const refreshLocale = () => { refreshVersion(); place(); };
+    window.addEventListener("da:locale-changed", refreshLocale);
+    button.addEventListener("click", () => panel.hidden ? open() : close());
+    return { button, panel, open, refresh() { const n = F.count({ ...filter, q: "" }); count.textContent = n; count.hidden = !n; }, close,
+      destroy() { close(); window.removeEventListener("da:locale-changed", refreshLocale); } };
   }
 
   DA.views = DA.views || {};
   DA.views.registry = function mount(root, params) {
     if (!SIZES.includes(DA.state.pageSize)) DA.state.pageSize = storedSize() || 10;
     const query = params && params.query || {};
-    if (GROUPS.some((g) => Object.hasOwn(query, g.key)) || Object.hasOwn(query, "batch")) {
-      const before = JSON.stringify(GROUPS.map((g) => [...filter[g.key]].sort()));
-      GROUPS.forEach((g) => {
-        filter[g.key].clear();
-        String(query[g.key] || "").split(",").forEach((v) => {
-          if (g.options.some((o) => o.value === v)) filter[g.key].add(v);
-        });
-      });
-      filter.batch = query.batch || null;
-      if (before !== JSON.stringify(GROUPS.map((g) => [...filter[g.key]].sort()))) filter.q = "";
+    if (F.hasQuery(query) || Object.hasOwn(query, "batch")) {
+      filter = F.readQuery(query);
+      batchFilter = query.batch || null;
       if (filterKey() !== selectionFilters) view.page = 1;
       filtersChanged();
     }
@@ -376,13 +555,13 @@
     const grossMetric = h("a", { class: "da-registry-metric is-link is-gross", href: "#/?state=gross", onclick: (event) => {
       if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       event.preventDefault();
-      GROUPS.forEach((g) => filter[g.key].clear());
-      filter.state.add("gross"); filter.q = ""; filter.batch = null; search.value = "";
-      filtersChanged(); view.page = 1; menu.refresh(); render();
+      filter = F.normalize({ attention: ["gross"], checklistId: filter.checklistId }); batchFilter = null;
+      applyFilters();
     } }, grossValue, " ", grossLabel);
-    const summary = h("section", { class: "da-registry-summary", "aria-label": m("summary"), tabindex: 0 }, totalMetric, evaluatedMetric, averageMetric, appealMetric, grossMetric);
+    const summary = h("section", { class: "da-registry-summary", "aria-label": m("selectedSummary"), tabindex: 0 }, totalMetric, evaluatedMetric, averageMetric, appealMetric, grossMetric);
     const chips = h("div", { class: "da-active-filters" });
-    const menu = DA.filterMenu(GROUPS, filter, () => { filter.batch = null; filtersChanged(); view.page = 1; render(); });
+    const menu = filterPanel(applyFilters);
+    const loadStatus = h("div", { class: "da-registry-load-status", hidden: true, role: "status", "aria-live": "polite" });
     const range = h("span", { class: "da-pager-range", "aria-live": "polite" });
     const nav = h("nav", { class: "da-pager-nav", "aria-label": m("pages") });
     const sizes = DA.dropdown(SIZES.map((n) => ({ value: n, label: String(n) })), DA.state.pageSize, (n) => {
@@ -399,11 +578,63 @@
     const selectionMessage = h("span", { class: "da-selection-message", "aria-live": "polite" });
     const selectionBar = h("div", { class: "da-registry-selection" }, mobilePageCheck, selectionMessage);
     const allNew = h("button", { class: "da-btn is-primary da-registry-evaluate", type: "button", title: m("evaluateAllHint"), onclick: evaluateNew });
-    const upload = h("button", { class: "da-btn da-registry-upload", type: "button", "aria-label": m("upload"), onclick: () => DA.openUpload(render) }, DA.icon("upload", 17), m("uploadShort"));
+    const upload = h("button", { class: "da-btn da-registry-upload", type: "button", "aria-label": m("upload"), onclick: () => DA.openUpload(loadScope) }, DA.icon("upload", 17), m("uploadShort"));
     const sttEntry = h("button", { class: "da-btn is-text is-sm stt-registry-open", type: "button", hidden: true, onclick: () => DA.stt?.open({ all: true }) }, DA.icon("phone", 16), m("transcriptions"));
     const exports = organizerExport();
-    const rows = new Map(), stamps = new Map();
+    const rows = new Map();
     let fresh = new Set(), animate = false, filtered = [], pageRecords = [], mounted = true, starting = false;
+    let report = null, compact = new Map(), request = null, requestId = 0, refreshing = false, refreshTimer;
+
+    function applyFilters() {
+      search.value = filter.q;
+      filtersChanged(); view.page = 1; menu.refresh(); renderChips();
+      loadScope();
+    }
+
+    function notifyAssistant(scope, next, current) {
+      // Ошибка дополнительной панели не меняет успешно полученный реестр.
+      Promise.resolve().then(() => {
+        if (!mounted || current !== requestId) return;
+        return DA.setAssistantScope?.({ filters: scope, count: next.scope.total,
+          fingerprint: JSON.stringify([next.scope.conversationIds, next.scope.checklist?.id]) });
+      }).catch(() => console.warn("Assistant context update failed"));
+    }
+
+    async function loadScope(added, background = false) {
+      const current = ++requestId;
+      request?.abort(); request = new AbortController();
+      const scope = requestFilters(), validation = F.validate(scope);
+      refreshing = true;
+      if (!background) {
+        loadStatus.hidden = false;
+        loadStatus.classList.remove("is-error");
+        loadStatus.replaceChildren(DA.i18n.text(m("loading")));
+      }
+      wrap.setAttribute("aria-busy", "true");
+      if (!background) { report = null; compact.clear(); render(); }
+      try {
+        if (!validation.valid) throw new TypeError("invalid_filters");
+        const next = await DA.api.getAnalytics(scope, { signal: request.signal });
+        if (!mounted || current !== requestId) return;
+        report = next;
+        compact = new Map(next.conversations.map((row) => [row.conversationId, row]));
+        for (const id of view.selected) if (!compact.has(id)) view.selected.delete(id);
+        loadStatus.hidden = true;
+        notifyAssistant(scope, next, current);
+      } catch (error) {
+        if (!mounted || current !== requestId || error?.name === "AbortError") return;
+        report = null; compact.clear();
+        loadStatus.hidden = false;
+        loadStatus.classList.add("is-error");
+        loadStatus.replaceChildren(h("span", {}, validation.valid ? m("loadFailed") : m("invalidFilters")),
+          h("button", { class: "da-btn is-text is-sm", type: "button", onclick: validation.valid ? () => loadScope() : reset },
+            validation.valid ? m("exportRetry") : m("clearFilters")));
+      } finally {
+        if (mounted && current === requestId) {
+          refreshing = false; wrap.removeAttribute("aria-busy"); render(added);
+        }
+      }
+    }
 
     function pageCheckbox(label) {
       const control = DA.checkbox(label, false, (checked) => {
@@ -470,36 +701,25 @@
     }
 
     function updateCounter() {
-      const records = Object.values(DA.state.conversations);
-      const evaluated = records.map((r) => DA.state.evaluations[r.conversation_id]).filter((ev) => ev && ev.status === "done" && !ev.stale);
-      const scored = evaluated.filter((ev) => Number.isFinite(ev.total));
-      const average = scored.length ? scored.reduce((sum, ev) => sum + ev.total, 0) / scored.length : null;
-      const ids = new Set(records.map((r) => r.conversation_id));
-      const appeals = DA.state.appeals.filter((appeal) => appeal.status === "open" && ids.has(appeal.conversationId)).length;
-      const gross = records.filter((r) => {
-        const ev = DA.state.evaluations[r.conversation_id];
-        return ev && !ev.stale && ev.grossFlagged;
-      }).length;
-      DA.i18n.bindText(totalValue, () => records.length.toLocaleString(DA.fmt.locale()));
-      DA.i18n.bindText(totalLabel, m("conversationNoun", { count: records.length }));
-      DA.i18n.bindText(evaluatedValue, () => evaluated.length.toLocaleString(DA.fmt.locale()));
+      const total = report?.scope.total || 0, evaluated = report?.coverage.evaluated || 0;
+      const average = report?.overview.avgScore, appeals = report?.overview.openAppealCount || 0, gross = report?.overview.grossCount || 0;
+      DA.i18n.bindText(totalValue, () => total.toLocaleString(DA.fmt.locale()));
+      DA.i18n.bindText(totalLabel, m("conversationNoun", { count: total }));
+      DA.i18n.bindText(evaluatedValue, () => evaluated.toLocaleString(DA.fmt.locale()));
       DA.i18n.bindText(averageValue, () => average == null ? "" : average.toLocaleString(DA.fmt.locale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 }));
       DA.i18n.bindText(appealValue, () => appeals.toLocaleString(DA.fmt.locale()));
       DA.i18n.bindText(grossValue, () => gross.toLocaleString(DA.fmt.locale()));
       DA.i18n.bindText(appealLabel, m("pendingAppeals", { count: appeals }));
       DA.i18n.bindText(grossLabel, m("grossCount", { count: gross }));
-      summary.hidden = !records.length;
-      const complete = records.length > 0 && evaluated.length === records.length;
-      evaluatedPart.hidden = complete;
-      evaluatedAll.hidden = !complete;
-      progress.hidden = complete;
-      progressFill.style.transform = `scaleX(${records.length ? evaluated.length / records.length : 0})`;
-      averageMetric.hidden = !scored.length;
-      appealMetric.hidden = !appeals;
-      grossMetric.hidden = !gross;
-      const constrained = filter.q.trim() || filter.batch || GROUPS.some((g) => filter[g.key].size);
-      DA.i18n.bindText(counter, constrained ? m("scopeFiltered", { count: visible(records).length, total: records.length }) : m("scopeAll"));
-      const count = records.filter((r) => !DA.state.evaluations[r.conversation_id]).length;
+      summary.hidden = !report || !total;
+      const complete = total > 0 && evaluated === total;
+      evaluatedPart.hidden = complete; evaluatedAll.hidden = !complete; progress.hidden = complete;
+      progressFill.style.transform = `scaleX(${total ? evaluated / total : 0})`;
+      averageMetric.hidden = average == null; appealMetric.hidden = !appeals; grossMetric.hidden = !gross;
+      const constrained = F.count(filter) || batchFilter;
+      DA.i18n.bindText(counter, report ? constrained
+        ? m("scopeFiltered", { count: total, total: Object.keys(DA.state.conversations).length }) : m("scopeAll") : "");
+      const count = Object.keys(DA.state.conversations).filter((cid) => !DA.state.evaluations[cid]).length;
       DA.i18n.bindText(allNew, m("evaluateNew", { count }));
       allNew.hidden = !count;
       allNew.disabled = !count || starting || !DA.bulk || DA.bulk.isBusy();
@@ -521,32 +741,12 @@
       }
     }
 
-    function evaluationStamp(cid) {
-      const ev = DA.state.evaluations[cid];
-      return ev ? JSON.stringify([ev.id, ev.status, ev.stale, ev.total, ev.originalTotal, ev.grossFlagged, ev.items.some((i) => i.needsReview)]) : "";
-    }
-
-    /* Опрос меняет только ячейки результата: порядок строк и фокус остаются на месте. */
+    /* Обновление результата заново проверяет выбранную версию и состав выборки на сервере. */
     function refreshProgress() {
       if (!mounted) return;
       updateCounter();
-      rows.forEach(({ row, score, mark }, cid) => {
-        const stamp = evaluationStamp(cid), previous = stamps.get(cid);
-        if (stamp === previous) return;
-        const ev = DA.state.evaluations[cid];
-        const before = previous ? JSON.parse(previous) : null;
-        const reveal = ev?.status === "done" && !ev.stale && (!before || before[0] !== ev.id || before[1] !== "done");
-        const focus = score.contains(document.activeElement);
-        score.replaceChildren(scoreCell(cid, reveal));
-        mark.replaceChildren(marks(cid));
-        if (focus) (score.querySelector("[tabindex]") || row).focus({ preventScroll: true });
-        if (reveal) {
-          row.classList.remove("is-evaluated");
-          void row.offsetWidth;
-          row.classList.add("is-evaluated");
-        }
-        stamps.set(cid, stamp);
-      });
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => loadScope(null, true), 250);
     }
 
     /* Состояние звонка обновляется отдельно от строки и её выбора. */
@@ -572,26 +772,40 @@
     }
 
     function renderChips() {
-      const query = new URLSearchParams();
-      GROUPS.forEach((g) => { if (filter[g.key].size) query.set(g.key, [...filter[g.key]].join(",")); });
-      if (filter.batch) query.set("batch", filter.batch);
-      history.replaceState(null, "", "#/" + (query.size ? "?" + query : ""));
-      chips.replaceChildren();
-      for (const g of GROUPS) for (const v of filter[g.key]) {
-        const o = g.options.find((x) => x.value === v);
-        chips.append(h("button", { class: "da-filter-chip", type: "button", onclick: () => { filter[g.key].delete(v); filter.batch = null; filtersChanged(); view.page = 1; menu.refresh(); render(); } }, o.label, DA.icon("x", 14)));
+      if (F.validate(filter).valid) {
+        const query = new URLSearchParams(F.toQuery(filter));
+        if (batchFilter) query.set("batch", batchFilter);
+        history.replaceState(null, "", "#/" + (query.size ? "?" + query : ""));
       }
-      if (chips.children.length > 1) chips.append(h("button", { class: "da-btn is-text is-sm", onclick: reset }, m("clearAll")));
+      chips.replaceChildren();
+      function chip(label, clear, group) {
+        if (!group) {
+          chips.append(h("button", { class: "da-filter-chip", type: "button", onclick: () => { clear(); applyFilters(); } }, label, DA.icon("x", 14)));
+          return;
+        }
+        chips.append(h("span", { class: "da-filter-chip da-filter-edit-chip" },
+          h("button", { class: "da-filter-chip-edit", type: "button", onclick: () => menu.open(group) }, label),
+          h("button", { class: "da-filter-chip-remove", type: "button", "aria-label": m("removeFilter"), onclick: () => { clear(); applyFilters(); } }, DA.icon("x", 14))));
+      }
+      for (const g of GROUPS) for (const value of filter[g.key]) {
+        const option = g.options.find((entry) => entry.value === value);
+        if (option) chip(option.label, () => { filter[g.key] = filter[g.key].filter((entry) => entry !== value); batchFilter = null; }, g.key);
+      }
+      if (filter.q) chip(m("searchChip", { query: filter.q }), () => { filter.q = ""; });
+      if (filter.scoreFrom != null || filter.scoreTo != null) chip(m("scoreChip", { from: filter.scoreFrom ?? 0, to: filter.scoreTo ?? 100 }), () => { filter.scoreFrom = filter.scoreTo = null; }, "score");
+      if (filter.dateFrom || filter.dateTo) chip(m("dateChip", { from: filter.dateFrom || "…", to: filter.dateTo || "…" }), () => { filter.dateFrom = filter.dateTo = ""; }, "date");
+      if (filter.checklistId) {
+        const cl = Object.values(DA.state.checklists || {}).find((entry) => entry.id === filter.checklistId);
+        chip(cl ? m("versionLabel", { version: cl.version }) : m("checklist"), () => { filter.checklistId = ""; }, "checklistId");
+      }
+      if (filter.groupId) chip(m("groupSelection", { group: filter.groupId }), () => { filter.groupId = ""; });
+      if (Array.isArray(filter.conversationIds)) chip(m("exactSelection", { count: filter.conversationIds.length }), () => { filter.conversationIds = null; });
+      if (batchFilter) chip(m("failed"), () => { batchFilter = null; });
+      if (chips.children.length > 1) chips.append(h("button", { class: "da-btn is-text is-sm", type: "button", onclick: reset }, m("clearAll")));
+      menu.refresh();
     }
     function reset() {
-      GROUPS.forEach((g) => filter[g.key].clear());
-      filter.q = "";
-      filter.batch = null;
-      search.value = "";
-      filtersChanged();
-      view.page = 1;
-      menu.refresh();
-      render();
+      filter = F.normalize(); batchFilter = null; menu.close(); applyFilters();
     }
 
     /* Переход на страницу: строки коротко проявляются, таблица возвращается в поле зрения. */
@@ -624,8 +838,13 @@
 
     /* added: идентификаторы только что загруженных обращений, их строки коротко подсвечиваются. */
     function render(added) {
-      const records = Object.values(DA.state.conversations).sort((a, b) => DA.state.numbers[a.conversation_id] - DA.state.numbers[b.conversation_id]);
-      const list = filtered = visible(records);
+      const focusRow = document.activeElement?.closest("tr[data-conversation]");
+      const focusId = focusRow?.dataset.conversation, focusCheckbox = document.activeElement?.type === "checkbox";
+      const list = filtered = (report?.conversations || []).map((item) => ({
+        ...(DA.state.conversations[item.conversationId] || {}), conversation_id: item.conversationId,
+        transcript: DA.state.conversations[item.conversationId]?.transcript || [],
+        language: item.language, channel: item.channel, scopeRow: item
+      })).sort((a, b) => a.scopeRow.number - b.scopeRow.number);
       const size = DA.state.pageSize;
       if (Array.isArray(added) && added.length) {
         fresh = new Set(added);
@@ -638,26 +857,25 @@
 
       updateCounter();
       renderChips();
-      const empty = !records.length;
+      const empty = !Object.keys(DA.state.conversations).length && !refreshing && !!report;
       page.classList.toggle("is-empty", empty);
       emptyState.hidden = !empty;
-      table.hidden = empty;
-      selectionBar.hidden = empty;
+      table.hidden = empty || !report;
+      selectionBar.hidden = empty || !report;
       toolbar.hidden = empty;
       upload.hidden = empty;
       tbody.replaceChildren();
       rows.clear();
-      stamps.clear();
       tbody.classList.remove("is-paging");
       pageRecords = list.slice((view.page - 1) * size, view.page * size);
-      if (empty) {
+      if (empty || !report) {
         pager.hidden = true;
         syncSelection();
         return;
       }
       if (!list.length) {
         pager.hidden = true;
-        tbody.append(h("tr", { class: "da-empty-row" }, h("td", { colspan: 5 },
+        tbody.append(h("tr", { class: "da-empty-row" }, h("td", { colspan: 6 },
           h("div", {}, m("noMatches")),
           h("button", { class: "da-btn is-text", onclick: reset }, m("clearFilters")))));
         syncSelection();
@@ -665,24 +883,28 @@
       }
       pager.hidden = false;
       pageRecords.forEach((r, i) => {
-        const cid = r.conversation_id;
-        const open = () => (location.hash = `#/c/${encodeURIComponent(cid)}`);
-        const control = rowCheckbox(cid), score = h("td", { class: "c-score" }, scoreCell(cid)), mark = h("td", { class: "c-marks" }, marks(cid));
+        const cid = r.conversation_id, item = r.scopeRow;
+        const current = DA.state.evaluations[cid];
+        const currentResult = !filter.checklistId && !item.readyIsPreviousAttempt && current?.id === item.evaluationId
+          && item.latestEvaluationId === item.evaluationId;
+        // Обычная карточка показывает текущую расшифровку. Явный выбор версии или прежнего итога сохраняет источник оценки.
+        const evaluationId = item.evaluationId && !currentResult ? item.evaluationId : null;
+        const open = () => (location.hash = `#/c/${encodeURIComponent(cid)}` + (evaluationId ? `?evaluation=${encodeURIComponent(evaluationId)}` : ""));
+        const control = rowCheckbox(cid), score = h("td", { class: "c-score" }, scoreCell(cid, false, item)), mark = h("td", { class: "c-marks" }, marks(item));
         const stt = h("span", { class: "stt-row-slot" });
         const row = h("tr", { class: fresh.has(cid) ? "is-fresh" : null, "data-conversation": cid, style: `--i: ${Math.min(i, 14)}`, tabindex: 0, onclick: open,
           onkeydown: (e) => { if (e.key === "Enter" && e.target === e.currentTarget) open(); } },
           h("td", { class: "c-select", onclick: (e) => e.stopPropagation() }, control),
           h("td", { class: "da-num c-num", title: cid }, DA.convNumber(cid)),
-          h("td", { class: "c-prev" }, h("div", { class: "da-preview" }, topic(r)),
+          h("td", { class: "c-prev" }, h("div", { class: "da-preview" }, item.preview || item.topic || topic(r)),
             h("div", { class: "da-record-meta" },
               h("span", { class: "c-chan" }, h("span", { class: "da-channel" }, DA.icon(r.channel === "voice call" ? "phone" : "message", 14), DA.msg(() => DA.channelLabel(r)))),
               h("span", { class: "c-lang" }, DA.msg(() => DA.langLabel[r.language])),
-              h("span", { class: "c-date" }, DA.msg(() => when(DA.tx.startedAt(r)))),
+              item.startedAt ? h("span", { class: "c-date" }, DA.msg(() => when(item.startedAt))) : null,
               h("span", { class: "c-dur" }, DA.icon("clock", 12), h("span", { class: "da-sr" }, m("durationLabel")), DA.fmt.duration(DA.tx.duration(r))),
               r.channel === "voice call" ? stt : null)),
-          score, mark);
+          score, h("td", { class: "c-appeals" }, appealCell(item)), mark);
         rows.set(cid, { row, input: control.querySelector("input"), score, mark, stt, sttStamp: null });
-        stamps.set(cid, evaluationStamp(cid));
         tbody.append(row);
       });
       if (animate) { void tbody.offsetWidth; tbody.classList.add("is-paging"); }
@@ -691,31 +913,33 @@
       renderPager(list.length, pages);
       syncSelection();
       refreshStt();
+      if (focusId && rows.has(focusId)) (focusCheckbox ? rows.get(focusId).input : rows.get(focusId).row).focus({ preventScroll: true });
     }
 
     const search = h("input", { class: "da-input", type: "search", placeholder: m("searchPlaceholder"), value: filter.q, "aria-label": m("search") });
     let t;
-    search.addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => { filter.q = search.value; filter.batch = null; filtersChanged(); view.page = 1; render(); }, 200); });
+    search.addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => { filter.q = search.value; batchFilter = null; applyFilters(); }, 250); });
 
     const toolbar = h("div", { class: "da-registry-tools" },
-      h("div", { class: "da-registry-find" }, h("div", { class: "da-search" }, DA.icon("search"), search), menu),
+      h("div", { class: "da-registry-find" }, h("div", { class: "da-search" }, DA.icon("search"), search), menu.button),
       allNew,
-      h("div", { class: "da-registry-filter-state" }, counter, chips, sttEntry, exports.button));
+      h("div", { class: "da-registry-filter-state" }, counter, chips, sttEntry, exports.button), menu.panel);
     const table = h("table", { class: "da-table da-registry" },
         h("thead", {}, h("tr", {},
           h("th", { class: "c-select" }, pageCheck),
-          h("th", {}, m("number")), h("th", {}, m("conversation")), h("th", {}, m("total")), h("th", {}, h("span", { class: "da-sr" }, m("marks"))))), tbody);
+          h("th", {}, m("number")), h("th", {}, m("conversation")), h("th", {}, m("total")), h("th", {}, m("appeals")), h("th", {}, h("span", { class: "da-sr" }, m("marks"))))), tbody);
     const emptyState = h("div", { class: "da-registry-empty", hidden: true },
       h("div", { class: "da-empty-register", "aria-hidden": "true" },
         ...Array.from({ length: 4 }, (_, i) => h("div", { class: i ? "da-empty-register-row" : "da-empty-register-head" }, h("i"), h("i"), h("i")))),
       h("h2", {}, m("emptyTitle")), h("p", {}, m("emptyHelp")),
-      h("button", { class: "da-btn is-primary", type: "button", onclick: () => DA.openUpload(render) }, DA.icon("upload", 18), m("upload")));
-    wrap.append(toolbar, selectionBar, table, pager, emptyState);
+      h("button", { class: "da-btn is-primary", type: "button", onclick: () => DA.openUpload(loadScope) }, DA.icon("upload", 18), m("upload")));
+    wrap.append(toolbar, loadStatus, selectionBar, table, pager, emptyState);
     const headingTitle = h("h1", { class: "da-h1", tabindex: -1 }, m("title"));
     const heading = h("div", { class: "da-page-head da-registry-heading" }, headingTitle, summary, upload);
     const page = h("div", { class: "da-page da-registry-page" }, heading, wrap);
     root.append(page);
     render();
+    loadScope();
     const summaryLayout = new ResizeObserver(() => {
       if (!mounted || summary.hidden) return;
       const widths = [...summary.children].map((node) => node.getBoundingClientRect().width).filter(Boolean);
@@ -724,17 +948,21 @@
       heading.classList.toggle("has-summary-row", innerWidth < 1100 || needed > available);
     });
     [heading, headingTitle, upload, ...summary.children].forEach((node) => summaryLayout.observe(node));
-    const unsubscribe = DA.bulk?.subscribe(refreshProgress);
+    let receivedBulkSnapshot = false;
+    const unsubscribe = DA.bulk?.subscribe(() => { if (receivedBulkSnapshot) refreshProgress(); receivedBulkSnapshot = true; });
     const unsubscribeStt = DA.stt?.subscribe(refreshStt);
-    window.addEventListener("da:appeals-changed", updateCounter);
+    window.addEventListener("da:appeals-changed", refreshProgress);
     return () => {
       mounted = false;
       clearTimeout(t);
+      clearTimeout(refreshTimer);
+      request?.abort();
       unsubscribe?.();
       unsubscribeStt?.();
       summaryLayout.disconnect();
       exports.destroy();
-      window.removeEventListener("da:appeals-changed", updateCounter);
+      menu.destroy();
+      window.removeEventListener("da:appeals-changed", refreshProgress);
       DA.bulk?.clearSelection();
     };
   };

@@ -492,6 +492,75 @@ test('confirming an appeal keeps its changed-transcript evaluation stale and pre
   assert.equal(DA.data.cardContext(source.id, ev.id).ev.stale, true);
 });
 
+test('appealing a selected assessment targets its identity and exact source without replacing the latest result', async () => {
+  const { DA, context, ev, cl } = fixtureServer();
+  const selected = { ...ev, transcriptHash: 'original' };
+  const latest = { ...ev, id: 'ev_latest', transcriptHash: 'updated', total: 75 };
+  const updated = { ...source, transcriptHash: 'updated', transcript: [{ ...turn, text: 'Новая реплика' }] };
+  const savedFetch = context.fetch;
+  context.fetch = (url, opts) => {
+    if (url === '/api/bootstrap') return Promise.resolve(reply(screenSnapshot(cl, latest, updated)));
+    if (url === '/api/evaluations/' + selected.id) return Promise.resolve(reply(selected));
+    if (url === '/api/evaluations/' + selected.id + '/conversation') return Promise.resolve(reply(source));
+    return savedFetch(url, opts);
+  };
+  await DA.data.prepare('card', { id: source.id, evaluationId: selected.id });
+  let submitted;
+  DA.api.createAppeal = async body => {
+    submitted = json(body);
+    return { id: 'ap_selected', ...body, conversationId: source.id, status: 'open', createdAt: '2026-11-01T12:00:00Z' };
+  };
+  const saved = await DA.data.createAppeal(source.id, cl.criteria[0].id, 'Проверьте точную реплику', null, { evaluationId: selected.id });
+  assert.equal(submitted.evaluationId, selected.id);
+  assert.equal(saved.conversation.transcript[0].text, turn.text);
+  assert.equal(saved.evaluation.id, selected.id);
+  assert.equal(DA.data.cardContext(source.id, selected.id).ev.items[0].appealId, saved.id);
+  assert.equal(DA.state.evaluations.fixture.id, latest.id);
+  assert.equal(DA.state.evaluations.fixture.total, 75);
+  assert.equal(DA.state.evaluations.fixture.items[0].appealId, null);
+});
+
+test('unknown selected assessment cannot silently submit an appeal to the latest result', async () => {
+  const { DA, cl } = fixtureServer();
+  await DA.data.prepare('registry');
+  let calls = 0;
+  DA.api.createAppeal = async () => { calls++; return {}; };
+  await assert.rejects(DA.data.createAppeal(source.id, cl.criteria[0].id, 'Проверьте точную реплику', null, { evaluationId: 'missing' }),
+    error => error.code === 'evaluation_not_ready');
+  assert.equal(calls, 0);
+});
+
+test('retrying a selected nonlatest assessment refreshes its context without overwriting the latest result', async () => {
+  const { DA, context, ev, cl } = fixtureServer();
+  const selected = { ...ev, status: 'failed', total: null, transcriptHash: 'original',
+    items: ev.items.map((item, index) => index ? item : { ...item, status: 'failed' }) };
+  const latest = { ...ev, id: 'ev_latest', transcriptHash: 'original', total: 75 };
+  const savedFetch = context.fetch;
+  context.fetch = (url, opts) => {
+    if (url === '/api/bootstrap') return Promise.resolve(reply(screenSnapshot(cl, latest, source,
+      { registry: { items: [{ ...source, lastEvaluation: { id: selected.id, status: 'failed' } }] } })));
+    if (url === '/api/evaluations/' + selected.id) return Promise.resolve(reply(selected));
+    if (url === '/api/evaluations/' + selected.id + '/conversation') return Promise.resolve(reply(source));
+    return savedFetch(url, opts);
+  };
+  await DA.data.prepare('card', { id: source.id, evaluationId: selected.id });
+  DA.api.retryCriterion = async (id, criterionId) => {
+    assert.equal(id, selected.id); assert.equal(criterionId, cl.criteria[0].id);
+    return { ...selected, status: 'queued', items: selected.items.map((item, index) => index ? item : { ...item, status: 'pending' }) };
+  };
+  DA.api.getEvaluation = async id => {
+    assert.equal(id, selected.id);
+    assert.equal(DA.state.evaluations.fixture.id, latest.id);
+    return { ...ev, transcriptHash: 'original', total: 100 };
+  };
+  const result = await DA.data.retryCriterion(selected.id, cl.criteria[0].id);
+  assert.equal(result.status, 'done');
+  assert.equal(DA.data.cardContext(source.id, selected.id).ev.total, 100);
+  assert.equal(DA.state.evaluationHistory[selected.id].status, 'done');
+  assert.equal(DA.state.evaluations.fixture.id, latest.id);
+  assert.equal(DA.state.evaluations.fixture.total, 75);
+});
+
 test('invalidate followed by source refresh cannot be undone by an older poll response', async () => {
   const { DA, context, ev, cl } = fixtureServer();
   await DA.data.prepare('registry', { refresh: true });

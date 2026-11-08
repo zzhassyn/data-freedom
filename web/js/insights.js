@@ -82,424 +82,549 @@
     popularity: ["Популярность тем", "Тақырыптардың танымалдығы", "Topic popularity"],
     resolvedShare: ["Доля решённых обращений по темам", "Тақырып бойынша шешілген өтініштердің үлесі", "Resolution rate by topic"],
     popularityHelp: ["Количество обращений по основной теме", "Негізгі тақырып бойынша өтініштер саны", "Number of conversations by primary topic"],
-    resolvedHelp: ["Процент подтверждённо решённых обращений от всех обращений темы. Неизвестный результат не считается решённым.", "Тақырыптың барлық өтініштерінен расталған шешімдердің пайызы. Белгісіз нәтиже шешілді деп есептелмейді.", "Confirmed resolved conversations as a percentage of all conversations in each topic. Unknown outcomes do not count as resolved."],
     unknownResults: ["Без подтверждённого результата: {count} из {total}", "Расталған нәтижесіз: {count} / {total}", "Without a confirmed outcome: {count} of {total}"],
     resolvedCount: ["Решено {count} из {total}", "Шешілгені: {count} / {total}", "Resolved {count} of {total}"]
   }).map(([key, values]) => ["insights." + key, { ru: values[0], kk: values[1], en: values[2] }])));
 
-  const LANGS = ["RU", "KZ", "EN"];
+
   DA.i18n.addMessages(Object.fromEntries(Object.entries({
-    analyzeTopics: ["Определить темы", "Тақырыптарды анықтау", "Identify topics"],
-    analyzingTopics: ["Определяем темы…", "Тақырыптар анықталуда…", "Identifying topics…"],
-    topicsRule: ["Показаны темы с 3 и более обращениями. Похожие запросы объединяются по смыслу.", "3 және одан көп өтініші бар тақырыптар көрсетіледі. Ұқсас сұраулар мағынасы бойынша біріктіріледі.", "Only topics with at least 3 conversations are shown. Similar requests are grouped by meaning."],
-    analysisCoverage: ["Проанализировано {count} из {total} обращений", "Талданған өтініштер: {count} / {total}", "Analyzed {count} of {total} conversations"],
-    rareTopics: ["В темах с частотой менее 3: {count} обращений", "3-тен аз кездесетін тақырыптарда: {count} өтініш", "Conversations in topics occurring fewer than 3 times: {count}"],
-    noFrequentTopics: ["Пока нет тем с тремя обращениями", "Үш өтініші бар тақырыптар әлі жоқ", "No topic has three conversations yet"],
-    startTopicsHelp: ["Запустите анализ транскриптов. Сохранённые результаты используются повторно; запросы к модели расходуют баланс OpenRouter.", "Транскрипттерді талдауды іске қосыңыз. Сақталған нәтижелер қайта қолданылады; модель сұраулары OpenRouter теңгерімін жұмсайды.", "Analyze the transcripts. Saved results are reused; model requests use your OpenRouter balance."],
-    topicsLoading: ["Загружаем темы…", "Тақырыптар жүктелуде…", "Loading topics…"],
-    unclearTopics: ["Запрос не определён: {count}", "Сұрау анықталмаған: {count}", "Unclear requests: {count}"]
-  }).map(([key, v]) => ["insights." + key, { ru: v[0], kk: v[1], en: v[2] }])));
-  const TABS = ["overview", "topics", "quality"].map((value) => ({ value, label: m(value) }));
-  const BUCKETS = [[0, 49], [50, 69], [70, 84], [85, 100]];
-  const pct = (x) => new Intl.NumberFormat(DA.fmt.locale(), { style: "percent", maximumFractionDigits: 0 }).format(x);
-  const nConv = (count) => t("conversations", { count });
-
-  /* ---------- Данные ---------- */
-  const evaluated = () => Object.values(DA.state.evaluations)
-    .filter((ev) => ev && ev.status === "done" && !ev.stale && ev.total != null && DA.state.conversations[ev.conversationId])
-    .sort((a, b) => DA.state.numbers[a.conversationId] - DA.state.numbers[b.conversationId]);
-
-  function doneItem(ev, criterionId) {
-    const item = ev.items.find((i) => i.criterionId === criterionId && i.status === "done");
-    const c = item && DA.criterionById(DA.checklist(ev.checklistVersion), criterionId);
-    return c ? { item, c } : null;
+    quality: ["Критерии", "Критерийлер", "Criteria"], overview: ["Обзор", "Шолу", "Overview"], topics: ["Темы", "Тақырыптар", "Topics"],
+    from: ["С даты", "Басталу күні", "From date"], to: ["По дату включительно", "Соңғы күнді қоса", "Through date"],
+    channel: ["Канал", "Арна", "Channel"], language: ["Язык", "Тіл", "Language"], version: ["Версия чек-листа", "Чек-лист нұсқасы", "Checklist version"],
+    activeVersion: ["Активная версия", "Белсенді нұсқа", "Active version"], apply: ["Применить", "Қолдану", "Apply"], reset: ["Сбросить", "Тазалау", "Reset"],
+    selectedValues: ["Выбрано несколько", "Бірнешеуі таңдалды", "Multiple selected"], scopeLabel: ["Область сводки", "Жиынтық ауқымы", "Summary scope"],
+    scopeCount: ["{count} обращений в выборке", "Таңдауда {count} өтініш", "{count} conversations in scope"],
+    extraFilters: ["Есть дополнительные условия из реестра", "Тізілімнен қосымша шарттар бар", "Additional registry filters applied"],
+    invalidScope: ["Проверьте условия выборки. Начало диапазона не должно быть позже конца.", "Таңдау шарттарын тексеріңіз. Басталуы аяқталуынан кейін болмауы тиіс.", "Check the selection. The range must start before it ends."],
+    loading: ["Загружаем сводку…", "Жиынтық жүктелуде…", "Loading summary…"], loadFailed: ["Не удалось загрузить сводку", "Жиынтық жүктелмеді", "Could not load the summary"], retry: ["Повторить", "Қайталау", "Retry"],
+    noMatches: ["В этой выборке нет обращений", "Бұл таңдауда өтініштер жоқ", "No conversations in this selection"],
+    noMatchesHelp: ["Измените период или другие условия выборки.", "Кезеңді немесе басқа таңдау шарттарын өзгертіңіз.", "Change the period or other selection filters."],
+    topicCoverage: ["Темы проанализированы: {count} из {total}", "Тақырыптар талданды: {count} / {total}", "Topics analyzed: {count} of {total}"],
+    importedDates: ["У {count} обращений вместо даты разговора используется дата загрузки", "{count} өтініште сөйлесу күні орнына жүктеу күні қолданылған", "{count} conversations use the import date instead of the conversation date"],
+    unknownDates: ["Без даты: {count}", "Күні жоқ: {count}", "Without a date: {count}"],
+    savedScore: ["Сохранённая оценка", "Сақталған баға", "Saved score"], attentionTitle: ["Требуют разбора", "Талдауды қажет етеді", "Need review"],
+    scoredCount: ["В среднем учтено: {count}", "Орташаға кіргені: {count}", "Scores included in mean: {count}"],
+    reviewSelection: ["Открыть обращения для разбора", "Талдауға арналған өтініштерді ашу", "Open conversations to review"],
+    explain: ["Обсудить с ассистентом", "Көмекшімен талқылау", "Discuss with assistant"],
+    explainPrompt: ["Что стоит разобрать в этой выборке и почему? Покажи источники и предложи порядок работы.", "Бұл таңдауда нені және неге талдау керек? Дереккөздерді көрсетіп, жұмыс ретін ұсын.", "What should we review in this selection and why? Show sources and suggest an order of work."],
+    reviewReasons: ["Поводы для разбора", "Талдау себептері", "Reasons to review"], lowScore: ["Оценка ниже {score}", "Баға {score} ұпайдан төмен", "Score below {score}"],
+    manualReview: ["Ответы требуют проверки", "Жауаптарды тексеру қажет", "Answers need review"], unresolved: ["Вопрос не решён", "Мәселе шешілмеген", "Issue unresolved"],
+    failedEvaluations: ["Оценка завершилась ошибкой", "Бағалау қатемен аяқталды", "Evaluation failed"],
+    noReview: ["В этой выборке нет отмеченных поводов для разбора", "Бұл таңдауда талдау себептері белгіленбеген", "No review reasons are flagged in this selection"],
+    reasonOverlap: ["Одно обращение может иметь несколько поводов", "Бір өтініште бірнеше себеп болуы мүмкін", "A conversation can have several reasons"],
+    coveragePending: ["Без готовой оценки: {count}", "Дайын бағасы жоқ: {count}", "Without a completed evaluation: {count}"],
+    coverageRunning: ["Оценивается: {count}", "Бағалануда: {count}", "Evaluating: {count}"], coverageStale: ["Устаревшие оценки: {count}", "Ескірген бағалар: {count}", "Outdated evaluations: {count}"],
+    periodTitle: ["Сравнение периодов", "Кезеңдерді салыстыру", "Period comparison"],
+    period_not_selected: ["Выберите обе даты. Сравним с предыдущим периодом такой же длины.", "Екі күнді де таңдаңыз. Ұзақтығы бірдей алдыңғы кезеңмен салыстырамыз.", "Select both dates to compare with the preceding period of equal length."],
+    import_dates: ["Сравнение недоступно: часть дат относится к загрузке, а не к разговору.", "Салыстыру қолжетімсіз: кейбір күндер сөйлесуге емес, жүктеуге қатысты.", "Comparison is unavailable because some dates refer to imports, not conversations."],
+    insufficient_data: ["Для сравнения нужно не менее 5 готовых оценок в каждом периоде по одной версии чек-листа.", "Салыстыру үшін әр кезеңде бір чек-лист нұсқасы бойынша кемінде 5 дайын баға қажет.", "Comparison needs at least 5 completed evaluations in each period using the same checklist version."],
+    currentPeriod: ["Выбранный период", "Таңдалған кезең", "Selected period"], previousPeriod: ["Предыдущий период", "Алдыңғы кезең", "Previous period"],
+    scoreChange: ["Изменение среднего: {value} балла", "Орташа баға өзгерісі: {value} ұпай", "Average score change: {value} points"],
+    weakCriteria: ["Где теряются баллы", "Ұпай қай жерде жоғалады", "Where scores are lost"],
+    applicable: ["Применимо: {count}", "Қолданылады: {count}", "Applicable: {count}"], missingAnswers: ["Нет ответа: {count}", "Жауабы жоқ: {count}", "Missing: {count}"], notApplicable: ["N/A: {count}", "N/A: {count}", "N/A: {count}"],
+    belowTarget: ["Потеря баллов: {count} из {total}", "Ұпай жоғалуы: {count} / {total}", "Lost points: {count} of {total}"],
+    noWeakCriteria: ["По применимым ответам потерь баллов нет", "Қолданылатын жауаптарда ұпай жоғалуы жоқ", "No lost points in the applicable answers"],
+    allCriteria: ["Все критерии", "Барлық критерийлер", "All criteria"], allTopics: ["Все темы", "Барлық тақырыптар", "All topics"],
+    topicIssues: ["Темы с нерешёнными вопросами", "Шешілмеген мәселелері бар тақырыптар", "Topics with unresolved issues"],
+    noTopicIssues: ["Подтверждённых нерешённых вопросов в проанализированных темах нет", "Талданған тақырыптарда расталған шешілмеген мәселелер жоқ", "No confirmed unresolved issues in the analyzed topics"],
+    topicName: ["Тема обращения", "Өтініш тақырыбы", "Conversation topic"], resolved: ["Решено", "Шешілді", "Resolved"], unknown: ["Исход неизвестен", "Нәтижесі белгісіз", "Outcome unknown"],
+    knownResults: ["Решено {resolved} из {known} с известным исходом", "Нәтижесі белгілі {known} өтініштің {resolved} шешілді", "Resolved {resolved} of {known} with known outcomes"],
+    noKnownResults: ["Подтверждённых исходов нет", "Расталған нәтижелер жоқ", "No confirmed outcomes"],
+    outcomeCounts: ["Не решено: {unresolved}; неизвестно: {unknown}", "Шешілмеген: {unresolved}; белгісіз: {unknown}", "Unresolved: {unresolved}; unknown: {unknown}"],
+    rareTopics: ["Редкие темы ({count})", "Сирек тақырыптар ({count})", "Rare topics ({count})"],
+    noTopics: ["В этой выборке ещё нет определённых тем", "Бұл таңдауда анықталған тақырыптар әлі жоқ", "No identified topics in this selection yet"],
+    topicPending: ["Ожидают анализа: {count}", "Талдауды күтуде: {count}", "Awaiting analysis: {count}"],
+    unclearTopics: ["После анализа тема не определена: {count}", "Талдаудан кейін тақырып анықталмады: {count}", "Topic unidentified after analysis: {count}"],
+    analyzeTopics: ["Определить темы ({count})", "Тақырыптарды анықтау ({count})", "Identify topics ({count})"], analyzingTopics: ["Определяем темы…", "Тақырыптар анықталуда…", "Identifying topics…"],
+    topicsQueued: ["Анализ тем в очереди", "Тақырыптарды талдау кезекте", "Topic analysis queued"],
+    topicQueuedHelp: ["Задача принята и ожидает обработки. Сводка обновится автоматически.", "Тапсырма қабылданды және өңдеуді күтуде. Жиынтық автоматты түрде жаңарады.", "The task is accepted and waiting to be processed. The summary will update automatically."],
+    topicsComplete: ["Все обращения этой выборки проанализированы", "Осы таңдаудың барлық өтініштері талданды", "Every conversation in this selection has been analyzed"],
+    topicJobRunning: ["Идёт анализ тем. Сводка обновится автоматически.", "Тақырыптар талданып жатыр. Жиынтық автоматты түрде жаңарады.", "Topic analysis is running. The summary will update automatically."],
+    topicJobElsewhere: ["Сейчас анализируется другая выборка. Дождитесь завершения, чтобы запустить эту.", "Қазір басқа таңдау талданып жатыр. Осыны бастау үшін аяқталуын күтіңіз.", "Another selection is being analyzed. Wait for it to finish before starting this one."],
+    missingIdentity: ["Имя не определено", "Аты анықталмаған", "Name not identified"], botOnly: ["Без реплик оператора", "Оператор репликалары жоқ", "No agent turns"],
+    viewConversations: ["Показать обращения ({count})", "Өтініштерді көрсету ({count})", "Show conversations ({count})"],
+    durationAudio: ["По аудио: {count} звонков", "Аудио бойынша: {count} қоңырау", "From audio: {count} calls"],
+    durationTranscript: ["По меткам реплик: {count} звонков", "Реплика уақыттары бойынша: {count} қоңырау", "From turn timestamps: {count} calls"],
+    durationMixed: ["По аудио и меткам реплик: {count} звонков", "Аудио және реплика уақыттары бойынша: {count} қоңырау", "From audio and turn timestamps: {count} calls"],
+    appealCount: ["{count} апелляций в {conversations} обращениях", "{conversations} өтініште {count} апелляция", "{count} appeals in {conversations} conversations"]
+  }).map(([key, values]) => ["insights." + key, { ru: values[0], kk: values[1], en: values[2] }])));
+  DA.i18n.addMessages(Object.fromEntries(Object.entries({
+    quality: ["Качество", "Сапа", "Quality"], overview: ["Общая сводка", "Жалпы жиынтық", "General summary"],
+    topics: ["Анализ тем обращений", "Өтініш тақырыптарын талдау", "Conversation topics"],
+    scopeCount: ["{count} обращений", "{count} өтініш", "{count} conversations"], scopeLabel: ["Фильтры сводки", "Жиынтық сүзгілері", "Summary filters"],
+    versionNumber: ["Версия {number}", "{number}-нұсқа", "Version {number}"], versionRules: ["Что проверяем", "Нені тексереміз", "What is assessed"],
+    active: ["Текущая", "Ағымдағы", "Current"], criterionCount: ["Критериев: {count}", "Критерийлер: {count}", "Criteria: {count}"],
+    allChannels: ["Все каналы", "Барлық арналар", "All channels"], allTime: ["За всё время", "Барлық уақыт", "All time"],
+    period: ["Период", "Кезең", "Period"], cancel: ["Отмена", "Бас тарту", "Cancel"], dateFormat: ["ДД.ММ.ГГГГ", "КК.АА.ЖЖЖЖ", "DD.MM.YYYY"],
+    previousMonth: ["Предыдущий месяц", "Алдыңғы ай", "Previous month"], nextMonth: ["Следующий месяц", "Келесі ай", "Next month"],
+    from: ["С", "Бастап", "From"], to: ["По", "Дейін", "To"],
+    invalidScope: ["Укажите даты в формате ДД.ММ.ГГГГ. Начало не должно быть позже конца.", "Күндерді КК.АА.ЖЖЖЖ пішімінде көрсетіңіз. Басталуы аяқталуынан кейін болмауы тиіс.", "Use DD.MM.YYYY dates. The start must not be after the end."],
+    extraFilters: ["Дополнительные фильтры", "Қосымша сүзгілер", "Additional filters"],
+    explain: ["Спросить ассистента", "Көмекшіден сұрау", "Ask assistant"],
+    explainPrompt: ["Какие из этих обращений стоит разобрать и почему? Покажи источники.", "Осы өтініштердің қайсысын және неге талдау керек? Дереккөздерді көрсет.", "Which of these conversations should we review and why? Show sources."],
+    noMatches: ["Обращения не найдены", "Өтініштер табылмады", "No conversations found"], noMatchesHelp: ["Измените период или фильтры.", "Кезеңді немесе сүзгілерді өзгертіңіз.", "Change the period or filters."],
+    noTopics: ["Темы пока не определены", "Тақырыптар әлі анықталмаған", "Topics have not been identified yet"],
+    noReview: ["Поводов для разбора не найдено", "Талдау себептері табылмады", "No review reasons found"],
+    reviewSelection: ["Открыть обращения для разбора", "Талдауға арналған өтініштерді ашу", "Open conversations to review"],
+    scoreN: ["По {count} оценкам", "{count} баға бойынша", "From {count} scores"],
+    pendingAppealsShort: ["На рассмотрении", "Қаралуда", "Under review"],
+    topicOutcomeShort: ["Решено {resolved}, не решено {unresolved}, неизвестно {unknown}", "Шешілгені {resolved}, шешілмегені {unresolved}, белгісізі {unknown}", "Resolved {resolved}, unresolved {unresolved}, unknown {unknown}"],
+    unknownShort: ["Неизвестно: {count}", "Белгісіз: {count}", "Unknown: {count}"],
+    importedDatesShort: ["Даты загрузки у {count} обращений", "{count} өтініште жүктеу күні", "{count} conversations use import dates"],
+    topicJobElsewhere: ["Сейчас анализируются другие обращения. Можно будет продолжить после завершения.", "Қазір басқа өтініштер талданып жатыр. Аяқталғаннан кейін жалғастыруға болады.", "Other conversations are being analyzed. You can continue when that finishes."]
+  }).map(([key, values]) => ["insights." + key, { ru: values[0], kk: values[1], en: values[2] }])));
+  DA.i18n.addMessages(Object.fromEntries(Object.entries({
+    open: ["Открыть", "Ашу", "Open"], openOperator: ["Открыть оператора: {name}", "Операторды ашу: {name}", "Open agent: {name}"],
+    backOperators: ["Все операторы", "Барлық операторлар", "All agents"],
+    operatorMissing: ["У этого оператора нет обращений по выбранным фильтрам", "Бұл операторда таңдалған сүзгілерге сай өтініштер жоқ", "This agent has no conversations matching these filters"],
+    operatorCriteria: ["На что обратить внимание", "Неге назар аудару керек", "What needs attention"],
+    completion: ["Выполнение", "Орындалуы", "Completion"], reviewConversations: ["Обращения для разбора", "Талдауға арналған өтініштер", "Conversations to review"],
+    operatorConversations: ["Обращения оператора", "Оператордың өтініштері", "Agent conversations"],
+    number: ["№", "№", "No."], date: ["Дата", "Күні", "Date"], subject: ["С чем обратились", "Өтініш тақырыбы", "Customer request"],
+    score: ["Итог", "Қорытынды", "Score"], pages: ["Страницы", "Беттер", "Pages"], perPage: ["На странице", "Бетте", "Per page"],
+    pageSize: ["Записей на странице", "Беттегі жазбалар", "Rows per page"], page: ["Страница {number}", "{number}-бет", "Page {number}"],
+    shownRange: ["Показаны {from}–{to} из {total}", "{total} жазбаның {from}–{to} аралығы көрсетілген", "Showing {from}–{to} of {total}"],
+    shownAll: ["Всего: {count}", "Барлығы: {count}", "Total: {count}"],
+    callRecord: ["Звонок", "Қоңырау", "Call"], chatRecord: ["Чат", "Чат", "Chat"],
+    previous: ["Назад", "Алдыңғы", "Previous"], next: ["Вперёд", "Келесі", "Next"],
+    knownResults: ["Решено: {resolved} из {known}", "Шешілді: {resolved} / {known}", "Resolved: {resolved} of {known}"],
+    unclearTopics: ["Без темы: {count}", "Тақырыпсыз: {count}", "Without a topic: {count}"],
+    callsCount: ["Звонков: {count}", "Қоңыраулар: {count}", "Calls: {count}"],
+    period_not_selected: ["Выберите период для сравнения", "Салыстыру кезеңін таңдаңыз", "Select a period to compare"],
+    import_dates: ["Даты разговоров известны не для всех обращений", "Барлық өтініштің сөйлесу күні белгілі емес", "Some conversations have no conversation date"],
+    insufficient_data: ["Недостаточно оценок для сравнения", "Салыстыру үшін баға жеткіліксіз", "Not enough evaluations to compare"],
+    topicJobElsewhere: ["Сейчас анализируются другие обращения", "Қазір басқа өтініштер талданып жатыр", "Other conversations are being analyzed"],
+    topicProgressCount: ["{count} из {total}", "{total} ішінен {count}", "{count} of {total}"],
+    topicAnalysisFinished: ["Анализ тем завершён", "Тақырыптарды талдау аяқталды", "Topic analysis finished"],
+    topicAnalysisFailed: ["Анализ тем завершён с ошибками", "Тақырыптарды талдау қателермен аяқталды", "Topic analysis finished with errors"]
+  }).map(([key, values]) => ["insights." + key, { ru: values[0], kk: values[1], en: values[2] }])));
+  const TABS = ["overview", "quality", "topics", "operators"], LANGS = ["RU", "KZ", "EN"];
+  const recordChannelKey = (channel) => channel === "voice call" ? "callRecord" : "chatRecord";
+  const pct = (value) => new Intl.NumberFormat(DA.fmt.locale(), { style: "percent", maximumFractionDigits: 0 }).format(value);
+  const score = (value) => value == null ? m("noData") : DA.msg(() => DA.fmt.score(value));
+  const note = (value) => h("p", { class: "da-ins-note" }, value);
+  function selectionLink(report, ids, label, cls, overrides) {
+    return h("a", { class: cls || "da-ins-text-link", href: DA.registryFilters.href({ ...report.scope.filters, ...overrides, conversationIds: ids }) }, label);
   }
-  const fraction = (answer, c) => (c.type === "scale" ? answer / DA.scaleMax(c) : answer === "yes" ? 1 : 0);
-
-  /* Доли ответов и выполнение одного критерия: набранные баллы от возможных, N/A не в счёт. */
-  function cellStats(evs, criterionId) {
-    const s = { yes: 0, partial: 0, no: 0, na: 0, flag: 0, earned: 0, possible: 0, cids: [], c: null };
-    for (const ev of evs) {
-      const hit = doneItem(ev, criterionId);
-      if (!hit) continue;
-      s.c = hit.c;
-      s[DA.tone(hit.item.answer, hit.c)]++;
-      s.cids.push(ev.conversationId);
-      if (hit.item.answer !== "na") { s.earned += fraction(hit.item.answer, hit.c); s.possible++; }
-    }
-    s.n = s.cids.length;
-    s.rate = s.possible ? s.earned / s.possible : null;
-    return s;
+  function duration(value) {
+    if (value == null) return m("noData");
+    const seconds = Math.round(value);
+    return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
   }
-
-  /* Критерий с наименьшим выполнением. Если всё выполнено полностью, слабого места нет. */
-  function weakest(cl, evs) {
-    let worst = null;
-    for (const c of cl.criteria) {
-      if (c.type === "flag") continue;
-      const s = cellStats(evs, c.id);
-      if (s.rate != null && s.rate < 1 && (!worst || s.rate < worst.stats.rate)) worst = { c, stats: s };
-    }
-    return worst;
+  function sourceLink(report, id) {
+    const row = report.conversations.find((item) => item.conversationId === id);
+    if (!row) return null;
+    const query = row.evaluationId ? new URLSearchParams({ evaluation: row.evaluationId }).toString() : "";
+    return h("a", { class: "da-ins-op-conv", href: `#/c/${encodeURIComponent(id)}` + (query ? "?" + query : "") },
+      h("b", { class: "da-num" }, `№ ${row.number}`), h("span", { class: "da-ins-op-preview" }, row.preview),
+      h("span", { class: "da-ins-source-score" }, score(row.total)));
   }
-
-  const average = (evs) => (evs.length ? evs.reduce((s, ev) => s + ev.total, 0) / evs.length : null);
-
-  /* Имя оператора из его первой реплики. Казахское «мен Айбекпін» теряет окончание сказуемого. */
-  const NAME_RULES = [
-    { re: /[Мм]еня зовут\s+(\p{Lu}\p{Ll}+)/u },
-    { re: /[Мм]енің атым\s+(\p{Lu}\p{Ll}+)/u },
-    { re: /[Mm]y name is\s+(\p{Lu}\p{Ll}+)/u },
-    { re: /(?<!\p{L})I['’]m\s+(\p{Lu}\p{Ll}+)/u },
-    { re: /(?<!\p{L})[Яя]\s+(\p{Lu}\p{Ll}+)/u },
-    { re: /(?<!\p{L})[Мм]ен\s+(\p{Lu}\p{Ll}+)/u, kz: true }
-  ];
-  const NOT_NAMES = new Set(["Вам", "Вас", "Вы", "Сейчас", "Сіз", "Сізге"]);
-  const HIDDEN_NAME = /\[(?:имя скрыто|персональные данные скрыты|аты[\s-]*жөні жасырылған|аты жасырылған|есімі жасырылған|жеке (?:деректер|мәліметтер) жасырылған|name (?:hidden|redacted)|personal (?:data|information) (?:hidden|redacted))\]/iu;
-  function operatorName(conv) {
-    const first = conv.transcript.find((t) => t.speaker === "operator");
-    if (!first) return null;
-    for (const rule of NAME_RULES) {
-      const m = first.text.match(rule.re);
-      if (!m || NOT_NAMES.has(m[1])) continue;
-      const name = rule.kz ? m[1].replace(/(мын|мін|пын|пін|бын|бін)$/u, "") : m[1];
-      if (name.length > 1) return name;
-    }
-    return null;
+  function sourceList(report, ids) {
+    return h("div", { class: "da-ins-source-list" }, ids.slice(0, 8).map((id) => sourceLink(report, id)),
+      selectionLink(report, ids, m("viewConversations", { count: ids.length })));
   }
-
-  function operators() {
-    const byName = new Map();
-    let botOnly = 0;
-    for (const conv of Object.values(DA.state.conversations)) {
-      const turns = conv.transcript.filter((t) => t.speaker === "operator");
-      if (!turns.length) { botOnly++; continue; }
-      const name = operatorName(conv);
-      const kind = name ? "named" : turns.some((t) => HIDDEN_NAME.test(t.text)) ? "hidden" : "missing";
-      const key = kind === "named" ? "name:" + name : kind;
-      if (!byName.has(key)) byName.set(key, { name, kind, convs: [] });
-      byName.get(key).convs.push(conv.conversation_id);
-    }
-    const evs = evaluated(), cl = DA.activeChecklist();
-    const rows = [...byName.values()].map((op) => {
-      op.convs.sort((a, b) => DA.state.numbers[a] - DA.state.numbers[b]);
-      op.evs = evs.filter((ev) => op.convs.includes(ev.conversationId));
-      op.avg = average(op.evs);
-      op.weak = weakest(cl, op.evs);
-      op.gross = op.evs.filter((ev) => ev.grossFlagged).length;
-      return op;
-    });
-    const order = { named: 0, missing: 1, hidden: 2 };
-    const shown = rows.filter((op) => op.evs.length || op.kind !== "named")
-      .sort((a, b) => order[a.kind] - order[b.kind] || b.avg - a.avg || b.evs.length - a.evs.length);
-    const hiddenConvs = rows.filter((op) => !op.evs.length && op.kind === "named").reduce((s, op) => s + op.convs.length, 0);
-    return { shown, hiddenConvs, botOnly };
-  }
-
-  /* ---------- Мелкие элементы ---------- */
-  const TONES = ["yes", "partial", "no", "na"];
-  const toneLabel = (tone, c) => t(({ yes: c && c.type === "scale" ? "fullScore" : "yes", partial: "partial", no: "no", na: "na" })[tone]);
-
   function stackBar(parts, cls) {
-    const total = parts.reduce((s, p) => s + p.n, 0);
     return h("div", { class: "da-ins-stack" + (cls ? " " + cls : ""), "aria-hidden": "true" },
-      total ? parts.filter((p) => p.n).map((p) => h("i", { class: `t-${p.tone}`, style: { flexGrow: p.n } })) : null);
+      parts.filter((part) => part.n > 0).map((part) => h("i", { class: "t-" + part.tone, style: { flexGrow: part.n } })));
   }
-
-  function convLink(cid, extra) {
-    const conv = DA.state.conversations[cid];
-    return h("a", { class: "da-ins-conv", href: `#/c/${encodeURIComponent(cid)}` + (extra || "") },
-      h("b", { class: "da-num" }, `№ ${DA.convNumber(cid)}`),
-      h("span", { class: "da-muted" }, DA.msg(() => `${DA.langLabel[conv.language]}, ${DA.channelLabel(conv).toLocaleLowerCase(DA.fmt.locale())}`)));
+  function criterionMetric(report, criterion, cell, language, index) {
+    if (!cell.assessed) return h("span", { class: "da-ins-dash", title: m("missingAnswers", { count: cell.missing }) }, m("noData"));
+    const ids = cell.belowTargetIds.length ? cell.belowTargetIds : cell.conversationIds;
+    const label = criterion.type === "flag" ? cell.flaggedCount ? m("foundIn", { count: cell.flaggedCount, total: cell.applicable }) : m("notFound")
+      : cell.avgFraction == null ? m("na") : DA.msg(() => pct(cell.avgFraction));
+    const counts = cell.answerCounts || {};
+    const parts = ["yes", "partial", "no", "na"].map((tone) => ({ tone, n: counts[tone] || 0 }));
+    const link = selectionLink(report, ids, criterion.type === "flag"
+      ? h("span", { class: cell.flaggedCount ? "da-ins-flag" : "da-muted" }, cell.flaggedCount ? DA.icon("flag", 14) : null, label)
+      : [h("span", { class: "da-ins-rate" + (cell.avgFraction == null ? " is-na" : "") }, label), stackBar(parts)],
+      criterion.type === "flag" ? "da-ins-flag-link" : "da-ins-cell");
+    link.style.setProperty("--i", index);
+    const detail = () => [h("div", { class: "da-hc-title" }, criterion.title),
+      h("p", { class: "da-hc-note" }, m("applicable", { count: cell.applicable }), ". ", m("notApplicable", { count: cell.na }), ". ", m("missingAnswers", { count: cell.missing })),
+      h("ul", { class: "da-hc-list" }, parts.filter((part) => part.n).map((part) => h("li", {},
+        h("i", { class: "da-swatch t-" + (criterion.type === "flag" && part.tone === "yes" ? "no" : criterion.type === "flag" && part.tone === "no" ? "yes" : part.tone) }), h("span", {}, m(part.tone === "yes" && criterion.type === "scale" ? "fullScore" : part.tone)),
+        h("b", {}, part.n), h("small", {}, (cell.answerIds?.[part.tone] || []).map((id) => `№ ${report.conversations.find((row) => row.conversationId === id)?.number || id}`).join(", ")))))];
+    DA.hoverCard?.(link, detail);
+    link.setAttribute("aria-label", t("cellLabel", { criterion: criterion.title, language: language ? DA.langLabel[language] : t("allLanguages"), result: criterion.type === "flag" ? t("foundIn", { count: cell.flaggedCount, total: cell.applicable }) : cell.avgFraction == null ? t("na") : pct(cell.avgFraction) }));
+    return link;
   }
-
-  /* ---------- Качество ---------- */
-  function quality(evs) {
-    const cl = DA.activeChecklist();
-    if (!evs.length) return emptyQuality();
-    const cols = [{ key: null, evs }, ...LANGS.map((l) => ({ key: l, evs: evs.filter((ev) => DA.state.conversations[ev.conversationId].language === l) }))];
-    const weak = weakest(cl, evs);
-
-    const head = h("tr", {}, h("th", { scope: "col" }, m("criterion")),
-      cols.map((col) => h("th", { scope: "col" }, DA.msg(() => col.key ? DA.langLabel[col.key] : t("all")), h("small", {}, col.evs.length ? m("conversations", { count: col.evs.length }) : m("noEvaluations")))));
-    const body = [];
-    let i = 0;
-    for (const sec of cl.sections.slice().sort((a, b) => a.order - b.order)) {
-      const crits = cl.criteria.filter((c) => c.sectionId === sec.id && c.type !== "flag").sort((a, b) => a.order - b.order);
-      if (!crits.length) continue;
-      body.push(h("tr", { class: "da-ins-sec" }, h("th", { colspan: cols.length + 1, scope: "colgroup" }, sec.title)));
-      for (const c of crits) {
-        body.push(h("tr", {},
-          h("th", { scope: "row" }, h("span", {}, c.title), weak && weak.c.id === c.id ? h("span", { class: "da-ins-weak" }, m("weakPoint")) : null),
-          cols.map((col) => h("td", {}, matrixCell(c, col, i++)))));
-      }
+  function quality(report) {
+    if (!report.coverage.evaluated) return h("div", { class: "da-empty" }, h("h2", {}, m("noEvaluations")),
+      selectionLink(report, report.scope.conversationIds, m("backToList"), "da-btn"));
+    const languages = report.scope.filters.languages || [];
+    const cols = [null, ...LANGS.filter((lang) => !languages.length || languages.includes(lang))];
+    const criteria = report.criteria.filter((row) => row.type !== "flag").slice().sort((a,b) => (a.sectionOrder || 0) - (b.sectionOrder || 0) || (a.order || 0) - (b.order || 0));
+    const weak = criteria.filter((row) => row.avgFraction != null && row.avgFraction < 1).slice().sort((a,b) => a.avgFraction - b.avgFraction)[0];
+    const rows = []; let section = null, index = 0;
+    for (const criterion of criteria) {
+      if (criterion.sectionTitle && criterion.sectionId !== section) { section = criterion.sectionId;
+        rows.push(h("tr", { class: "da-ins-sec" }, h("th", { scope: "colgroup", colspan: cols.length + 1 }, criterion.sectionTitle))); }
+      rows.push(h("tr", {}, h("th", { scope: "row" }, h("span", {}, criterion.title), weak?.id === criterion.id ? h("span", { class: "da-ins-weak" }, m("weakPoint")) : null),
+        cols.map((lang) => h("td", {}, criterionMetric(report, criterion, lang ? criterion.byLanguage[lang] : criterion, lang, index++)))));
     }
-    const gross = cl.criteria.find((c) => c.type === "flag");
-    const grossRow = gross ? h("tbody", { class: "da-ins-gross-row" }, h("tr", {},
-      h("th", { scope: "row" }, gross.title),
-      cols.map((col) => {
-        const s = cellStats(col.evs, gross.id);
-        if (!s.n) return h("td", {}, h("span", { class: "da-ins-dash" }, "—"));
-        return h("td", {}, s.flag ? h("span", { class: "da-ins-flag" }, DA.icon("flag", 14), m("foundIn", { count: s.flag, total: s.n })) : h("span", { class: "da-muted" }, m("notFound")));
-      }))) : null;
-
+    const head = h("thead", {}, h("tr", {}, h("th", { scope: "col" }, m("criterion")), cols.map((lang) => {
+      const count = lang ? report.conversations.filter((row) => row.language === lang && row.qualityEvaluationId).length : report.coverage.evaluated;
+      return h("th", { scope: "col" }, DA.msg(() => lang ? DA.langLabel[lang] : t("all")), h("small", {}, m("conversations", { count })));
+    })));
+    const flags = report.criteria.filter((row) => row.type === "flag");
     return h("div", { class: "da-ins-quality" },
-      h("div", { class: "da-ins-matrix-wrap" }, h("table", { class: "da-ins-matrix" }, h("thead", {}, head), h("tbody", {}, body), grossRow)));
+      h("div", { class: "da-ins-matrix-wrap" }, h("table", { class: "da-ins-matrix" }, head, h("tbody", {}, rows),
+        flags.length ? h("tbody", { class: "da-ins-gross-row" }, flags.map((criterion) => h("tr", {}, h("th", { scope: "row" }, criterion.title), cols.map((lang) => h("td", {}, criterionMetric(report, criterion, lang ? criterion.byLanguage[lang] : criterion, lang, index++)))))) : null)),
+      h("div", { class: "da-ins-trio" }, totalsBlock(report), grossBlock(report), appealsBlock(report)));
   }
-
-  function matrixCell(c, col, i) {
-    const s = cellStats(col.evs, c.id);
-    if (!s.n) return h("span", { class: "da-ins-dash", "aria-label": m("noEvaluations") }, "—");
-    const href = col.key ? `#/?lang=${col.key}&state=done` : "#/?state=done";
-    const cell = h("a", { class: "da-ins-cell", href, style: { "--i": i },
-      "aria-label": m("cellLabel", () => ({ criterion: c.title, language: col.key ? DA.langLabel[col.key] : t("all"), result: s.rate == null ? t("na") : t("fulfilled", { rate: pct(s.rate) }) })) },
-      h("span", { class: "da-ins-rate" + (s.rate == null ? " is-na" : "") }, s.rate == null ? m("na") : DA.msg(() => pct(s.rate))),
-      stackBar(TONES.map((tone) => ({ tone, n: s[tone] }))));
-    DA.hoverCard(cell, () => [
-      h("div", { class: "da-hc-title" }, DA.msg(() => `${col.key ? DA.langLabel[col.key] : t("allLanguages")}: ${nConv(s.n)}. ${TONES.filter((tone) => s[tone]).map((tone) => `${toneLabel(tone, c)} ${s[tone]}`).join(", ")}`)),
-      h("ul", { class: "da-hc-list" }, TONES.filter((tone) => s[tone]).map((tone) => h("li", {}, h("i", { class: `da-swatch t-${tone}` }), h("span", {}, DA.msg(() => toneLabel(tone, c))),
-        h("b", {}, s.cids.filter((cid) => DA.tone(doneItem(DA.state.evaluations[cid], c.id).item.answer, c) === tone).map((cid) => `№ ${DA.convNumber(cid)}`).join(", "))))),
-      h("p", { class: "da-hc-note" }, m("openConversations"))
-    ]);
-    return cell;
+  function totalsBlock(report) {
+    const buckets = [[0,49],[50,69],[70,84],[85,100]], rows = report.conversations.filter((row) => row.total != null);
+    const counts = buckets.map(([lo,hi]) => rows.filter((row) => row.total >= lo && (hi === 100 ? row.total <= hi : row.total < hi + 1)).length), max = Math.max(1,...counts);
+    return h("section", { class: "da-ins-block is-totals" }, h("h2", {}, m("meanScore")),
+      h("div", { class: "da-ins-big", title: m("scoreN", { count: report.overview.scoredCount }) }, score(report.overview.avgScore), h("small", {}, m("of100"))),
+      h("div", { class: "da-ins-hist", role: "img", "aria-label": m("distribution", { ranges: buckets.map(([lo,hi],i) => `${lo}–${hi}: ${counts[i]}`).join(", ") }) },
+        buckets.map(([lo,hi],i) => h("div", { class: "da-ins-col" }, h("b", { class: counts[i] ? "" : "da-quiet" }, counts[i]),
+          h("i", { class: counts[i] ? "" : "is-zero", style: { height: `${counts[i] / max * 100}%`, "--i": i } }), h("span", {}, `${lo}–${hi}`)))));
   }
-
-  function totalsBlock(evs) {
-    const counts = BUCKETS.map(([lo, hi]) => evs.filter((ev) => ev.total >= lo && (hi === 100 ? ev.total <= 100 : ev.total < hi + 1)).length);
-    const max = Math.max(1, ...counts);
-    return h("section", { class: "da-ins-block is-totals" },
-      h("h2", {}, m("meanScore")),
-      h("div", { class: "da-ins-big" }, DA.msg(() => DA.fmt.score(average(evs))), h("small", {}, m("of100"))),
-      h("div", { class: "da-ins-hist", role: "img", "aria-label": m("distribution", { ranges: BUCKETS.map(([lo, hi], i) => `${lo}–${hi}: ${counts[i]}`).join(", ") }) },
-        BUCKETS.map(([lo, hi], i) => h("div", { class: "da-ins-col" },
-          h("b", { class: counts[i] ? "" : "da-quiet" }, counts[i]),
-          h("i", { style: { height: `${(counts[i] / max) * 100}%`, "--i": i }, class: counts[i] ? "" : "is-zero" }),
-          h("span", {}, `${lo}–${hi}`)))));
+  function grossBlock(report) {
+    const ids = report.overview.drilldowns.gross;
+    return h("section", { class: "da-ins-block" }, h("h2", {}, m("grossErrors")), ids.length ? h("div", { class: "da-ins-convs" }, ids.map((id) => {
+      const row = report.conversations.find((item) => item.conversationId === id);
+      return h("a", { class: "da-ins-conv", href: `#/c/${encodeURIComponent(id)}?evaluation=${encodeURIComponent(row.evaluationId)}` }, h("b", { class: "da-num" }, `№ ${row.number}`),
+        h("span", { class: "da-muted" }, DA.msg(() => `${DA.langLabel[row.language] || row.language}, ${t(recordChannelKey(row.channel)).toLocaleLowerCase(DA.fmt.locale())}`)));
+    })) : h("div", { class: "da-ins-clean" }, h("span", { class: "da-ins-ok" }, DA.icon("check",16)), h("div", {}, h("b", {}, m("noGrossErrors")), h("p", {}, m("checked", { count: report.coverage.evaluated })))));
   }
-
-  function grossBlock(evs) {
-    const found = evs.filter((ev) => ev.grossFlagged);
-    return h("section", { class: "da-ins-block" },
-      h("h2", {}, m("grossErrors")),
-      found.length
-        ? h("div", { class: "da-ins-convs" }, found.map((ev) => convLink(ev.conversationId, "?criterion=gross")))
-        : h("div", { class: "da-ins-clean" }, h("span", { class: "da-ins-ok" }, DA.icon("check", 16)),
-          h("div", {}, h("b", {}, m("noGrossErrors")), h("p", {}, m("checked", { count: evs.length })))));
+  function appealsBlock(report) {
+    const data = report.overview.appeals;
+    const parts = data ? ["confirmed","changed","open"].map((tone) => ({ tone, n: data[tone], label: m(tone === "open" ? "pending" : tone) })) : [];
+    return h("section", { class: "da-ins-block" }, h("h2", {}, m("appeals")),
+      h("div", { class: "da-ins-big" }, data ? data.total : report.overview.openAppealCount, h("small", {}, m(data ? "submitted" : "pendingAppealsShort", { count: data?.total }))),
+      data?.total ? [stackBar(parts,"is-appeals"), h("ul", { class: "da-ins-legend" }, parts.map((part) => h("li", { class: part.n ? "" : "is-zero" }, h("i", { class: "da-ins-dot t-" + part.tone }),
+        h("span", {}, part.label), part.n ? selectionLink(report,data[part.tone + "Ids"],part.n) : h("b",{},0))))] : h("p", { class: "da-muted da-small" }, m("noAppeals")),
+      data?.total || report.overview.openAppealCount ? h("a", { class: "da-btn is-text is-sm da-ins-more", href: "#/appeals" }, m("openAppeals")) : null);
   }
-
-  function appealsBlock() {
-    const all = DA.state.appeals;
-    const parts = [
-      { tone: "confirmed", n: all.filter((a) => a.status === "confirmed").length, label: m("confirmed") },
-      { tone: "changed", n: all.filter((a) => a.status === "changed").length, label: m("changed") },
-      { tone: "open", n: all.filter((a) => a.status === "open").length, label: m("pending") }
-    ];
-    return h("section", { class: "da-ins-block" },
-      h("h2", {}, m("appeals")),
-      h("div", { class: "da-ins-big" }, all.length, h("small", {}, m("submitted", { count: all.length }))),
-      all.length ? stackBar(parts, "is-appeals") : null,
-      all.length
-        ? h("ul", { class: "da-ins-legend" }, parts.map((p) => h("li", { class: p.n ? "" : "is-zero" }, h("i", { class: `da-ins-dot t-${p.tone}` }), h("span", {}, p.label), h("b", {}, p.n))))
-        : h("p", { class: "da-muted da-small" }, m("noAppeals")),
-      all.length ? h("a", { class: "da-btn is-text is-sm da-ins-more", href: "#/appeals" }, m("openAppeals")) : null);
+  function periodView(report) {
+    const period = report.periodComparison;
+    const rowView = (key,row) => row ? h("div", { class: "da-ins-period-row" }, h("div", {}, h("b", {}, m(key)), h("span", {}, `${row.dateFrom} – ${row.dateTo}`)),
+      h("strong", { title: m("scoreN", { count: row.scoredCount }) }, score(row.avgScore)), selectionLink(report,row.conversationIds,m("evaluatedCount", { count: row.evaluated, total: row.count }),null,{ dateFrom: row.dateFrom, dateTo: row.dateTo })) : null;
+    return h("section", { class: "da-ins-extra-section" }, h("h2", {}, m("periodTitle")), period.available
+      ? h("p", { class: "da-ins-period-delta" }, m("scoreChange", () => ({ value: `${period.deltaScore > 0 ? "+" : ""}${DA.fmt.score(period.deltaScore)}` }))) : note(m(period.reason || "insufficient_data")),
+      period.previous ? [rowView("currentPeriod",period.current),rowView("previousPeriod",period.previous)] : null);
   }
-
-  function emptyQuality() {
-    return h("div", { class: "da-empty" },
-      h("div", { class: "da-empty-ribbon", "aria-hidden": "true" }, [10, 15, 20, 20, 15, 15, 5].map((w) => h("i", { style: { "--w": w } }))),
-      h("h2", {}, m("emptyTitle")),
-      h("p", {}, m("emptyHelp")),
-      h("a", { class: "da-btn", href: "#/" }, m("backToList")));
+  function overview(report) {
+    const data = report.overview, coverage = report.coverage;
+    const metric = (label,value,help,extra) => h("section", { class: "da-ins-stat" }, h("h3", {}, m(label)), h("div", { class: "da-ins-stat-value" }, value), extra || null, help ? h("p", {}, help) : null);
+    const reasons = [["lowScore",m("lowScore",{score:data.lowScoreThreshold}),data.lowScoreCount],["gross",m("grossErrors"),data.grossCount],
+      ["review",m("manualReview"),data.reviewCount],["unresolved",m("unresolved"),data.unresolvedCount],["failed",m("failedEvaluations"),coverage.failed]];
+    return h("div", {}, h("section", { class: "da-ins-dashboard" }, h("h2", {}, m("overviewTitle")), h("div", { class: "da-ins-stats" },
+      metric("evaluatedLabel",`${coverage.evaluated} / ${report.scope.total}`,null,
+        h("div", { class: "da-ins-progress", role: "progressbar", "aria-label":m("evaluatedLabel"), "aria-valuenow":coverage.evaluated,"aria-valuemin":0,"aria-valuemax":report.scope.total || 1 },h("i",{style:{width:`${report.scope.total ? coverage.evaluated / report.scope.total * 100 : 0}%`}}))),
+      metric("averageLabel",score(data.avgScore),m("scoreN",{count:data.scoredCount})),
+      metric("callDuration",duration(data.callDuration.averageSeconds),data.callDuration.count?m("callsCount",{count:data.callDuration.count}):null),
+      metric("pendingAppeals",selectionLink(report,data.drilldowns.openAppeals,data.openAppealCount),null))),
+      h("div",{class:"da-ins-extras"},h("section",{class:"da-ins-extra-section"},h("h2",{},m("reviewReasons")),
+        reasons.some((part)=>part[2]) ? h("div",{class:"da-ins-reasons"},reasons.filter((part)=>part[2]).map(([key,label,count])=>selectionLink(report,data.drilldowns[key],[h("span",{},label),h("b",{},count)],"da-ins-reason"))) : note(m("noReview")),
+        data.attentionCount ? selectionLink(report,data.drilldowns.attention,m("reviewSelection")) : null),periodView(report)));
   }
-
-  /* ---------- Операторы ---------- */
-  function operatorsView() {
-    const { shown, hiddenConvs, botOnly } = operators();
-    const list = h("div", { class: "da-ins-ops", role: "list" },
-      h("div", { class: "da-ins-op-head", "aria-hidden": "true" },
-        h("span", {}, m("operator")), h("span", {}, m("conversationColumn")), h("span", {}, m("meanScore")), h("span", {}, m("weakPoint")), h("span", {}, m("grossErrors"))),
-      shown.map((op, i) => operatorRow(op, i)));
-    return h("div", {}, shown.length ? list : emptyQuality(),
-      botOnly ? h("p", { class: "da-ins-after" }, m("botClosed", { count: botOnly })) : null,
-      hiddenConvs ? h("p", { class: "da-ins-after" }, m("awaitingEvaluation", { count: hiddenConvs })) : null);
+  function topicDetail(report,row) {
+    return h("div",{class:"da-ins-chart-detail"},h("div",{class:"da-ins-outcomes"},["resolved","unresolved","unknown"].map((key)=>row[key]
+      ? selectionLink(report,row[key+"Ids"],[m(key),": ",h("b",{},row[key])],"da-ins-outcome is-"+key) : h("span",{class:"da-muted"},m(key),": 0"))),
+      h("p",{},m("averageLabel"),": ",score(row.avgScore)," ",h("span",{class:"da-muted"},m("scoreN",{count:row.scoredCount}))),sourceList(report,row.conversationIds));
   }
-
-  function operatorRow(op, i) {
-    const weakText = !op.weak ? null : op.weak.stats.possible >= 5
-      ? m("fulfilledRate", () => ({ rate: pct(op.weak.stats.yes / op.weak.stats.possible) }))
-      : m("fulfilledCount", { count: op.weak.stats.yes, total: op.weak.stats.possible });
-    const panel = h("div", { class: "da-ins-op-panel", id: `da-op-${i}` },
-      h("div", { class: "da-ins-op-inner" },
-        op.convs.map((cid) => {
-          const ev = DA.state.evaluations[cid];
-          const conv = DA.state.conversations[cid];
-          return h("a", { class: "da-ins-op-conv", href: `#/c/${encodeURIComponent(cid)}` },
-            h("b", { class: "da-num" }, `№ ${DA.convNumber(cid)}`),
-            h("span", { class: "da-ins-op-preview" }, DA.tx.preview(conv)),
-            ev && !ev.stale && ev.total != null
-              ? h("span", { class: "da-ins-op-total" }, ev.grossFlagged ? h("span", { class: "da-flag", title: m("grossError") }, DA.icon("flag", 14)) : null, DA.msg(() => DA.fmt.score(ev.total)))
-              : h("span", { class: "da-quiet" }, m("notEvaluated")));
-        })));
-    const row = h("button", { class: "da-ins-op", type: "button", "aria-expanded": "false", "aria-controls": `da-op-${i}` },
-      h("span", { class: "da-ins-op-name" },
-        h("span", { class: "da-ins-chev" }, DA.icon("chevron", 16)),
-        h("span", {}, h("b", { class: op.kind === "named" ? "" : "is-unnamed" },
-          op.kind === "missing" ? h("span", { class: "da-review", title: m("missingNameHelp") }, DA.icon("alert", 16)) : null, op.kind === "named" ? op.name : m(op.kind === "hidden" ? "nameHidden" : "noIntroduction")),
-          h("small", {}, m("evaluatedCount", { count: op.evs.length, total: op.convs.length })))),
-      h("span", { class: "da-ins-op-n" }, h("i", { class: "da-ins-m" }, m("conversationColumn"), " "), op.convs.length),
-      h("span", { class: "da-ins-op-avg" }, h("b", {}, DA.msg(() => DA.fmt.score(op.avg))), op.avg != null ? h("span", { class: "da-ins-meter" }, h("i", { style: { width: op.avg + "%", "--i": i } })) : null),
-      h("span", { class: "da-ins-op-weak" }, op.kind === "missing" ? [h("b", {}, DA.activeChecklist().criteria.find((c) => c.id === "contact")?.title || m("contact")), h("small", {}, m("missingName"))] : op.weak ? [h("b", {}, op.weak.c.title), h("small", {}, weakText)] : h("span", { class: "da-quiet" }, m(op.evs.length ? "noWeakAreas" : "noEvaluations"))),
-      h("span", { class: "da-ins-op-gross" }, op.gross ? h("span", { class: "da-ins-flag" }, DA.icon("flag", 14), op.gross) : h("span", { class: "da-quiet" }, m(op.evs.length ? "no" : "noEvaluations"))));
-    if (op.kind === "missing") DA.hoverCard(row, () => m("missingNameHelp"));
-    row.addEventListener("click", () => {
-      const open = row.getAttribute("aria-expanded") !== "true";
-      row.setAttribute("aria-expanded", String(open));
-      wrap.classList.toggle("is-open", open);
-    });
-    const wrap = h("div", { class: "da-ins-op-wrap", role: "listitem" }, row, panel);
-    return wrap;
+  function topicChart(report,rows,resolved) {
+    const step=Math.max(1,Math.ceil(Math.max(1,...rows.map(row=>row.count))/4)),max=step*4;
+    return h("section",{class:"da-ins-chart"},h("h2",{},m(resolved?"resolvedShare":"popularity")),h("div",{class:"da-ins-chart-plot"},rows.map(row=>{
+      const value=resolved?row.resolutionRate:row.count;
+      return h("details",{class:"da-ins-chart-row","data-disclosure":`topic-${row.id}-${resolved?"resolved":"count"}`},h("summary",{},
+        h("span",{class:"da-ins-chart-label"},row.topic),h("span",{class:"da-ins-chart-track"},value!=null?h("span",{class:"da-ins-chart-bar",style:{width:`${value/(resolved?1:max)*100}%`}}):null,
+          h("span",{class:"da-ins-chart-value"},value==null?m("noData"):DA.msg(()=>resolved?pct(value):String(value)))),
+        h("p",{class:"da-ins-chart-row-note"},resolved ? [m("knownResults",{resolved:row.resolved,known:row.known}),". ",m("unknownShort",{count:row.unknown})] : m("topicOutcomeShort",row))),topicDetail(report,row));
+    }),h("div",{class:"da-ins-chart-axis","aria-hidden":"true"},Array.from({length:5},(_,i)=>h("span",{},resolved?`${i*25}%`:String(i*step))))));
   }
-
-  function overview(evs) {
-    const convs = Object.values(DA.state.conversations);
-    const durations = convs.filter((c) => c.channel === "voice call").map((conv) => {
-      const audio = DA.stt?.item(conv.conversation_id);
-      const positive = (n) => typeof n === "number" && Number.isFinite(n) && n > 0;
-      if (positive(audio?.audioSecondsDeclared)) return audio.audioSecondsDeclared;
-      if (positive(audio?.audioSecondsDecoded)) return audio.audioSecondsDecoded;
-      const seconds = DA.tx.duration(conv);
-      return positive(seconds) ? seconds : null;
-    }).filter((n) => n != null);
-    const duration = durations.length ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : null;
-    const pending = DA.state.appeals.filter((a) => a.status === "open").length;
-    const rate = convs.length ? evs.length / convs.length : 0;
-    const metric = (label, value, help, extra) => h("section", { class: "da-ins-stat" },
-      h("h3", {}, m(label)), h("div", { class: "da-ins-stat-value" }, value), extra || null, h("p", {}, help));
-    return h("section", { class: "da-ins-dashboard" }, h("h2", {}, m("overviewTitle")),
-      h("div", { class: "da-ins-stats" },
-        metric("evaluatedLabel", `${evs.length} / ${convs.length}`, m("ofTotal", () => ({ rate: new Intl.NumberFormat(DA.fmt.locale(), { style: "percent", maximumFractionDigits: 1 }).format(rate) })),
-          h("div", { class: "da-ins-progress", role: "progressbar", "aria-label": m("evaluatedLabel"), "aria-valuenow": evs.length, "aria-valuemin": 0, "aria-valuemax": convs.length || 1 }, h("i", { style: { width: `${rate * 100}%` } }))),
-        metric("averageLabel", DA.msg(() => DA.fmt.score(average(evs))), m("of100")),
-        metric("callDuration", duration == null ? "—" : `${String(Math.floor(duration / 60)).padStart(2, "0")}:${String(duration % 60).padStart(2, "0")}`,
-          durations.length ? m("durationHelp", { count: durations.length }) : m("noData")),
-        metric("pendingAppeals", h("a", { href: "#/appeals" }, pending), m(pending ? "decisionRequired" : "noPending"))));
+  const topicJobActive = data => ["running","queued"].includes(data?.topics.job?.status);
+  function topicsView(report,start,starting,error,liveReport) {
+    const topics=report.topics,frequent=topics.rows.filter(row=>!row.isRare),rare=topics.rows.filter(row=>row.isRare);
+    const current=liveReport||report,running=starting||topicJobActive(current),queued=running&&!starting&&current.topics.job?.phase==="queued";
+    return h("div",{class:"da-ins-topic-panel"},h("div",{class:"da-ins-topic-controls"},h("span",{"data-topic-coverage":"true",hidden:running},m("topicCoverage",{count:topics.analyzed,total:report.scope.total})),
+      h("button",{class:"da-btn is-primary",type:"button","data-topic-action":"start",disabled:running||!topics.pending,onclick:start},m(queued?"topicsQueued":running?"analyzingTopics":"analyzeTopics",{count:topics.pending}))),
+      error?h("p",{class:"da-review",role:"alert"},DA.apiErrorMessage(error)):null,topics.job?.error?h("p",{class:"da-review",role:"alert"},topics.job.error):null,
+      topics.unidentified?note(m("unclearTopics",{count:topics.unidentified})):null,
+      frequent.length?h("div",{class:"da-ins-topic-dashboard"},topicChart(report,frequent,false),topicChart(report,frequent,true)):!rare.length?h("div",{class:"da-empty"},h("h2",{},m("noTopics"))):null,
+      rare.length?h("details",{class:"da-ins-rare","data-disclosure":"rare-topics",open:!frequent.length},h("summary",{},m("rareTopics",{count:rare.length})),
+        h("div",{class:"da-ins-topic-dashboard"},topicChart(report,rare,false),topicChart(report,rare,true))):null);
   }
-
-  function topicsView(report) {
-    if (!report) return h("p", { role: "status" }, m("topicsLoading"));
-    const rows = report.rows;
-    if (!rows.length) return h("div", { class: "da-empty" }, h("h2", {}, m("noFrequentTopics")), h("p", {}, m("topicsRule")));
-    const unknown = rows.reduce((sum, r) => sum + r.count - r.known, 0);
-    const maxCount = Math.max(...rows.map((r) => r.count));
-    const step = Math.max(1, Math.ceil(maxCount / 4));
-    const countMax = step * 4;
-    const chart = (resolved) => h("section", { class: "da-ins-chart" },
-      h("h2", {}, m(resolved ? "resolvedShare" : "popularity")),
-      h("div", { class: "da-ins-chart-plot" },
-        rows.map((group) => {
-          const done = group.resolved;
-          const known = group.known > 0;
-          const value = resolved ? done / group.count : group.count;
-          const available = !resolved || known;
-          const label = group.topic || m("topicMissing");
-          return h("details", { class: "da-ins-chart-row", "data-topic": group.id + (resolved ? "-resolved" : "-count") },
-            h("summary", {}, h("span", { class: "da-ins-chart-label" }, label),
-              h("span", { class: "da-ins-chart-track" },
-                available ? h("span", { class: "da-ins-chart-bar", style: { width: `${100 * value / (resolved ? 1 : countMax)}%` } }) : null,
-                h("span", { class: "da-ins-chart-value" }, available ? DA.msg(() => resolved ? pct(value) : String(value)) : m("noData")))),
-            h("div", { class: "da-ins-chart-detail" }, h("p", {}, resolved ? m("resolvedCount", { count: done, total: group.count }) : nConv(group.count)),
-              h("div", { class: "da-ins-convs" }, group.conversationIds.filter((id) => DA.state.conversations[id]).map((id) => convLink(id)))));
-        }),
-        h("div", { class: "da-ins-chart-axis", "aria-hidden": "true" }, Array.from({ length: 5 }, (_, i) => h("span", {}, resolved ? `${i * 25}%` : String(i * step))))),
-      h("p", { class: "da-ins-chart-caption" }, m(resolved ? "resolvedHelp" : "popularityHelp")),
-      resolved && unknown ? h("p", { class: "da-ins-chart-caption" }, m("unknownResults", { count: unknown, total: rows.reduce((sum, r) => sum + r.count, 0) })) : null);
-    return h("div", { class: "da-ins-topic-dashboard" }, chart(false), chart(true));
+  function operatorName(op) {
+    return op.kind === "named" ? op.name : t(op.kind === "hidden" ? "nameHidden" : op.kind === "botOnly" ? "botOnly" : "missingIdentity");
   }
-
-  /* ---------- Экран ---------- */
+  function recordHref(row) {
+    return `#/c/${encodeURIComponent(row.conversationId)}` + (row.evaluationId ? `?evaluation=${encodeURIComponent(row.evaluationId)}` : "");
+  }
+  function linkedRow(href, attrs, cells) {
+    const open=()=>{window.location.hash=href;};
+    return h("tr",{...attrs,tabindex:0,role:"link",onclick:event=>{
+      if(event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.target.closest("a, button"))return;open();
+    },onkeydown:event=>{if((event.key==="Enter"||event.key===" ")&&event.target===event.currentTarget){event.preventDefault();open();}}},cells);
+  }
+  function pagedTable(headings,rows,state,renderRow,onChange,register,className) {
+    const size=state.size,pages=Math.max(1,Math.ceil(rows.length/size)),page=Math.min(pages,Math.max(1,state.page));
+    const from=(page-1)*size,to=Math.min(rows.length,from+size);
+    const pageNumbers=Array.from({length:pages},(_,i)=>i+1).filter(number=>number===1||number===pages||Math.abs(number-page)<=1);
+    const buttons=[];let previous=0;
+    for(const number of pageNumbers){if(previous&&number-previous>1)buttons.push(h("span",{class:"da-pager-gap","aria-hidden":"true"},"…"));
+      buttons.push(h("button",{class:"da-pager-btn",type:"button","aria-current":number===page?"page":null,"aria-label":m("page",{number}),"data-page-action":state.key+"-"+number,onclick:()=>onChange(number,size)},number));previous=number;}
+    const sizes=DA.dropdown([10,25,50].map(value=>({value,label:String(value)})),size,value=>onChange(Math.floor(from/value)+1,value),t("pageSize"));
+    sizes.dataset.pagination=state.key;register(sizes);
+    const step=(direction,label,icon,disabled)=>h("button",{class:"da-pager-btn is-step",type:"button",disabled,"data-page-action":state.key+"-"+direction,"aria-label":m(label),onclick:()=>onChange(page+(direction==="next"?1:-1),size)},
+      direction==="previous"?DA.icon(icon,16):null,h("span",{},m(label)),direction==="next"?DA.icon(icon,16):null);
+    return h("div",{class:"da-table-wrap da-ins-list-wrap"},h("table",{class:"da-table "+className},
+      h("thead",{},h("tr",{},headings.map(label=>h("th",{scope:"col"},label)))),h("tbody",{},rows.slice(from,to).map(renderRow))),
+      h("div",{class:"da-pager"},h("span",{class:"da-pager-range","aria-live":"polite"},pages>1?m("shownRange",{from:from+1,to,total:rows.length}):m("shownAll",{count:rows.length})),
+        h("div",{class:"da-pager-size"},h("span",{"aria-hidden":"true"},m("perPage")),sizes),
+        h("nav",{class:"da-pager-nav","aria-label":m("pages")},step("previous","previous","back",page===1),buttons,step("next","next","chevron",page===pages))));
+  }
+  function operators(report,view) {
+    const selected=view.operatorId?report.operators.find(op=>op.id===view.operatorId):null;
+    const back=h("a",{class:"da-btn is-text da-ins-operator-back",href:view.href(null)},DA.icon("back",16),m("backOperators"));
+    if(view.operatorId&&!selected)return h("div",{},back,h("div",{class:"da-empty"},h("h2",{},m("operatorMissing"))));
+    if(!selected)return pagedTable([m("operator"),m("conversationColumn"),m("meanScore"),m("weakPoint"),m("grossErrors"),""],report.operators,
+      {key:"operators",page:view.page,size:view.size},op=>{
+        const href=view.href(op.id),name=operatorName(op),weak=op.weakCriteria[0];
+        return linkedRow(href,{"data-operator":op.id,"aria-label":m("openOperator",{name})},[
+          h("td",{},h("a",{class:"da-ins-table-name",href},name)),h("td",{class:"da-ins-table-count"},op.count),
+          h("td",{},h("div",{class:"da-ins-table-score"},h("b",{},score(op.avgScore)),op.avgScore!=null?h("span",{class:"da-ins-meter"},h("i",{style:{width:op.avgScore+"%"}})):null)),
+          h("td",{class:"da-ins-table-criterion"},weak?weak.title:h("span",{class:"da-quiet"},m(op.scoredCount?"noWeakAreas":"noData"))),
+          h("td",{class:"da-ins-table-count"},op.grossCount?h("span",{class:"da-ins-flag"},DA.icon("flag",14),op.grossCount):0),
+          h("td",{},h("a",{class:"da-btn is-text is-sm",href},m("open")))]);
+      },view.changePage,view.register,"da-ins-operators-table");
+    const ids=new Set(selected.conversationIds),conversations=report.conversations.filter(row=>ids.has(row.conversationId));
+    const criteria=selected.weakCriteria;
+    return h("div",{class:"da-ins-operator-detail"},back,
+      h("div",{class:"da-ins-operator-heading"},h("h2",{},operatorName(selected)),h("div",{class:"da-ins-operator-facts"},
+        h("span",{},m("conversationColumn"),": ",h("b",{},selected.count)),h("span",{},m("meanScore"),": ",h("b",{},score(selected.avgScore))),h("span",{},m("grossErrors"),": ",h("b",{},selected.grossCount)))),
+      h("section",{class:"da-ins-operator-criteria"},h("h3",{},m("operatorCriteria")),criteria.length?
+        h("div",{class:"da-table-wrap"},h("table",{class:"da-table da-ins-criteria-list"},h("thead",{},h("tr",{},h("th",{scope:"col"},m("criterion")),h("th",{scope:"col"},m("completion")),h("th",{scope:"col"},m("reviewConversations")))),
+          h("tbody",{},criteria.map(criterion=>h("tr",{},h("td",{},criterion.title),h("td",{},criterion.avgFraction==null?m("noData"):DA.msg(()=>pct(criterion.avgFraction))),
+            h("td",{},selectionLink(report,criterion.belowTargetIds,m("viewConversations",{count:criterion.belowTargetCount}),"da-btn is-text is-sm")))))))
+        :note(m(selected.scoredCount?"noWeakAreas":"noData"))),
+      h("section",{class:"da-ins-operator-conversations"},h("h3",{},m("operatorConversations")),
+        pagedTable([m("number"),m("date"),m("language"),m("channel"),m("subject"),m("score")],conversations,{key:"conversations",page:view.conversationPage,size:view.conversationSize},row=>{
+          const href=recordHref(row),when=row.startedAt?new Date(row.startedAt):null;
+          return linkedRow(href,{"data-conversation":row.conversationId,"aria-label":`№ ${row.number}`},[
+            h("td",{class:"da-id"},h("a",{class:"da-ins-table-name",href},`№ ${row.number}`)),
+            h("td",{class:"da-ins-conversation-date"},when&&!Number.isNaN(when.getTime())?DA.msg(()=>new Intl.DateTimeFormat(DA.fmt.locale(),{day:"2-digit",month:"2-digit",year:"numeric"}).format(when)):m("noData")),
+            h("td",{},DA.msg(()=>DA.langLabel[row.language]||row.language)),h("td",{},m(recordChannelKey(row.channel))),
+            h("td",{class:"da-ins-conversation-subject"},h("div",{class:"da-preview"},row.topic||row.preview)),h("td",{},h("b",{class:"da-score-num"},score(row.total)))]);
+        },view.changeConversationPage,view.register,"da-ins-conversations-table")));
+  }
+  function inputDate(value) {
+    if (!value.trim()) return "";
+    const match=value.trim().match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+    const iso=match?`${match[3]}-${match[2]}-${match[1]}`:value.trim();
+    return DA.registryFilters.dateValue(iso)==null?null:iso;
+  }
+  const displayDate=(value)=>value?value.split("-").reverse().join("."):"";
   DA.views = DA.views || {};
-  DA.views.insights = function mount(root, params) {
-    let tab = TABS.some((t) => t.value === params.query.tab) ? params.query.tab : "overview";
-    let topicReport = null, topicChannel = "all", topicError = null, topicLoading = false, starting = false, alive = true, timer = null, revision = 0;
-    async function loadTopics() {
-      const own = ++revision;
-      topicLoading = true;
+  DA.views.insights = function mount(root,params) {
+    const F=DA.registryFilters;
+    let filters=F.readQuery(params.query),tab=TABS.includes(params.query.tab)?params.query.tab:"overview";
+    const positive=value=>Number.isInteger(Number(value))&&Number(value)>0?Number(value):1;
+    const pageSize=value=>[10,25,50].includes(Number(value))?Number(value):10;
+    let operatorId=typeof params.query.operator==="string"?params.query.operator:null;
+    let operatorPage=positive(params.query.opPage),operatorSize=pageSize(params.query.opSize),conversationPage=positive(params.query.conversationPage),conversationSize=pageSize(params.query.conversationSize);
+    let report=null,liveReport=null,alive=true,loading=false,loadError=null,topicError=null,starting=false,awaitingTopicStatus=false,revision=0,timer=null,progressShown=false;
+    let activePopup=null,calendarMonth=new Date();
+    const popups=[],dropdowns=[],tableDropdowns=[];
+    const body=h("div",{class:"da-ins-body","aria-live":"polite"});
+    const progressSpinner=h("span",{class:"da-ins-topic-spinner","aria-hidden":"true"});
+    const progressLabel=h("span"),progressCount=h("b",{class:"da-ins-topic-progress-count"});
+    const progress=h("div",{class:"da-ins-topic-progress",hidden:true,role:"status","aria-live":"polite","aria-atomic":"true"},progressSpinner,progressLabel,progressCount);
+    function popup(label,cls,role) {
+      const button=h("button",{class:"da-dd-btn",type:"button","aria-expanded":"false","aria-haspopup":role||"dialog"},h("span",{class:"da-dd-value"},label),DA.icon("chevron",14));
+      const panel=h("div",{class:"da-ins-popover "+cls,hidden:true,role:role||"dialog","aria-label":label});
+      const wrap=h("div",{class:"da-dd da-ins-popup"},button,panel);
+      function outside(event) { if(!wrap.contains(event.target)) close(false); }
+      function key(event) { if(event.key==="Escape") { event.preventDefault();close(true); } }
+      function close(focus) { panel.hidden=true;button.setAttribute("aria-expanded","false");wrap.classList.remove("is-open");
+        document.removeEventListener("mousedown",outside);document.removeEventListener("keydown",key);if(activePopup===api)activePopup=null;if(focus)button.focus(); }
+      function open() { activePopup?.close(false);activePopup=api;api.beforeOpen?.();panel.hidden=false;button.setAttribute("aria-expanded","true");wrap.classList.add("is-open");
+        document.addEventListener("mousedown",outside);document.addEventListener("keydown",key); }
+      const api={wrap,button,panel,open,close,beforeOpen:null};popups.push(api);
+      button.addEventListener("click",()=>panel.hidden?open():close(false));
+      button.addEventListener("keydown",event=>{if(event.key==="ArrowDown"){event.preventDefault();open();panel.querySelector("button, input")?.focus();}});
+      wrap.addEventListener("focusout",event=>{if(event.relatedTarget&&!wrap.contains(event.relatedTarget))close(false);});
+      return api;
+    }
+    function commit(patch) { filters=F.normalize({...filters,...patch});operatorPage=1;conversationPage=1;syncUrl();updateControls();load(); }
+    const range=popup(m("period"),"da-ins-date-popover");
+    const dates={from:h("input",{class:"da-input",type:"text",inputmode:"numeric",placeholder:m("dateFormat"),"aria-label":m("from")}),
+      to:h("input",{class:"da-input",type:"text",inputmode:"numeric",placeholder:m("dateFormat"),"aria-label":m("to")})};
+    const dateError=h("p",{class:"da-ins-date-error",role:"alert",hidden:true},m("invalidScope"));
+    const calendar=h("div",{class:"da-ins-calendar"});
+    function drawCalendar() {
+      const year=calendarMonth.getUTCFullYear(),month=calendarMonth.getUTCMonth(),first=new Date(Date.UTC(year,month,1)),offset=(first.getUTCDay()+6)%7,days=new Date(Date.UTC(year,month+1,0)).getUTCDate();
+      const start=inputDate(dates.from.value),end=inputDate(dates.to.value);
+      const dayButtons=[];
+      for(let i=0;i<offset;i++)dayButtons.push(h("span",{"aria-hidden":"true"}));
+      for(let day=1;day<=days;day++) {
+        const iso=`${String(year).padStart(4,"0")}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+        const selected=iso===start||iso===end,between=start&&end&&iso>start&&iso<end;
+        dayButtons.push(h("button",{class:"da-ins-calendar-day"+(selected?" is-selected":between?" is-between":""),type:"button","aria-label":displayDate(iso),"aria-pressed":String(!!selected),onclick:()=>{
+          if(!start||end||iso<start){dates.from.value=displayDate(iso);dates.to.value="";}else dates.to.value=displayDate(iso);
+          dateError.hidden=true;drawCalendar();calendar.querySelector(`[aria-label="${displayDate(iso)}"]`)?.focus();
+        }},day));
+      }
+      calendar.replaceChildren(h("div",{class:"da-ins-calendar-head"},
+        h("button",{class:"da-btn is-text is-sm",type:"button","aria-label":m("previousMonth"),onclick:()=>{calendarMonth=new Date(Date.UTC(year,month-1,1));drawCalendar();}},DA.icon("back",16)),
+        h("b",{},DA.msg(()=>new Intl.DateTimeFormat(DA.fmt.locale(),{month:"long",year:"numeric",timeZone:"UTC"}).format(first))),
+        h("button",{class:"da-btn is-text is-sm",type:"button","aria-label":m("nextMonth"),onclick:()=>{calendarMonth=new Date(Date.UTC(year,month+1,1));drawCalendar();}},DA.icon("chevron",16))),
+        h("div",{class:"da-ins-calendar-week","aria-hidden":"true"},Array.from({length:7},(_,i)=>h("span",{},DA.msg(()=>new Intl.DateTimeFormat(DA.fmt.locale(),{weekday:"short",timeZone:"UTC"}).format(new Date(Date.UTC(2024,0,1+i))))))),
+        h("div",{class:"da-ins-calendar-grid"},dayButtons));
+    }
+    range.panel.append(h("div",{class:"da-ins-date-fields"},h("label",{},m("from"),dates.from),h("label",{},m("to"),dates.to)),calendar,dateError,
+      h("div",{class:"da-ins-date-actions"},h("button",{class:"da-btn is-text",type:"button",onclick:()=>{range.close(true);commit({dateFrom:"",dateTo:""});}},m("allTime")),
+        h("button",{class:"da-btn is-primary",type:"button",onclick:()=>{
+          const dateFrom=inputDate(dates.from.value),dateTo=inputDate(dates.to.value),valid=dateFrom!==null&&dateTo!==null&&F.validate({...filters,dateFrom,dateTo}).valid;
+          dateError.hidden=valid;dates.from.setAttribute("aria-invalid",String(!valid));dates.to.setAttribute("aria-invalid",String(!valid));
+          if(!valid)return;range.close(true);commit({dateFrom,dateTo});
+        }},m("apply"))));
+    range.beforeOpen=()=>{dates.from.value=displayDate(filters.dateFrom);dates.to.value=displayDate(filters.dateTo);dateError.hidden=true;
+      calendarMonth=filters.dateFrom?new Date(filters.dateFrom+"T00:00:00Z"):new Date();drawCalendar();};
+    for(const input of Object.values(dates))input.addEventListener("change",()=>{const parsed=inputDate(input.value);if(parsed)calendarMonth=new Date(parsed+"T00:00:00Z");drawCalendar();});
+    const version=popup(m("version"),"da-ins-version-popover","listbox");
+    function drawVersions() {
+      if(!report)return;
+      version.panel.replaceChildren(...report.scope.checklists.map(cl=>{
+        const saved=DA.state.checklists.find(item=>item.id===cl.id),criteria=saved?.criteria || (cl.id===report.scope.checklist.id?report.criteria:[]);
+        const option=h("button",{class:"da-ins-version-option",type:"button",role:"option","aria-selected":String(cl.id===filters.checklistId),onclick:()=>{version.close(true);commit({checklistId:cl.id});}},
+          h("span",{class:"da-ins-version-option-head"},h("b",{},m("versionNumber",{number:cl.version})),cl.isActive?h("small",{},m("active")):null,cl.id===filters.checklistId?DA.icon("check",16):null),
+          h("span",{class:"da-ins-version-preview"},criteria.slice(0,4).map(item=>h("span",{},item.title))),h("small",{class:"da-ins-version-count"},m("criterionCount",{count:criteria.length})));
+        option.addEventListener("keydown",event=>{const options=[...version.panel.querySelectorAll("button")],index=options.indexOf(option);
+          if(["ArrowDown","ArrowUp","Home","End"].includes(event.key)){event.preventDefault();const next=event.key==="Home"?0:event.key==="End"?options.length-1:Math.max(0,Math.min(options.length-1,index+(event.key==="ArrowDown"?1:-1)));options[next].focus();}});
+        return option;
+      }));
+    }
+    version.beforeOpen=drawVersions;
+    function filterDropdown(key,options,allLabel) {
+      const choices=[{value:"",label:t(allLabel)},...options.map(([value,label])=>({value,label:label()}))];
+      if(filters[key].length>1)choices.push({value:"_selection",label:t("selectedValues")});
+      const node=DA.dropdown(choices,filters[key].length>1?"_selection":filters[key][0]||"",value=>{if(value!=="_selection")commit({[key]:value?[value]:[]});},t(key==="languages"?"language":"channel"));
+      node.dataset.filter=key;node.refreshLabels=()=>{choices[0].label=t(allLabel);options.forEach((entry,i)=>{choices[i+1].label=entry[1]();});if(choices.at(-1).value==="_selection")choices.at(-1).label=t("selectedValues");node.setValue(filters[key].length>1?"_selection":filters[key][0]||"");};dropdowns.push(node);return node;
+    }
+    const channel=filterDropdown("channels",[["voice call",()=>t("calls")],["agent chat",()=>t("chats")]],"allChannels");
+    const language=filterDropdown("languages",LANGS.map(lang=>[lang,()=>DA.langLabel[lang]]),"allLanguages");
+    const resetButton=h("button",{class:"da-btn is-text",type:"button",onclick:()=>{activePopup?.close(false);filters=F.normalize({});operatorPage=1;conversationPage=1;syncUrl();updateControls();load();}},m("reset"));
+    function assistantScope() {
+      const operator=tab==="operators"&&operatorId?report?.operators.find(item=>item.id===operatorId):null;
+      if(tab==="operators"&&operatorId&&!operator)return {filters:{...report.scope.filters,conversationIds:[]},label:t("operatorMissing"),fingerprint:report.sourceHash};
+      return {filters:operator?{...report.scope.filters,conversationIds:operator.conversationIds}:report.scope.filters,
+        label:operator?operatorName(operator):t("scopeCount",{count:report.scope.total}),fingerprint:report.sourceHash};
+    }
+    const ask=h("button",{class:"da-btn is-text da-ins-ask",type:"button",disabled:true,onclick:()=>{if(!report||loading||loadError)return;
+      DA.setAssistantScope?.(assistantScope());DA.openAssistant?.({context:"workspace",message:t("explainPrompt")});}},DA.icon("message",16),m("explain"));
+    const toolbar=h("div",{class:"da-ins-toolbar","aria-label":m("scopeLabel")},range.wrap,channel,language,version.wrap,resetButton,ask);
+    function updateControls() {
+      range.button.replaceChildren(h("span",{class:"da-dd-value"},filters.dateFrom||filters.dateTo?`${displayDate(filters.dateFrom)||"…"} – ${displayDate(filters.dateTo)||"…"}`:m("allTime")),DA.icon("chevron",14));
+      channel.setValue(filters.channels.length>1?"_selection":filters.channels[0]||"");language.setValue(filters.languages.length>1?"_selection":filters.languages[0]||"");
+      const selected=report?.scope.checklists.find(cl=>cl.id===filters.checklistId)||report?.scope.checklists.find(cl=>cl.isActive);
+      version.button.replaceChildren(h("span",{class:"da-dd-value"},selected?m("versionNumber",{number:selected.version}):m("version")),DA.icon("chevron",14));
+      version.button.disabled=!report;
+      const count=F.count(filters)-(filters.checklistId?1:0);
+      resetButton.hidden=!count&&(!selected||selected.isActive);
+    }
+    function viewHref(targetTab,targetOperator) {
+      const query=new URLSearchParams(F.toQuery(filters));if(targetTab!=="overview")query.set("tab",targetTab);
+      if(targetTab==="operators") {
+        if(operatorPage>1)query.set("opPage",operatorPage);if(operatorSize!==10)query.set("opSize",operatorSize);
+        if(targetOperator) {query.set("operator",targetOperator);if(targetOperator===operatorId&&conversationPage>1)query.set("conversationPage",conversationPage);if(conversationSize!==10)query.set("conversationSize",conversationSize);}
+      }
+      return "#/insights"+(query.size?"?"+query:"");
+    }
+    function syncUrl() {if(F.validate(filters).valid)history.replaceState(null,"",viewHref(tab,operatorId));}
+    function switchTab(value) {if(value!==tab)operatorId=null;tab=value;seg.setValue(value);syncUrl();render();if(report)DA.setAssistantScope?.(assistantScope());}
+    const seg=DA.segmented(TABS.map(value=>({value,label:m(value)})),tab,switchTab,m("section"));
+    const cohortKey=data=>data?JSON.stringify([F.toQuery(data.scope.filters),data.scope.checklist?.id,data.scope.conversationIds.slice().sort()]):null;
+    const topicJobState=data=>JSON.stringify([data?.topics.job?.status,data?.topics.job?.phase,data?.topics.job?.error]);
+    function updateTopicProgress() {
+      const data=liveReport||report,running=starting||awaitingTopicStatus||topicJobActive(data),job=data?.topics.job;
+      if(running)progressShown=true;
+      progress.hidden=!progressShown;progressSpinner.hidden=!running;
+      if(progressShown) {
+        const elsewhere=topicJobActive(data)&&job.selectedCount===0,queued=running&&!starting&&job?.phase==="queued";
+        DA.i18n.bindText(progressLabel,m(!running?(job?.status==="error"?"topicAnalysisFailed":"topicAnalysisFinished"):elsewhere?"topicJobElsewhere":queued?"topicsQueued":"analyzingTopics"));
+        const count=elsewhere?(job.processed||0)+(job.failed||0)+(job.skipped||0):data?.topics.analyzed,total=elsewhere?job.total:data?.scope.total;
+        progressCount.hidden=!running||!Number.isFinite(total);
+        if(!progressCount.hidden)DA.i18n.bindText(progressCount,m("topicProgressCount",{count:count||0,total}));
+      }
+      const action=body.querySelector('[data-topic-action="start"]');
+      if(action) {
+        action.disabled=running||!data?.topics.pending;
+        const key=running?(job?.phase==="queued"&&!starting?"topicsQueued":"analyzingTopics"):"analyzeTopics";
+        const state=key+":"+(!running?data?.topics.pending:"");
+        if(action.dataset.progressState!==state){DA.i18n.bindText(action,m(key,{count:data?.topics.pending}));action.dataset.progressState=state;}
+      }
+      const coverageLabel=body.querySelector('[data-topic-coverage="true"]');if(coverageLabel)coverageLabel.hidden=running;
+    }
+    async function load(background) {
+      const own=++revision;clearTimeout(timer);if(!F.validate(filters).valid){loadError=new Error(t("invalidScope"));loading=false;render();return;}
+      const foreground=!background||!report||loading||!!loadError;
+      loading=foreground;loadError=null;if(loading)render();
+      let refreshBody=foreground,failed=false;
       try {
-        const result = await DA.api.getTopics(topicChannel);
-        if (!alive || own !== revision) return;
-        topicReport = result;
-        topicError = null;
-      } catch (error) {
-        if (!alive || own !== revision) return;
-        topicError = error;
-      } finally {
-        if (alive && own === revision) {
-          topicLoading = false;
-          render();
-          clearTimeout(timer);
-          if (topicReport?.job.status === "running" && !topicError) timer = setTimeout(loadTopics, 2000);
+        const data=await DA.api.getAnalytics(filters);if(!alive||own!==revision)return;
+        const wasRunning=topicJobActive(liveReport||report),cohortChanged=cohortKey(data)!==cohortKey(report);
+        liveReport=data;awaitingTopicStatus=false;
+        // A topic response changes the report hash for every record. Keep the
+        // current reading surface until the job finishes or its cohort changes.
+        if(foreground||cohortChanged||(!topicJobActive(data)&&(wasRunning||data.sourceHash!==report.sourceHash||topicJobState(data)!==topicJobState(report)))) {
+          report=data;filters=F.normalize(data.scope.filters);updateControls();syncUrl();
+          DA.setAssistantScope?.(assistantScope());refreshBody=true;
         }
       }
+      catch(error){if(!alive||own!==revision)return;failed=true;if(foreground){loadError=error;refreshBody=true;}}
+      finally{if(alive&&own===revision){loading=false;if(refreshBody)render(!!background);updateTopicProgress();
+        const latest=liveReport||report;
+        if((failed&&report)||topicJobActive(latest)||latest?.coverage.pending)timer=setTimeout(()=>load(true),3000);}}
     }
     async function startTopics() {
-      starting = true; topicError = null; render();
-      try { await DA.api.analyzeTopics(); }
-      catch (error) { if (alive) topicError = error; }
-      starting = false;
-      if (!alive) return;
-      if (topicError) render(); else loadTopics();
+      if(starting||awaitingTopicStatus||topicJobActive(liveReport||report)||!report?.topics.pending)return;
+      const ids=report.scope.conversationIds.slice();starting=true;topicError=null;updateTopicProgress();
+      try{await DA.api.analyzeTopicSelection(ids);awaitingTopicStatus=true;}catch(error){if(alive)topicError=error;}finally{starting=false;if(alive){if(topicError){progressShown=false;render(true);updateTopicProgress();}else load(true);}}
     }
-    const topicChannelSeg = DA.segmented(["all", "calls", "chats"].map((value) => ({ value, label: m(value) })), topicChannel, (v) => {
-      topicChannel = v; topicReport = null; loadTopics(); render();
-    }, m("section"));
-    function topicPanel() {
-      const running = starting || topicReport?.job.status === "running";
-      return h("div", { class: "da-ins-topic-panel" },
-        h("div", { class: "da-ins-topic-controls" },
-          topicChannelSeg,
-          h("button", { class: "da-btn is-primary", type: "button", disabled: running || topicLoading, onclick: startTopics }, m(running ? "analyzingTopics" : "analyzeTopics"))),
-        topicError ? h("p", { role: "alert", class: "da-review" }, DA.apiErrorMessage(topicError)) : null,
-        topicReport?.job.error ? h("p", { role: "alert", class: "da-review" }, topicReport.job.error) : null,
-        topicsView(topicReport));
+    function coverage() {
+      const data=report.coverage;
+      return h("div",{class:"da-ins-cover"},selectionLink(report,report.scope.conversationIds,m("coverage",{count:data.evaluated,total:report.scope.total})),
+        data.evaluated<report.scope.total?h("span",{class:"da-ins-cover-bar","aria-hidden":"true"},h("i",{style:{width:`${report.scope.total?data.evaluated/report.scope.total*100:0}%`}})):null,
+        data.pending?h("span",{},m("coverageRunning",{count:data.pending})):null,
+        filters.q||filters.groupId||filters.scoreFrom!=null||filters.scoreTo!=null||filters.status.length||filters.attention.length||filters.appealStatus.length||filters.conversationIds!==null?selectionLink(report,report.scope.conversationIds,m("extraFilters")):null);
     }
-    const body = h("div", { class: "da-ins-body" });
-    const seg = DA.segmented(TABS, tab, (v) => {
-      tab = v;
-      history.replaceState(null, "", v === "overview" ? "#/insights" : `#/insights?tab=${v}`);
-      render();
-      if (tab === "topics") loadTopics();
-    }, m("section"));
-
-    function coverage(evs) {
-      const total = Object.keys(DA.state.conversations).length;
-      return h("div", { class: "da-ins-cover" },
-        h("span", {}, m("coverage", { count: evs.length, total })),
-        evs.length < total ? h("span", { class: "da-ins-cover-bar", "aria-hidden": "true" }, h("i", { style: { width: (evs.length / total) * 100 + "%" } })) : null);
+    function hasAdditionalFilters(){return !!(filters.q||filters.groupId||filters.scoreFrom!=null||filters.scoreTo!=null||filters.status.length||filters.attention.length||filters.appealStatus.length||filters.conversationIds!==null);}
+    function closeTableDropdowns(){tableDropdowns.splice(0).forEach(item=>{const button=item.querySelector("button");if(button?.getAttribute("aria-expanded")==="true")button.click();});}
+    function operatorView() {
+      return operators(report,{operatorId,page:operatorPage,size:operatorSize,conversationPage,conversationSize,href:id=>viewHref("operators",id),register:node=>tableDropdowns.push(node),
+        changePage:(page,size)=>{operatorPage=page;operatorSize=size;syncUrl();render();},
+        changeConversationPage:(page,size)=>{conversationPage=page;conversationSize=size;syncUrl();render();}});
     }
-
-    function render() {
-      const openTopics = new Set([...body.querySelectorAll("details[data-topic][open]")].map((node) => node.dataset.topic));
-      const focusedTopic = body.contains(document.activeElement) ? document.activeElement.closest("details[data-topic]")?.dataset.topic : null;
-      const evs = evaluated();
-      const view = tab === "quality" ? quality(evs) : tab === "topics" ? topicPanel() : overview(evs);
-      body.replaceChildren(...(tab === "quality" ? [coverage(evs)] : []), h("div", { class: "da-ins-tab", "data-tab": tab }, view));
-      body.querySelectorAll("details[data-topic]").forEach((node) => {
-        node.open = openTopics.has(node.dataset.topic);
-        if (focusedTopic === node.dataset.topic) node.querySelector("summary").focus({ preventScroll: true });
-      });
+    function render(preserveScroll) {
+      const scroll=preserveScroll?{left:window.scrollX,top:window.scrollY}:null;
+      const matrixScroll=body.querySelector('.da-ins-matrix-wrap')?.scrollLeft;
+      ask.disabled=!report||loading||!!loadError||!!(tab==="operators"&&operatorId&&!report?.operators.some(item=>item.id===operatorId));
+      const active=body.contains(document.activeElement)?document.activeElement:null;
+      const focusKey=active?["data-page-action","data-operator","data-conversation","data-topic-action","href"].map(key=>[key,active.getAttribute(key)]).find(([,value])=>value!=null):null;
+      const pageFocus=document.activeElement?.dataset.pageAction;closeTableDropdowns();
+      const disclosures=new Map([...body.querySelectorAll("details[data-disclosure]")].map(node=>[node.dataset.disclosure,node.open]));
+      const focused=body.contains(document.activeElement)?document.activeElement.closest("details[data-disclosure]")?.dataset.disclosure:null;
+      if(loading){body.replaceChildren(h("p",{class:"da-ins-loading",role:"status"},m("loading")));return;}
+      if(loadError){body.replaceChildren(h("div",{class:"da-empty",role:"alert"},h("h2",{},m("loadFailed")),h("p",{},DA.apiErrorMessage(loadError)),h("button",{class:"da-btn",type:"button",onclick:()=>load()},m("retry"))));return;}
+      if(!report)return;
+      body.replaceChildren(...(tab==="quality"?[coverage()]:hasAdditionalFilters()?[h("div",{class:"da-ins-cover"},selectionLink(report,report.scope.conversationIds,m("extraFilters")))]:[]),report.scope.total||tab==="operators"&&operatorId?h("div",{class:"da-ins-tab","data-tab":tab},tab==="quality"?quality(report):tab==="topics"?topicsView(report,startTopics,starting,topicError,liveReport):tab==="operators"?operatorView():overview(report)):
+        h("div",{class:"da-empty"},h("h2",{},m("noMatches")),h("p",{},m("noMatchesHelp"))));
+      body.querySelectorAll("details[data-disclosure]").forEach(node=>{if(disclosures.has(node.dataset.disclosure))node.open=disclosures.get(node.dataset.disclosure);if(focused===node.dataset.disclosure)node.querySelector("summary").focus({preventScroll:true});});
+      if(pageFocus)(body.querySelector(`[data-page-action="${pageFocus}"]:not([disabled])`)||body.querySelector('[aria-current="page"]'))?.focus({preventScroll:true});
+      if(focusKey)[...body.querySelectorAll("a, button, tr")].find(node=>node.getAttribute(focusKey[0])===focusKey[1]&&!node.disabled)?.focus({preventScroll:true});
+      const matrix=body.querySelector('.da-ins-matrix-wrap');if(matrix&&matrixScroll!=null)matrix.scrollLeft=matrixScroll;
+      if(scroll)window.scrollTo?.({...scroll,behavior:"instant"});
+      updateTopicProgress();
     }
-
-    root.append(h("div", { class: "da-page da-ins" },
-      h("div", { class: "da-page-head da-ins-head" }, h("h1", { class: "da-h1", tabindex: -1 }, m("title")), seg),
-      body));
-    render();
-    if (tab === "topics") loadTopics();
-    window.addEventListener("da:appeals-changed", render);
-    window.addEventListener("da:stt-changed", render);
-    return () => {
-      alive = false; clearTimeout(timer); revision++;
-      window.removeEventListener("da:appeals-changed", render);
-      window.removeEventListener("da:stt-changed", render);
-    };
+    root.append(h("div",{class:"da-page da-ins"},h("div",{class:"da-page-head da-ins-head"},h("h1",{class:"da-h1",tabindex:-1},m("title")),seg),toolbar,progress,body));
+    updateControls();load();
+    const refresh=()=>load(true),events=["da:appeals-changed","da:stt-changed","da:evaluations-changed","da:checklists-changed"];
+    const refreshLocale=()=>dropdowns.forEach(item=>item.refreshLabels());window.addEventListener("da:locale-changed",refreshLocale);
+    events.forEach(event=>window.addEventListener(event,refresh));
+    return()=>{alive=false;revision++;clearTimeout(timer);closeTableDropdowns();popups.forEach(item=>item.close(false));dropdowns.forEach(item=>{const btn=item.querySelector("button");if(btn?.getAttribute("aria-expanded")==="true")btn.click();});events.forEach(event=>window.removeEventListener(event,refresh));window.removeEventListener("da:locale-changed",refreshLocale);};
   };
 })();

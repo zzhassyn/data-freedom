@@ -20,7 +20,7 @@
     "card.recording": { ru: "Запись звонка", kk: "Қоңырау жазбасы", en: "Call recording" },
     "card.listenRecording": { ru: "Слушать запись звонка", kk: "Қоңырау жазбасын тыңдау", en: "Play call recording" },
     "card.transcript": { ru: "Расшифровка", kk: "Транскрипт", en: "Transcript" },
-    "card.historyTranscriptOnly": { ru: "В этой сохранённой оценке доступна только расшифровка.", kk: "Бұл сақталған бағалауда тек транскрипт қолжетімді.", en: "Only the transcript is available for this saved evaluation." },
+    "card.assessedSource": { ru: "Текст обращения изменился. Показаны реплики, по которым выставлена эта оценка. ", kk: "Өтініш мәтіні өзгерді. Осы бағалауға негіз болған репликалар көрсетілген. ", en: "The conversation text has changed. These are the turns used for this evaluation. " },
     "card.listenHere": { ru: "Слушать с этого места", kk: "Осы жерден тыңдау", en: "Play from here" },
     "card.listen": { ru: "Слушать", kk: "Тыңдау", en: "Play" },
     "card.pauseRecording": { ru: "Поставить запись на паузу", kk: "Жазбаны кідірту", en: "Pause recording" },
@@ -78,6 +78,21 @@
     "card.knownEvaluationCost": { ru: "Известный расход: {cost}", kk: "Белгілі шығын: {cost}", en: "Known cost: {cost}" },
     "card.incompleteEvaluationCost": { ru: "Есть вызов без данных о стоимости", kk: "Құны туралы дерек жоқ сұрау бар", en: "One or more requests have no cost data" },
     "card.evaluationUsage": { ru: "Запросы: {calls} · Токены на входе: {input} · На выходе: {output}", kk: "Сұраулар: {calls} · Кіріс токендері: {input} · Шығыс токендері: {output}", en: "Requests: {calls} · Input tokens: {input} · Output tokens: {output}" },
+    "card.processingDetails": { ru: "Сведения об обработке", kk: "Өңдеу туралы мәліметтер", en: "Processing details" },
+    "card.processingModel": { ru: "Модель оценки", kk: "Бағалау моделі", en: "Evaluation model" },
+    "card.processingFinished": { ru: "Обработка завершилась", kk: "Өңдеу аяқталды", en: "Processing ended" },
+    "card.processingStarted": { ru: "Обработка началась", kk: "Өңдеу басталды", en: "Processing started" },
+    "card.processingDuration": { ru: "Время обработки", kk: "Өңдеу уақыты", en: "Processing time" },
+    "card.processingSeconds": { ru: "{seconds} с", kk: "{seconds} с", en: "{seconds} s" },
+    "card.processingCost": { ru: "Стоимость оценки", kk: "Бағалау құны", en: "Evaluation cost" },
+    "card.processingKnownCost": { ru: "Известный расход", kk: "Белгілі шығын", en: "Known cost" },
+    "card.processingCalls": { ru: "Запросы к модели", kk: "Модельге сұраулар", en: "Model requests" },
+    "card.processingKnownCalls": { ru: "Учтённые запросы", kk: "Есепке алынған сұраулар", en: "Known requests" },
+    "card.processingInput": { ru: "Токены на входе", kk: "Кіріс токендері", en: "Input tokens" },
+    "card.processingKnownInput": { ru: "Учтённые токены на входе", kk: "Есепке алынған кіріс токендері", en: "Known input tokens" },
+    "card.processingOutput": { ru: "Токены на выходе", kk: "Шығыс токендері", en: "Output tokens" },
+    "card.processingKnownOutput": { ru: "Учтённые токены на выходе", kk: "Есепке алынған шығыс токендері", en: "Known output tokens" },
+    "card.processingUnavailable": { ru: "Нет данных", kk: "Дерек жоқ", en: "Not available" },
     "card.grossError": { ru: "Грубая ошибка", kk: "Өрескел қате", en: "Serious violation" },
     "card.naSubject": { ru: ({count}) => `${["", "Один", "Два", "Три", "Четыре"][count] || count} ${DA.fmt.plural(count, ["критерий к этому разговору не относится", "критерия к этому разговору не относятся", "критериев к этому разговору не относятся"])}`, kk: "Бұл диалогқа {count} критерий қолданылмайды", en: { one: "One criterion does not apply to this conversation", other: "{count} criteria do not apply to this conversation" } },
     "card.naAll": { ru: "{subject}. Применимых критериев с баллами нет.", kk: "{subject}. Ұпай берілетін қолданылатын критерийлер жоқ.", en: "{subject}. No scored criteria apply." },
@@ -131,7 +146,6 @@
     "card.contents": { ru: "Содержимое карточки", kk: "Карточка мазмұны", en: "Card content" },
     "card.title": { ru: "Обращение № {number}", kk: "№ {number} өтініш", en: "Conversation {number}" },
     "card.dateDuration": { ru: "{date}, длительность {duration}", kk: "{date}, ұзақтығы {duration}", en: "{date}, duration {duration}" },
-    "card.historyOpen": { ru: "Открыта сохранённая оценка. ", kk: "Сақталған бағалау ашылды. ", en: "Viewing a saved evaluation. " },
     "card.currentConversation": { ru: "Перейти к текущему обращению", kk: "Ағымдағы өтінішке өту", en: "Open current conversation" }
   });
   const labelFor = (answer, c) => DA.answerText(answer, c);
@@ -158,7 +172,8 @@
     let ev = cardContext.ev;
     const evaluationSignature = (value) => value ? JSON.stringify([value.id, value.conversationId, value.checklistVersion,
       value.transcriptHash, value.stale, value.status, value.total, value.originalTotal, value.grossFlagged,
-      value.sections, value.items, value.usage, value.usageIncomplete, value.durationSec, value.minutesAgo]) : null;
+      value.sections, value.items, value.usage, value.usageIncomplete, value.model, value.startedAt, value.finishedAt,
+      value.durationSec, value.minutesAgo]) : null;
     let renderedEvaluationSignature = null;
     const CL = () => (ev ? DA.checklist(ev.checklistVersion) : DA.activeChecklist());
     let openId = params.query.criterion || null;
@@ -166,8 +181,8 @@
     let disposed = false, selectedTurn = null, loadError = null;
     const controller = new AbortController();
     /* Проверяющий видит карточку только для чтения: без переоценки и без новых апелляций. */
-    const historyView = !!params.query.evaluation;
-    const readOnly = DA.state.role === "reviewer" || historyView;
+    let selectedEvaluationId = params.query.evaluation || null;
+    const readOnly = DA.state.role === "reviewer";
     const timers = [];
 
     /* ---------- Транскрипт ---------- */
@@ -179,11 +194,14 @@
     let transcription = null, transcriptSource = "crm", sttError = "", sttPending = false, sttTimer = null;
     let player = null, speakingNode = null, selectedSttTurn = null, lastManualScroll = 0;
     let lastPlayback = { time: 0, playing: false };
-    const sourceHash = conv.transcriptHash || ev?.transcriptHash;
-    const currentHash = DA.state.conversations[cid]?.transcriptHash;
-    const historicAudioChanged = historyView && (!sourceHash || !currentHash || sourceHash !== currentHash);
+    const sourceHash = conv.transcriptHash || null;
+    const sourceKey = (record) => record && (record.transcriptHash || DA.transcriptKey(record.transcript || []));
+    const matchesCurrentSource = () => sourceKey(conv) === sourceKey(DA.state.conversations[cid]);
+    const matchesEvaluationSource = (value) => !!value && (value.transcriptHash && sourceHash
+      ? value.transcriptHash === sourceHash : value.transcriptKey
+        ? value.transcriptKey === DA.transcriptKey(conv.transcript) : !value.stale);
     const audioHref = DA.audioHref(conv);
-    const canPlay = isCall && audioHref && !historicAudioChanged && DA.audioPlayer;
+    const canPlay = isCall && audioHref && matchesCurrentSource() && DA.audioPlayer;
     const gaps = DA.tx.gaps(conv);
     const firstOp = DA.tx.firstOperatorIdx(conv);
     const turnsBox = h("div", { class: "da-turns" });
@@ -221,7 +239,7 @@
     const canonicalContent = Array.from(turnsBox.childNodes);
 
     if (canPlay) player = DA.audioPlayer({ conversationId: cid, src: audioHref, onTime: playbackTime });
-    const ai = DA.cardAI?.({ conversation: conv, evaluation: ev, historyView, signal: controller.signal,
+    const ai = DA.cardAI?.({ conversation: conv, evaluation: ev, signal: controller.signal,
       onTranscriptChange: () => { if (focused) focusCriterion(ev?.items.find((item) => item.criterionId === focused) || null); } });
     const transcriptTools = h("div", { class: "da-transcript-tools" });
     const sttControls = h("div", { class: "da-transcription-controls", hidden: !isCall });
@@ -230,7 +248,6 @@
     transcriptTools.append(sttControls);
     if (ai?.translationControl) transcriptTools.append(ai.translationControl);
     transcript.append(...[bracket, player?.el, ai?.summary,
-      historicAudioChanged ? h("p", { class: "da-transcription-status" }, m("historyTranscriptOnly")) : null,
       transcriptTools, turnsBox].filter(Boolean));
 
     function listenButton(action, source, index) {
@@ -255,7 +272,7 @@
       }
     }
     function transcriptionReady() {
-      return transcription?.status === "done" && !historyView && !!sourceHash
+      return transcription?.status === "done" && matchesCurrentSource() && !!sourceHash
         && transcription.transcriptHash === sourceHash && Array.isArray(transcription.turns) && transcription.turns.length > 0;
     }
     function mappedSttIndex(idx) {
@@ -273,7 +290,7 @@
       return Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
     }
     function seekCrmTurn(idx, play) {
-      if (!player) return;
+      if (!player || !matchesCurrentSource()) return;
       player.seek(crmTime(idx), { play: !!play });
     }
     function maskedText(text) {
@@ -374,15 +391,15 @@
         : status === "not_queued" ? m("transcriptNotReady") : status === "queued" ? m("transcriptQueued")
         : status === "running" ? m({ download: "downloading", transcribe: "recognizing", mask: "masking", build: "buildingTurns" }[transcription.step] || "transcribing")
         : status === "done" ? transcription.turns?.length ? "" : m("noSpeech") : m("loadingTranscript");
-      const action = !historyView && (sttError || status === "failed" || status === "not_queued");
+      const action = !readOnly && matchesCurrentSource() && (sttError || status === "failed" || status === "not_queued");
       sttStatus.replaceChildren(...[copy ? h("span", { class: !sttError && waiting ? "da-thinking" : "" }, copy) : null,
         action ? h("button", { class: "da-btn is-text is-sm", type: "button", disabled: sttPending, onclick: () => loadTranscription(!sttError) },
           m(sttPending ? "loading" : status === "not_queued" && !sttError ? "transcribe" : "retry")) : null].filter(Boolean));
-      sttStatus.hidden = !copy || !isCall || historyView || status === "disabled";
+      sttStatus.hidden = !copy || !isCall || !matchesCurrentSource() || status === "disabled";
       presentTranscript();
     }
     async function loadTranscription(retry) {
-      if (disposed || sttPending || !isCall || historyView) return;
+      if (disposed || sttPending || !isCall || !matchesCurrentSource() || (retry && readOnly)) return;
       clearTimeout(sttTimer); sttPending = true; sttError = ""; renderTranscriptionState();
       try {
         const next = retry ? await DA.api.retryTranscription(cid, { signal: controller.signal }) : await DA.api.getTranscription(cid, { signal: controller.signal });
@@ -411,7 +428,7 @@
         const roles = new Map(transcription.speakers.map((speaker) => [speaker.speakerId, speaker.role]));
         transcription.turns.forEach((turn) => { if ((turn.role || roles.get(turn.speakerId)) === "operator" && !turn.doubtful) markers.push({ time: turn.start, kind: "operator" }); });
       } else conv.transcript.forEach((turn, idx) => { if (turn.speaker === "operator") markers.push({ time: crmTime(idx), kind: "operator" }); });
-      if (active?.status === "done" && !ev.stale) {
+      if (active?.status === "done" && matchesEvaluationSource(ev)) {
         const tone = DA.tone(active.answer, DA.criterionById(CL(), active.criterionId));
         active.evidence.forEach((evidence) => markers.push({ time: crmTime(evidence.turnIdx), kind: "evidence", tone }));
       }
@@ -519,7 +536,7 @@
     function selectTurn(idx) {
       seekCrmTurn(idx, false);
       markSelectedTurn(selectedTurn === idx ? null : idx);
-      const related = selectedTurn == null || !ev || ev.stale ? [] : ev.items.filter((item) => item.status === "done" && item.evidence.some((e) => e.turnIdx === selectedTurn));
+      const related = selectedTurn == null || !matchesEvaluationSource(ev) ? [] : ev.items.filter((item) => item.status === "done" && item.evidence.some((e) => e.turnIdx === selectedTurn));
       if (related.length) toggle(related[0].criterionId, true, false);
       else { openId = null; renderPanel(); focusCriterion(null); }
       hoverTurn(selectedTurn);
@@ -556,6 +573,37 @@
     const critNodes = new Map();
     let ribbon = null;
     let totalNode = null;
+    let processingOpen = false;
+
+    function processingDetails() {
+      if (!ev) return null;
+      const current = ev;
+      const number = (value) => Number.isFinite(value) && value >= 0
+        ? dynamic(() => new Intl.NumberFormat(DA.fmt.locale()).format(value)) : m("processingUnavailable");
+      const rows = h("dl", { class: "da-processing-values" });
+      const row = (label, value) => rows.append(h("div", {}, h("dt", {}, label), h("dd", {}, value)));
+      const models = [...new Set(current.items.map((item) => item.model).filter((model) => typeof model === "string" && model.trim()))];
+      const model = models.length ? models.join(", ") : typeof current.model === "string" && current.model.trim() ? current.model : null;
+      if (model) row(m("processingModel"), model);
+      const timestamp = current.finishedAt || current.startedAt;
+      if (timestamp && Number.isFinite(new Date(timestamp).getTime())) row(m(current.finishedAt ? "processingFinished" : "processingStarted"),
+        dynamic(() => DA.fmt.dateTime(timestamp)));
+      if (Number.isFinite(current.durationSec) && current.durationSec >= 0) row(m("processingDuration"),
+        m("processingSeconds", () => ({ seconds: new Intl.NumberFormat(DA.fmt.locale(), { maximumFractionDigits: 1 }).format(current.durationSec) })));
+      const cost = current.usage?.costUsd;
+      row(m(current.usageIncomplete === true ? "processingKnownCost" : "processingCost"), Number.isFinite(cost) && cost >= 0
+        ? dynamic(() => new Intl.NumberFormat(DA.fmt.locale(), { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(cost))
+        : m("processingUnavailable"));
+      row(m(current.usageIncomplete === true ? "processingKnownCalls" : "processingCalls"), number(current.usage?.calls));
+      row(m(current.usageIncomplete === true ? "processingKnownInput" : "processingInput"), number(current.usage?.inputTokens));
+      row(m(current.usageIncomplete === true ? "processingKnownOutput" : "processingOutput"), number(current.usage?.outputTokens));
+      const details = h("details", { class: "da-processing-details", open: processingOpen },
+        h("summary", {}, h("span", {}, m("processingDetails")), DA.icon("chevron", 16)),
+        h("div", { class: "da-processing-body" }, rows,
+          current.usageIncomplete === true ? h("p", { class: "da-processing-note" }, m("incompleteEvaluationCost")) : null));
+      details.addEventListener("toggle", () => { if (details.isConnected) processingOpen = details.open; });
+      return details;
+    }
 
     function itemsWithC() { return ev.items.map((i) => ({ ...i, c: DA.criterionById(CL(), i.criterionId) })); }
 
@@ -564,15 +612,17 @@
       renderedEvaluationSignature = evaluationSignature(ev);
       ai?.updateEvaluation(ev);
       assistant?.updateEvaluation(ev);
+      processingOpen = panel.querySelector(".da-processing-details")?.open ?? processingOpen;
       panel.replaceChildren();
       critNodes.clear();
       totalNode = null;
       if (loadError) panel.append(h("div", { class: "da-card-error", role: "alert" },
         h("p", {}, dynamic(() => DA.apiErrorMessage(loadError))), h("button", { class: "da-btn is-sm", onclick: () => runEvaluation(ev && ["queued", "running"].includes(ev.status) ? "resume" : "start") }, m("retry"))));
-      if (ev && ev.stale) {
+      if (ev && !matchesEvaluationSource(ev)) {
         panel.append(h("div", { class: "da-empty" },
           h("h2", {}, m("stale")),
           h("p", {}, m("staleDetail", () => ({ score: DA.fmt.score(ev.total) })))));
+        panel.append(processingDetails());
         return;
       }
       if (!ev) {
@@ -603,15 +653,7 @@
         h("div", { class: "da-eval-meta" },
           h("span", {}, m("checklistVersion", { version: ev.checklistVersion })),
           ev.checklistVersion !== DA.activeChecklist().version ? h("span", {}, m("activeVersion", { version: DA.activeChecklist().version })) : null,
-          h("span", {}, running ? m("modelReading") : ev.status === "failed" ? m("someUnfinished") : m(ev.durationSec != null ? "evaluatedDuration" : "evaluatedAgo", () => ({ ago: DA.fmt.ago(ev.minutesAgo || 0), seconds: Math.max(1, Math.round(ev.durationSec)) }))),
-          Number.isFinite(ev.usage?.costUsd) && ev.usage.costUsd >= 0 ? h("span", { class: "da-eval-cost",
-            title: m("evaluationUsage", () => {
-              const count = (value) => Number.isFinite(value) && value >= 0 ? new Intl.NumberFormat(DA.fmt.locale()).format(value) : "—";
-              return { calls: count(ev.usage.calls), input: count(ev.usage.inputTokens), output: count(ev.usage.outputTokens) };
-            }) }, m(ev.usageIncomplete === true ? "knownEvaluationCost" : "evaluationCost", () => ({ cost: new Intl.NumberFormat(DA.fmt.locale(), {
-              style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 6
-            }).format(ev.usage.costUsd) }))) : null,
-          ev.usageIncomplete === true ? h("span", { class: "da-eval-cost-note" }, m("incompleteEvaluationCost")) : null)));
+          running || ev.status === "failed" ? h("span", {}, m(running ? "modelReading" : "someUnfinished")) : null)));
 
       if (ev.grossFlagged) {
         const g = ev.items.find((i) => DA.criterionById(CL(), i.criterionId).type === "flag");
@@ -653,6 +695,7 @@
         panel.append(sec);
       }
       if (ai?.coaching) panel.append(ai.coaching);
+      panel.append(processingDetails());
       indexEvidence();
       if (openId) {
         const it = ev.items.find((i) => i.criterionId === openId);
@@ -810,7 +853,8 @@
     let operationPending = false;
     const evaluate = () => runEvaluation("start");
     async function runEvaluation(kind, criterionId) {
-      if (operationPending || (readOnly && kind !== "resume")) return;
+      if (operationPending || (readOnly && kind !== "resume")
+        || (kind === "start" && !matchesCurrentSource()) || (kind === "retry" && !matchesEvaluationSource(ev))) return;
       operationPending = true;
       loadError = null;
       running = true;
@@ -822,12 +866,19 @@
         const previousDone = new Set((ev?.items || []).filter((i) => i.status === "done").map((i) => i.criterionId));
         const justDone = next.items.find((i) => i.status === "done" && !previousDone.has(i.criterionId));
         ev = next;
+        if (kind === "start" && selectedEvaluationId && selectedEvaluationId !== next.id) {
+          selectedEvaluationId = next.id;
+          const [route, search] = location.hash.split("?");
+          const query = new URLSearchParams(search || "");
+          query.set("evaluation", next.id);
+          window.history.replaceState(null, "", `${route}?${query}`);
+        }
         running = ["queued", "running"].includes(ev.status);
         renderPanel({ justDone: justDone?.criterionId });
       };
       const options = { signal: controller.signal, onProgress };
       try {
-        const next = kind === "resume" ? await DA.data.watchEvaluation(ev.id, options)
+        const next = kind === "resume" ? await DA.data.watchEvaluation(ev.id, { ...options, preserveLatest: !!selectedEvaluationId })
           : kind === "retry" ? await DA.data.retryCriterion(ev.id, criterionId, options)
           : await DA.data.evaluate(cid, { ...options, checklistVersion: DA.activeChecklist().version, reuse: false });
         if (disposed) return;
@@ -846,9 +897,16 @@
       }
     }
     function syncExternalEvaluation() {
-      if (disposed || historyView || operationPending) return;
-      const next = DA.state.evaluations[cid];
+      if (disposed || operationPending) return;
+      const sourceMatches = matchesCurrentSource();
+      sourceNotice.hidden = sourceMatches;
+      if (player) { player.el.hidden = !sourceMatches; if (!sourceMatches) player.audio.pause(); }
+      listenButtons.forEach(({ button }) => { button.hidden = !sourceMatches; });
+      renderTranscriptionState();
+      setHeadBusy(running);
+      const next = selectedEvaluationId ? DA.data.cardContext(cid, selectedEvaluationId).ev : DA.state.evaluations[cid];
       if (!next || next.conversationId !== cid || !DA.checklist(next.checklistVersion)
+        || (selectedEvaluationId && next.id !== selectedEvaluationId)
         || evaluationSignature(next) === renderedEvaluationSignature) return;
       ev = next;
       running = ["queued", "running"].includes(ev.status);
@@ -909,15 +967,15 @@
         submit.classList.add("is-busy");
         upd();
         try {
-          const current = DA.state.evaluations[cid], item = current?.items.find((value) => value.criterionId === c.id);
-          if (current?.id !== evaluationId || !item
+          const current = DA.data.cardContext(cid, evaluationId).ev, item = current?.items.find((value) => value.criterionId === c.id);
+          if (current?.id !== evaluationId || !matchesEvaluationSource(current) || !item
             || JSON.stringify([item.status, item.answer, item.explanation, item.naReason, item.evidence, item.checkedRange]) !== answerAtOpen) {
             throw new DA.ApiError("stale_source", "Оценка изменилась. Откройте критерий заново", 409);
           }
-          await DA.data.createAppeal(cid, c.id, ta.value.trim(), proposed);
+          await DA.data.createAppeal(cid, c.id, ta.value.trim(), proposed, { evaluationId });
           d.close();
           if (disposed) return;
-          ev = DA.state.evaluations[cid];
+          ev = DA.data.cardContext(cid, evaluationId).ev;
           renderPanel();
           DA.toast(m("appealSent"), critNodes.get(c.id) || anchor);
         } catch (error) {
@@ -933,7 +991,7 @@
 
     /* ---------- Шапка карточки ---------- */
     const evalBtn = h("button", { class: "da-btn", onclick: (e) => evaluate(e.currentTarget) }, DA.icon("refresh"), m(ev ? "reevaluate" : "evaluate"));
-    function setHeadBusy(b) { evalBtn.disabled = b; evalBtn.classList.toggle("is-busy", b); DA.i18n.bindText(evalBtn.lastChild, m(b ? "evaluating" : ev ? "reevaluate" : "evaluate")); }
+    function setHeadBusy(b) { evalBtn.disabled = b || !matchesCurrentSource(); evalBtn.classList.toggle("is-busy", b); DA.i18n.bindText(evalBtn.lastChild, m(b ? "evaluating" : ev ? "reevaluate" : "evaluate")); }
     const initialPart = ev && !params.query.turn ? "evaluation" : "dialogue";
     const grid = h("div", { class: "da-card-grid", "data-part": initialPart }, transcript, panel);
     const cardTabs = DA.segmented([{ value: "dialogue", label: m("dialogue") }, { value: "evaluation", label: m("evaluation") }], initialPart, showCardPart, m("contents"));
@@ -943,6 +1001,8 @@
       cardTabs.setValue(part);
     }
     const durSec = DA.tx.duration(conv);
+    const sourceNotice = h("p", { class: "da-card-source-note", hidden: matchesCurrentSource() }, m("assessedSource"),
+      h("a", { href: `#/c/${encodeURIComponent(cid)}` }, m("currentConversation")));
     root.append(h("div", { class: "da-page" },
       DA.state.role === "reviewer" ? h("a", { class: "da-btn is-text is-sm", href: "#/review", style: { marginBottom: "8px" } }, DA.icon("back", 16), m("backQueue")) : null,
       h("div", { class: "da-card-head" },
@@ -952,7 +1012,7 @@
         h("span", { class: "da-chip" }, DA.icon(isCall ? "phone" : "message"), dynamic(() => DA.channelLabel(conv))),
         h("span", { class: "da-muted da-small" }, m("dateDuration", () => ({ date: DA.fmt.dateTime(DA.tx.startedAt(conv)), duration: DA.fmt.duration(durSec) }))),
         readOnly ? null : h("div", { class: "da-card-actions" }, evalBtn)),
-      historyView ? h("p", { class: "da-card-history" }, m("historyOpen"), h("a", { href: `#/c/${encodeURIComponent(cid)}` }, m("currentConversation"))) : null,
+      sourceNotice,
       tabs, grid));
     if (assistant) root.append(assistant.element);
 
@@ -963,7 +1023,9 @@
     if (isCall) loadTranscription(false);
     setHeadBusy(running);
     if (running) runEvaluation("resume");
-    const unsubscribeBulk = historyView ? null : DA.bulk?.subscribe(syncExternalEvaluation);
+    const unsubscribeBulk = DA.bulk?.subscribe(syncExternalEvaluation);
+    window.addEventListener("da:evaluations-changed", syncExternalEvaluation, { signal: controller.signal });
+    window.addEventListener("da:appeals-changed", syncExternalEvaluation, { signal: controller.signal });
     if (params.query.turn) timers.push(setTimeout(() => jumpTo(+params.query.turn, "yes"), 200));
     if (openId) timers.push(setTimeout(() => { const n = critNodes.get(openId); n && n.scrollIntoView({ block: "nearest" }); }, 100));
     window.addEventListener("da:locale-changed", () => requestAnimationFrame(() => {

@@ -20,6 +20,7 @@ def main():
     files = [SOURCE / 'index.html', SOURCE / 'favicon.svg']
     files += sorted((SOURCE / 'js').glob('*.js'))
     files += sorted((SOURCE / 'styles').glob('*.css'))
+    files += sorted((SOURCE / 'assets').glob('*.svg'))
     for source in files:
         if not source.is_file() or source.is_symlink() or not source.resolve().is_relative_to(SOURCE):
             raise RuntimeError('Unexpected browser asset')

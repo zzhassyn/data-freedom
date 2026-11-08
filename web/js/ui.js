@@ -381,11 +381,12 @@
     let active = 0;
     function draw() {
       const cur = options.find((o) => o.value === value) || options[0];
-      text.textContent = cur.label;
+      DA.i18n?.release(text);
+      text.replaceChildren(DA.i18n?.isMessage(cur.label) ? DA.i18n.text(cur.label) : document.createTextNode(String(cur.label)));
       list.replaceChildren(...options.map((o, i) => DA.h("li", {
         role: "option", "aria-selected": String(o.value === value), class: i === active ? "is-active" : "",
         onmousedown: (e) => e.preventDefault(), onclick: () => pick(o.value)
-      }, o.label, o.value === value ? DA.icon("check", 14) : null)));
+      }, DA.h("span", {}, o.label), o.value === value ? DA.icon("check", 14) : null)));
     }
     function open(on) {
       list.hidden = !on;
@@ -414,6 +415,89 @@
       else if (e.key === "Tab") open(false);
     });
     root.setValue = (v) => { value = v; draw(); };
+    draw();
+    return root;
+  };
+})();
+
+/* Общий календарь диапазона. Значения хранятся в ISO, поля показывают ДД.ММ.ГГГГ. */
+(function () {
+  const DA = window.DA, h = DA.h;
+  DA.i18n.addMessages({
+    "ui.calendarPrevious": { ru: "Предыдущий месяц", kk: "Алдыңғы ай", en: "Previous month" },
+    "ui.calendarNext": { ru: "Следующий месяц", kk: "Келесі ай", en: "Next month" },
+    "ui.calendarFormat": { ru: "ДД.ММ.ГГГГ", kk: "КК.АА.ЖЖЖЖ", en: "DD.MM.YYYY" }
+  });
+  function validDate(value) {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) || Number(value.slice(0, 4)) < 1) return false;
+    const date = new Date(value + "T00:00:00Z");
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+  }
+  DA.calendarDates = {
+    parse(value) {
+      const text = String(value ?? "").trim();
+      if (!text) return "";
+      const parts = text.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+      const iso = parts ? `${parts[3]}-${parts[2]}-${parts[1]}` : text;
+      return validDate(iso) ? iso : null;
+    },
+    format(value) { return validDate(value) ? value.split("-").reverse().join(".") : value || ""; }
+  };
+  DA.dateRangeCalendar = function (options = {}) {
+    const root = h("div", { class: "da-ins-calendar da-date-range-calendar" });
+    let from = validDate(options.from) ? options.from : "", to = validDate(options.to) ? options.to : "", focusDay = "";
+    const now = new Date(), localMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    let month = new Date((validDate(options.month) ? options.month : from || to || localMonth) + "T00:00:00Z");
+    month.setUTCDate(1);
+    const iso = (date) => date.toISOString().slice(0, 10);
+    function goMonth(step) {
+      const next = new Date(month); next.setUTCMonth(next.getUTCMonth() + step);
+      if (next.getUTCFullYear() < 1 || next.getUTCFullYear() > 9999) return;
+      month = next; focusDay = ""; draw();
+      root.querySelector(`[data-month-step="${step}"]`)?.focus();
+    }
+    function moveFocus(value, amount) {
+      const next = new Date(value + "T00:00:00Z"); next.setUTCDate(next.getUTCDate() + amount);
+      if (next.getUTCFullYear() < 1 || next.getUTCFullYear() > 9999) return;
+      focusDay = iso(next); month = new Date(next); month.setUTCDate(1); draw();
+      root.querySelector(`[data-date="${focusDay}"]`)?.focus();
+    }
+    function choose(value) {
+      if (!from || to || value < from) { from = value; to = ""; } else to = value;
+      focusDay = value; draw(); options.onChange?.({ from, to });
+      root.querySelector(`[data-date="${value}"]`)?.focus();
+    }
+    function draw() {
+      const first = new Date(month), last = new Date(month); last.setUTCMonth(last.getUTCMonth() + 1); last.setUTCDate(0);
+      const offset = (first.getUTCDay() + 6) % 7, prefix = iso(first).slice(0, 7);
+      if (!focusDay.startsWith(prefix)) focusDay = (from.startsWith(prefix) ? from : to.startsWith(prefix) ? to : iso(first));
+      const days = Array.from({ length: offset }, () => h("span", { "aria-hidden": "true" }));
+      for (let day = 1; day <= last.getUTCDate(); day++) {
+        const value = `${prefix}-${String(day).padStart(2, "0")}`, selected = value === from || value === to;
+        days.push(h("button", { class: "da-ins-calendar-day" + (selected ? " is-selected" : from && to && value > from && value < to ? " is-between" : ""),
+          type: "button", "data-date": value, "aria-label": DA.calendarDates.format(value), "aria-pressed": String(selected), tabindex: value === focusDay ? 0 : -1,
+          onclick: () => choose(value), onkeydown: (event) => {
+            const weekday = (new Date(value + "T00:00:00Z").getUTCDay() + 6) % 7;
+            const step = ({ ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7, Home: -weekday, End: 6 - weekday })[event.key];
+            if (step != null) { event.preventDefault(); moveFocus(value, step); }
+          } }, day));
+      }
+      DA.i18n.release(root);
+      root.replaceChildren(h("div", { class: "da-ins-calendar-head" },
+        h("button", { class: "da-btn is-text is-sm", type: "button", "data-month-step": -1, "aria-label": DA.msg("ui.calendarPrevious"),
+          disabled: first.getUTCFullYear() === 1 && first.getUTCMonth() === 0, onclick: () => goMonth(-1) }, DA.icon("back", 16)),
+        h("b", {}, DA.msg(() => new Intl.DateTimeFormat(DA.fmt.locale(), { month: "long", year: "numeric", timeZone: "UTC" }).format(first))),
+        h("button", { class: "da-btn is-text is-sm", type: "button", "data-month-step": 1, "aria-label": DA.msg("ui.calendarNext"),
+          disabled: first.getUTCFullYear() === 9999 && first.getUTCMonth() === 11, onclick: () => goMonth(1) }, DA.icon("chevron", 16))),
+        h("div", { class: "da-ins-calendar-week", "aria-hidden": "true" }, Array.from({ length: 7 }, (_, i) =>
+          h("span", {}, DA.msg(() => new Intl.DateTimeFormat(DA.fmt.locale(), { weekday: "short", timeZone: "UTC" }).format(new Date(Date.UTC(2024, 0, 1 + i))))))),
+        h("div", { class: "da-ins-calendar-grid" }, days));
+    }
+    root.setRange = (value) => {
+      from = validDate(value.from) ? value.from : ""; to = validDate(value.to) ? value.to : "";
+      if (validDate(value.month)) { month = new Date(value.month + "T00:00:00Z"); month.setUTCDate(1); focusDay = ""; }
+      draw();
+    };
     draw();
     return root;
   };

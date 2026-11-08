@@ -414,14 +414,16 @@
     else DA.state.appeals[index] = saved;
     emit("da:appeals-changed");
   }
-  async function createAppeal(cid, criterionId, comment, proposedAnswer) {
-    const ev = DA.state.evaluations[cid];
-    if (!ev) throw failure("evaluation_not_ready", "Сначала оцените обращение");
+  async function createAppeal(cid, criterionId, comment, proposedAnswer, options) {
+    const context = cardContext(cid, options?.evaluationId);
+    const ev = context.ev;
+    if (!ev || (options?.evaluationId && ev.id !== options.evaluationId)) throw failure("evaluation_not_ready", "Сначала оцените обращение");
     const raw = await DA.api.createAppeal({ evaluationId: ev.id, criterionId, comment, proposedAnswer });
     epoch.value++;
-    const saved = appeal({ ...raw, evaluation: ev, conversation: DA.state.conversations[cid] });
+    const saved = appeal({ ...raw, evaluation: ev, conversation: context.conv });
     const item = ev.items.find((entry) => entry.criterionId === criterionId);
     if (item) item.appealId = saved.id;
+    updateEvaluationContexts(ev);
     upsertAppeal(saved);
     return saved;
   }
@@ -482,8 +484,8 @@
       const current = DA.state.evaluations[raw.conversationId];
       const latest = summaries.get(raw.conversationId)?.lastEvaluation;
       const ev = revision !== epoch.value && current?.id === id ? current : retainEvaluationProgress(evaluation(raw));
-      if (revision === epoch.value && (!current || current.id === id || latest?.id === id)) {
-        DA.state.evaluations[raw.conversationId] = ev;
+      if (revision === epoch.value) {
+        if (!current || current.id === id || (!opts.preserveLatest && latest?.id === id)) DA.state.evaluations[raw.conversationId] = ev;
         updateEvaluationContexts(ev);
       }
       opts.onProgress?.(ev);
@@ -655,8 +657,8 @@
   async function retryCriterion(id, criterionId, options) {
     const raw = await DA.api.retryCriterion(id, criterionId, { signal: options?.signal });
     epoch.value++;
-    saveEvaluation(raw);
-    return watchEvaluation(id, options);
+    updateEvaluationContexts(evaluation(raw));
+    return watchEvaluation(id, { ...options, preserveLatest: true });
   }
   async function history(cid, options) {
     return (await DA.api.listEvaluations(cid, options)).items.map((ev) => evaluation(ev));
@@ -747,7 +749,6 @@
     if (!await bootstrap(opts)) return DA.state;
     if (scope === "card" && opts.evaluationId) await loadHistory(opts.id, opts.evaluationId, { signal: opts.signal });
     check();
-    if (scope === "insights") { const result = await stats(); check(); DA.state.stats = result; }
     return DA.state;
   }
   DA.data = { prepare, conversations, checklists, evaluation: getEvaluation, evaluations, appeals, appealContext, cardContext,

@@ -3,8 +3,21 @@
 .da-card-tabs { display: none; }
 .da-card-error { display: grid; justify-items: start; gap: 8px; padding: 12px; color: var(--da-no-ink); font-size: 14px; }
 .da-card-error p { margin: 0; }
-.da-card-history { margin: 0 0 16px; color: var(--da-text-2); }
-.da-card-history a { color: var(--da-brand-press); }
+.da-card-source-note { margin: 0 0 16px; color: var(--da-text-2); }
+.da-card-source-note a { color: var(--da-brand-press); }
+.da-processing-details { margin: 0 20px 16px; border-top: 1px solid var(--da-line); color: var(--da-text-2); font-size: 13px; }
+.da-processing-details > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; padding: 12px 0; list-style: none; cursor: pointer; font-weight: 550; transition: color var(--da-fast); }
+.da-processing-details > summary::-webkit-details-marker { display: none; }
+.da-processing-details > summary:hover { color: var(--da-text); }
+.da-processing-details > summary:focus-visible { outline: 2px solid var(--da-brand); outline-offset: 3px; border-radius: 4px; }
+.da-processing-details > summary .da-icon { flex: none; transform: rotate(90deg); transition: transform var(--da-fast) var(--da-ease); }
+.da-processing-details[open] > summary .da-icon { transform: rotate(-90deg); }
+.da-processing-body { padding: 0 0 8px; }
+.da-processing-values { display: grid; gap: 10px; margin: 0; }
+.da-processing-values > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 8px 16px; align-items: baseline; }
+.da-processing-values dt { color: var(--da-text-2); }
+.da-processing-values dd { min-width: 0; margin: 0; color: var(--da-text); text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.da-processing-note { margin: 12px 0 0; line-height: 1.5; }
 .da-cr-note { font-size: 14px; color: var(--da-text-2); line-height: 1.45; }
 .da-cr-section { padding: 8px 8px 12px; }
 .da-cr-section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 10px 12px 6px; }

@@ -30,7 +30,7 @@
     "app.backToWork": { ru: "Вернуться к работе", kk: "Жұмысқа оралу", en: "Back to work" }
   });
   const msg = (key) => DA.msg(`app.${key}`);
-  let unmount = null, routeId = 0, routeRequest = null, ready = false, restored = false, healthStarted = false;
+  let unmount = null, routeId = 0, routeRequest = null, ready = false, restored = false, healthStarted = false, assistantStarted = false;
 
   /* Меню по роли. Входа в систему нет, роль выбирается переключателем внизу меню. */
   const NAV = {
@@ -104,6 +104,7 @@
     DA.save();
     DA.side.setRole(v);
     DA.side.renderNav(true);
+    DA.syncAssistantRole?.();
     const target = location.hash.startsWith("#/lab/accuracy") ? null : v === "reviewer" ? "#/review" : /^#\/review/.test(location.hash) ? "#/" : null;
     if (target && location.hash !== target) location.hash = target;
     else DA.route();
@@ -181,6 +182,10 @@
           evaluationId: query.evaluation, refresh: true, signal: request.signal });
         if (current !== routeId || request.signal.aborted) return;
         DA.backendAvailable = true;
+        if (!assistantStarted && typeof DA.initAssistant === "function") {
+          DA.initAssistant();
+          assistantStarted = true;
+        }
         main().replaceChildren();
         unmount = hit[2](hit[0], query) || null;
         if (!restored) { restored = true; DA.bulk?.restore(); DA.stt?.restore(); }
