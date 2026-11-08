@@ -295,6 +295,17 @@ def _select(snapshot, filters):
     for ev in visible:
         latest.setdefault(ev['conversationId'], ev)
         evaluation_to_conversation[ev['id']] = ev['conversationId']
+    for ev in snapshot['evaluations']:
+        if not is_evaluation_visible(ev):
+            continue
+        cid = ev['conversationId']
+        if cid not in ready and ev.get('status') == 'done' and cid in all_conversations:
+            conv = all_conversations[cid]
+            if ev.get('transcriptHash') == conv.get('transcriptHash'):
+                ready[cid] = ev
+        if cid not in latest and cid in all_conversations:
+            latest[cid] = ev
+            evaluation_to_conversation[ev['id']] = cid
     appeals_by_conversation = {}
     for appeal in snapshot['appeals']:
         cid = evaluation_to_conversation.get(appeal['evaluationId'])

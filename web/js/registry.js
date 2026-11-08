@@ -204,15 +204,18 @@
   }
 
   function scoreCell(cid, reveal, item) {
-    if (item && item.total == null) return h("span", { class: item.status === "failed" ? "da-error da-small" : "da-muted da-small" },
-      m(({ new: "notEvaluated", stale: "stale", failed: "failed", running: "running" })[item.status] || "notEvaluated"));
     const ev = DA.state.evaluations[cid];
-    if (item && (ev?.id !== item.qualityEvaluationId || ev?.status !== "done" || ev?.stale)) {
-      return h("div", { class: "da-score-cell" }, h("span", { class: "da-score-num" }, DA.msg(() => DA.fmt.score(item.total)),
-        item.originalTotal != null && item.originalTotal !== item.total ? h("s", {}, DA.msg(() => DA.fmt.score(item.originalTotal))) : null),
-      item.readyIsPreviousAttempt ? h("span", { class: "da-score-note" }, m(item.status === "failed" ? "failed" : item.status === "running" ? "running" : "previousScore")) : null);
+    const itemTotal = item?.total;
+    const evTotal = ev?.status === 'done' && !ev?.stale ? ev?.total : null;
+    const total = itemTotal ?? evTotal;
+    if (total == null) return h('span', { class: (item?.status || ev?.status) === 'failed' ? 'da-error da-small' : 'da-muted da-small' },
+      m(({ new: 'notEvaluated', stale: 'stale', failed: 'failed', running: 'running' })[item?.status || ev?.status] || 'notEvaluated'));
+    if (item && item.total != null && (ev?.id !== item.qualityEvaluationId || ev?.status !== 'done' || ev?.stale)) {
+      return h('div', { class: 'da-score-cell' }, h('span', { class: 'da-score-num' }, DA.msg(() => DA.fmt.score(item.total))),
+        item.originalTotal != null && item.originalTotal !== item.total ? h('s', {}, DA.msg(() => DA.fmt.score(item.originalTotal))) : null),
+      item.readyIsPreviousAttempt ? h('span', { class: 'da-score-note' }, m(item.status === 'failed' ? 'failed' : item.status === 'running' ? 'running' : 'previousScore')) : null);
     }
-    if (!ev) return h("span", { class: "da-quiet" }, m("notEvaluated"));
+    if (!ev) return h('div', { class: 'da-score-cell' }, h('span', { class: 'da-score-num' }, DA.msg(() => DA.fmt.score(total))));
     if (ev.stale) return h("span", { class: "da-muted da-small" }, m("stale"));
     if (ev.status === "queued") return h("span", { class: "da-muted da-small" }, m("queued"));
     if (ev.status === "running") return h("span", { class: "da-thinking" }, m("running"));
