@@ -9,14 +9,14 @@ from typing import Literal
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import Field, ValidationError
+from pydantic import ConfigDict, Field, ValidationError
 
 from . import llm_switch, translation_service
 from .checklists import prepare_criterion
 from .db import json_dumps
 from .errors import ApiError, JudgeError
 from .models import (
-    ApiModel, Conversation, Criterion, CriterionSuggestion, JudgeResult,
+    ApiModel, AssistantReply, Conversation, Criterion, CriterionSuggestion, JudgeResult,
     SecondOpinion, Summary, Tip, Usage,
 )
 from .scoring import validate_answer
@@ -309,6 +309,74 @@ async def _completed_stream(function, *args):
     """Non-streaming adapters produce one terminal value without invented deltas."""
     result = await function(*args)
     yield {"type": "done", "result": result, "usage": _usage(result)}
+
+
+class AssistantMessage(ApiModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    role: Literal['user', 'assistant']
+    content: str = Field(min_length=1, max_length=6000)
+
+
+class AssistantRequest(ApiModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    message: str = Field(min_length=1, max_length=2000)
+    history: list[AssistantMessage] = Field(default_factory=list, max_length=12)
+    language: Literal['RU', 'KZ', 'EN']
+    transcript_hash: str = Field(min_length=1, max_length=128)
+    evaluation_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+def _assistant_context(db, conversation_id, body):
+    from .evaluations import public_evaluation, require_evaluation_visible, source_conversation
+
+    with db.transaction() as conn:
+        current = db.get_conversation(conversation_id, conn)
+        assessment = None
+        if body.evaluation_id:
+            evaluation = db.get_evaluation(body.evaluation_id, conn)
+            if evaluation['conversationId'] != conversation_id:
+                raise ApiError('invalid_request', 'Оценка относится к другому диалогу', 400)
+            require_evaluation_visible(evaluation)
+            snapshot = evaluation.get('_conversation') or current
+            if (snapshot['id'] != conversation_id
+                    or evaluation.get('transcriptHash') != _conversation_hash(snapshot)):
+                raise ApiError('stale_source', 'Исходный диалог оценки недоступен. Откройте карточку заново', 409)
+            source_hash = _conversation_hash(snapshot)
+            source = source_conversation(db, evaluation, conn)
+            assessment = {'evaluation': public_evaluation(evaluation),
+                          'checklist': db.get_checklist(evaluation['checklistId'], conn)}
+        else:
+            source, source_hash = current, _conversation_hash(current)
+        if body.transcript_hash != source_hash:
+            raise ApiError('stale_source', 'Отображаемый диалог изменился. Откройте карточку заново', 409)
+        conversation = Conversation.model_validate(source)
+        fingerprint = _digest([source_hash, conversation.model_dump(by_alias=True), assessment])
+        return conversation, assessment, fingerprint
+
+
+@router.post('/conversations/{conversation_id}/assistant')
+async def assistant(conversation_id: str, body: AssistantRequest, request: Request):
+    app = request.app
+    conversation, assessment, fingerprint = _assistant_context(app.state.db, conversation_id, body)
+    try:
+        module = llm_switch.get_ai()
+    except JudgeError as exc:
+        raise ApiError('model_unavailable', str(exc), 503) from exc
+    result, usage = await _call(app, module.assistant, conversation, body.message,
+        [message.model_dump() for message in body.history], body.language, assessment)
+    try:
+        _, _, current_fingerprint = _assistant_context(app.state.db, conversation_id, body)
+    except ApiError as exc:
+        raise ApiError('stale_source', 'Контекст изменился во время ответа. Откройте карточку заново', 409) from exc
+    if current_fingerprint != fingerprint:
+        raise ApiError('stale_source', 'Оценка или диалог изменились во время ответа. Повторите запрос', 409)
+    result = _validate(AssistantReply, result)
+    try:
+        result.validate_citations(conversation)
+    except ValueError as exc:
+        raise ApiError('model_failed', 'Модель указала цитату, которой нет в диалоге', 502) from exc
+    result.usage = Usage.model_validate(usage)
+    return result.model_dump(by_alias=True)
 
 
 def _translation_input(app, conversation, source_name):

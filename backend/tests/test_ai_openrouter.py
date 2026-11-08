@@ -86,6 +86,38 @@ def install(monkeypatch, value=None, chunks=None, **settings):
     return calls, streams
 
 
+def test_assistant_uses_server_context_and_validates_reply(monkeypatch, source):
+    calls, _ = install(monkeypatch, {'answer': 'Тариф кабинетте.',
+        'citations': [{'turnIdx': 7, 'quote': 'Тариф кабинетте.'}]})
+    history = [{'role': 'user', 'content': 'Where?'}]
+    answer = asyncio.run(ai.assistant(source, 'Find the answer', history, 'EN', None))
+    assert answer.answer == 'Тариф кабинетте.'
+    assert answer.citations[0].turn_idx == 7
+    assert answer.usage.cost_usd == pytest.approx(.0042)
+    request = calls[0]
+    assert request['stream'] is False and request['model'] == 'test/ai'
+    assert request['max_tokens'] <= 4096  # Bound the assistant's requested credit reservation.
+    data = json.loads(request['messages'][1]['content'])
+    assert data['language'] == 'EN' and data['history'] == history
+    assert data['assessment'] is None and data['message'] == 'Find the answer'
+    assert data['conversation']['turns'][1]['text'] == source.transcript[1].text
+    assert len(request['messages']) == 2  # History never becomes trusted instructions.
+
+
+@pytest.mark.parametrize('value', [
+    {'answer': '', 'citations': []}, {'answer': 'x' * 6001, 'citations': []},
+    {'answer': '<script>alert(1)</script>', 'citations': []},
+    {'answer': 'Answer', 'citations': [{'turnIdx': 2, 'quote': 'not in transcript'}]},
+    {'answer': 'Answer', 'citations': [{'turnIdx': True, 'quote': 'Тариф'}]},
+    {'answer': 'Answer', 'citations': [], 'invented': True},
+])
+def test_assistant_invalid_provider_output_retains_usage(monkeypatch, source, value):
+    install(monkeypatch, value)
+    with pytest.raises(JudgeError) as error:
+        asyncio.run(ai.assistant(source, 'Explain', [], 'RU', None))
+    assert error.value.usage.cost_usd == pytest.approx(.0042)
+
+
 def test_summary_is_incremental_before_completion_and_uses_configured_model(monkeypatch, source):
     calls, streams = install(monkeypatch, summary())
 
