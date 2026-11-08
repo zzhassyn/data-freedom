@@ -219,7 +219,7 @@ test('styled calendar and version preview replace native select/date controls',a
 test('default tab is general summary and removed explanatory blocks stay absent',async()=>{
   const ui=harness();await tick();
   assert.ok(ui.root.all().some(x=>x.dataset.tab==='overview'));
-  assert.ok(ui.root.all().some(x=>x.class==='da-ins-dashboard'));
+  assert.ok(ui.root.all().some(x=>x.class==='da-ins-overview'));
   assert.equal(ui.root.all().filter(x=>x.class==='da-ins-basis').length,0);
   ui.tab('topics');
   assert.doesNotMatch(ui.root.textContent,/Resolution rate uses known outcomes|paid model requests|These topics occur fewer|How metrics are calculated/);
@@ -355,7 +355,7 @@ test('a background event superseding a filter load still applies the requested r
   ui.events['da:appeals-changed']();
   const updated=copy(ui.report);updated.scope.filters.languages=['KZ'];updated.sourceHash='selected-language';
   resolvers[2](updated);await tick();resolvers[1](copy(ui.report));await tick();
-  assert.doesNotMatch(ui.root.textContent,/Loading summary…/);assert.ok(ui.root.querySelector('.da-ins-dashboard'));
+  assert.doesNotMatch(ui.root.textContent,/Loading summary…/);assert.ok(ui.root.querySelector('.da-ins-overview'));
   assert.equal(ui.calls.scopes.at(-1).fingerprint,'selected-language');assert.deepEqual(ui.calls.scopes.at(-1).filters.languages,['KZ']);
   assert.equal(new URLSearchParams(ui.calls.urls.at(-1).split('?')[1]).get('languages'),'KZ');ui.cleanup();
 });
@@ -439,4 +439,76 @@ test('a rare-only scope with no rare topics offers a return to all topics and cl
   assert.equal(new URLSearchParams(ui.calls.urls.at(-1).split('?')[1]).get('topicPage'),null);
   const toggle=ui.buttons().find(x=>x.dataset.topicAction==='rare');assert.equal(toggle.disabled,undefined);toggle.fire('click');
   assert.equal(ui.root.all().filter(x=>x.dataset.topic).length,1);assert.equal(ui.calls.reads.length,1);ui.cleanup();
+});
+
+test('overview keeps the distinct attention total separate from overlapping reason and appeal counts',async()=>{
+  const ui=harness({tab:'overview'},r=>{
+    r.scope.filters.languages=['KZ'];r.scope.filters.dateFrom='2026-11-01';r.scope.filters.dateTo='2026-11-08';
+    r.overview.lowScoreCount=1;r.overview.drilldowns.lowScore=['c2'];return r;
+  });await tick();
+  assert.equal(ui.root.all().find(x=>x.dataset.overviewCount==='attention').textContent,'2');
+  const reasons=ui.links().filter(x=>x.dataset.overviewSource),counts=reasons.map(x=>Number(x.querySelector('b').textContent));
+  assert.ok(counts.reduce((a,b)=>a+b,0)>2);assert.match(ui.root.textContent,/Score below 70/);assert.doesNotMatch(ui.root.textContent,/Score below 60/);
+  const appeals=reasons.find(x=>x.dataset.overviewSource==='openAppeals');
+  assert.equal(appeals.querySelector('b').textContent,'1');assert.match(appeals.textContent,/Pending appeals: 2/);assert.deepEqual(JSON.parse(decoded(appeals).conversationIds),['c1']);
+  for(const link of reasons) {
+    const query=decoded(link);assert.equal(query.checklistId,'cl2');assert.equal(query.languages,'KZ');assert.equal(query.dateFrom,'2026-11-01');
+    assert.deepEqual(JSON.parse(query.conversationIds),ui.report.overview.drilldowns[link.dataset.overviewSource]);
+  }
+  assert.deepEqual(JSON.parse(decoded(ui.links().find(x=>x.textContent==='Open conversations to review')).conversationIds),['c1','c2']);ui.cleanup();
+});
+
+test('overview selects three frequent criterion shortfalls by conversation count and excludes flags',async()=>{
+  const ui=harness({tab:'overview'},r=>{
+    const base=r.criteria[0];
+    r.scope.filters.channels=['voice call'];r.scope.filters.conversationIds=['c1','c2','c3'];
+    r.criteria=[{...base,id:'flag',type:'flag',title:'Critical flag',belowTargetCount:3},
+      {...base,id:'common',title:'Common partial criterion',applicable:3,avgFraction:.9,belowTargetCount:2,belowTargetIds:['c1','c2']},
+      {...base,id:'next',title:'Another common criterion',applicable:2,avgFraction:.5,belowTargetCount:2,belowTargetIds:['c2','c3']},
+      {...base,id:'small',title:'One difficult case',applicable:1,avgFraction:.1,belowTargetCount:1,belowTargetIds:['c3']},
+      {...base,id:'fourth',title:'Fourth criterion',applicable:3,avgFraction:.8,belowTargetCount:1,belowTargetIds:['c2']}];return r;
+  });await tick();
+  const criteria=ui.links().filter(x=>x.dataset.overviewCriterion);
+  assert.deepEqual(criteria.map(x=>x.dataset.overviewCriterion),['common','next','small']);
+  assert.equal(criteria[0].title,'Not fully met in 2 of 3 conversations where this criterion applies');
+  assert.equal(criteria[0].querySelector('b').textContent,'2 of 3');
+  assert.ok(Math.abs(parseFloat(criteria[0].querySelector('i').style.width)-200/3)<.0001);
+  assert.deepEqual(JSON.parse(decoded(criteria[0]).conversationIds),['c1','c2']);assert.equal(decoded(criteria[0]).channels,'voice call');assert.equal(decoded(criteria[0]).checklistId,'cl2');
+  const all=decoded(ui.links().find(x=>x.textContent==='All criteria'));
+  assert.equal(all.tab,'quality');assert.equal(all.checklistId,'cl2');assert.equal(all.channels,'voice call');assert.deepEqual(JSON.parse(all.conversationIds),['c1','c2','c3']);ui.cleanup();
+});
+
+test('overview uses neutral unavailable states for all-NA scores and missing evaluations',async()=>{
+  const ui=harness({tab:'overview'},r=>{
+    r.overview.avgScore=null;r.overview.scoredCount=0;r.overview.attentionCount=0;
+    for(const key of ['grossCount','reviewCount','unresolvedCount','openAppealCount','openAppealConversations','lowScoreCount'])r.overview[key]=0;
+    r.coverage.failed=0;r.overview.drilldowns.attention=[];
+    r.criteria=r.criteria.map(row=>({...row,applicable:0,belowTargetCount:0,belowTargetIds:[],avgFraction:null}));return r;
+  });await tick();
+  const picture=ui.root.querySelector('.da-ins-overview-picture');
+  assert.match(picture.textContent,/Average scoreNo dataFrom 0 scores/);assert.match(picture.textContent,/Not evaluated: 1/);
+  assert.match(ui.root.textContent,/No data to compare criteria yet/);assert.doesNotMatch(ui.root.textContent,/No shortfalls in the assessed criteria|All conversations evaluated/);
+  assert.equal(ui.links().filter(x=>x.dataset.overviewSource).length,0);assert.equal(ui.links().filter(x=>x.textContent==='Open conversations to review').length,0);ui.cleanup();
+});
+
+test('overview period action opens the existing calendar without fetching or inventing a comparison',async()=>{
+  const ui=harness();await tick();
+  const period=ui.root.querySelector('.da-ins-overview-period');
+  assert.equal(period.querySelectorAll('a').length,0);assert.doesNotMatch(period.textContent,/Average score change|Selected period|Previous period/);
+  ui.buttons().find(x=>x.dataset.overviewAction==='period').fire('click');
+  assert.equal(ui.buttons().find(x=>x.class==='da-dd-btn'&&x.textContent==='All time').getAttribute('aria-expanded'),'true');
+  assert.equal(ui.document.activeElement,ui.root.querySelectorAll('input')[0]);assert.equal(ui.calls.reads.length,1);assert.equal(ui.calls.analyzes.length,0);ui.cleanup();
+});
+
+test('active topic polls preserve the overview work surface and apply completed values once',async()=>{
+  const ui=harness({tab:'overview'},r=>{r.topics.job={status:'running',phase:'running',selectedCount:3,total:3,processed:2};return r;});await tick();
+  const overview=ui.root.querySelector('.da-ins-overview'),reason=ui.links().find(x=>x.dataset.overviewSource==='gross');reason.focus();ui.window.scrollY=280;
+  const updated=copy(ui.report);updated.sourceHash='changed-topic';updated.overview.attentionCount=3;updated.overview.drilldowns.attention=['c1','c2','c3'];updated.overview.avgScore=90;
+  ui.setReport(updated);await ui.poll();assert.equal(ui.root.querySelector('.da-ins-overview'),overview);
+  assert.equal(ui.root.all().find(x=>x.dataset.overviewCount==='attention').textContent,'2');assert.equal(ui.document.activeElement,reason);assert.equal(ui.calls.scrolls.length,0);
+  updated.topics.job={status:'done',phase:'finished'};ui.setReport(updated);await ui.poll();
+  const finished=ui.root.querySelector('.da-ins-overview');assert.notEqual(finished,overview);
+  assert.equal(ui.root.all().find(x=>x.dataset.overviewCount==='attention').textContent,'3');assert.equal(ui.document.activeElement.dataset.overviewSource,'gross');
+  assert.equal(ui.window.scrollY,280);assert.equal(ui.calls.scrolls.length,1);
+  ui.events['da:appeals-changed']();await tick();assert.equal(ui.root.querySelector('.da-ins-overview'),finished);assert.equal(ui.calls.scrolls.length,1);ui.cleanup();
 });

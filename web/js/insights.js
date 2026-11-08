@@ -210,7 +210,21 @@
     topicNoRare: ["Редких тем в этой выборке нет", "Бұл таңдауда сирек тақырыптар жоқ", "No rare topics in this selection"],
     topicOpen: ["Открыть обращения по теме «{topic}»", "«{topic}» тақырыбы бойынша өтініштерді ашу", "Open conversations about {topic}"],
     topicOutcomeLink: ["{topic}: {outcome}, обращений: {count}", "{topic}: {outcome}, өтініштер: {count}", "{topic}: {outcome}, conversations: {count}"],
-    topicResolvedRate: ["Решено {resolved} из {known} обращений с известным результатом ({rate})", "Нәтижесі белгілі {known} өтініштің {resolved} шешілген ({rate})", "Resolved {resolved} of {known} conversations with a known outcome ({rate})"]
+    topicResolvedRate: ["Решено {resolved} из {known} обращений с известным результатом ({rate})", "Нәтижесі белгілі {known} өтініштің {resolved} шешілген ({rate})", "Resolved {resolved} of {known} conversations with a known outcome ({rate})"],
+    overviewReviewTitle: ["Обращения для разбора", "Талдауға арналған өтініштер", "Conversations to review"],
+    overviewCriteriaTitle: ["Частые замечания по критериям", "Критерийлер бойынша жиі ескертулер", "Frequent criterion shortfalls"],
+    overviewCriterionCount: ["{count} из {total}", "{total} ішінен {count}", "{count} of {total}"],
+    overviewCriterionDetail: ["Не выполнено полностью в {count} из {total} обращений, где критерий применим", "Критерий қолданылатын {total} өтініштің {count} толық орындалмаған", "Not fully met in {count} of {total} conversations where this criterion applies"],
+    overviewAllCriteria: ["Все критерии", "Барлық критерийлер", "All criteria"],
+    overviewCriteriaEmpty: ["Нет данных для сравнения критериев", "Критерийлерді салыстыруға деректер жоқ", "No data to compare criteria yet"],
+    overviewCriteriaClear: ["По оценённым критериям замечаний нет", "Бағаланған критерийлер бойынша ескертулер жоқ", "No shortfalls in the assessed criteria"],
+    overviewAllEvaluated: ["Все обращения оценены", "Барлық өтініштер бағаланған", "All conversations evaluated"],
+    overviewUnevaluated: ["Без оценки: {count}", "Бағаланбаған: {count}", "Not evaluated: {count}"],
+    overviewOpenAppeals: ["С открытыми апелляциями", "Ашық апелляциялары бар", "With open appeals"],
+    overviewAppealRecords: ["Апелляций на рассмотрении: {count}", "Қаралудағы апелляциялар: {count}", "Pending appeals: {count}"],
+    overviewReasonLink: ["{reason}: {count} обращений", "{reason}: {count} өтініш", "{reason}: {count} conversations"],
+    overviewChoosePeriod: ["Выбрать период", "Кезеңді таңдау", "Choose a period"],
+    overviewChangePeriod: ["Изменить период", "Кезеңді өзгерту", "Change period"]
   }).map(([key, values]) => ["insights." + key, { ru: values[0], kk: values[1], en: values[2] }])));
   const TABS = ["overview", "quality", "topics", "operators"], LANGS = ["RU", "KZ", "EN"];
   const recordChannelKey = (channel) => channel === "voice call" ? "callRecord" : "chatRecord";
@@ -312,28 +326,52 @@
         h("span", {}, part.label), part.n ? selectionLink(report,data[part.tone + "Ids"],part.n) : h("b",{},0))))] : h("p", { class: "da-muted da-small" }, m("noAppeals")),
       data?.total || report.overview.openAppealCount ? h("a", { class: "da-btn is-text is-sm da-ins-more", href: "#/appeals" }, m("openAppeals")) : null);
   }
-  function periodView(report) {
+  function periodView(report,selectPeriod) {
     const period = report.periodComparison;
-    const rowView = (key,row) => row ? h("div", { class: "da-ins-period-row" }, h("div", {}, h("b", {}, m(key)), h("span", {}, `${row.dateFrom} – ${row.dateTo}`)),
-      h("strong", { title: m("scoreN", { count: row.scoredCount }) }, score(row.avgScore)), selectionLink(report,row.conversationIds,m("evaluatedCount", { count: row.evaluated, total: row.count }),null,{ dateFrom: row.dateFrom, dateTo: row.dateTo })) : null;
-    return h("section", { class: "da-ins-extra-section" }, h("h2", {}, m("periodTitle")), period.available
-      ? h("p", { class: "da-ins-period-delta" }, m("scoreChange", () => ({ value: `${period.deltaScore > 0 ? "+" : ""}${DA.fmt.score(period.deltaScore)}` }))) : note(m(period.reason || "insufficient_data")),
-      period.previous ? [rowView("currentPeriod",period.current),rowView("previousPeriod",period.previous)] : null);
+    const rowView = (key,row) => row ? h("div", { class: "da-ins-overview-period-value" }, h("div", {}, h("b", {}, m(key)),
+      h("span", {}, `${displayDate(row.dateFrom)} – ${displayDate(row.dateTo)}`)),
+      h("strong", { title: m("scoreN", { count: row.scoredCount }) }, score(row.avgScore)),
+      selectionLink(report,row.conversationIds,m("evaluatedCount", { count: row.evaluated, total: row.count }),null,{ dateFrom: row.dateFrom, dateTo: row.dateTo })) : null;
+    return h("section", { class: "da-ins-overview-period"+(period.previous?" has-comparison":"") },
+      h("div",{class:"da-ins-overview-period-head"},h("h2", {}, m("periodTitle")),
+        period.available?h("p",{class:"da-ins-overview-delta"},m("scoreChange",()=>({value:`${period.deltaScore>0?"+":""}${DA.fmt.score(period.deltaScore)}`}))):
+          period.reason!=="period_not_selected"?h("p",{},m(period.reason||"insufficient_data")):null,
+        h("button",{class:"da-btn is-text",type:"button","data-overview-action":"period",onclick:selectPeriod},m(period.reason==="period_not_selected"?"overviewChoosePeriod":"overviewChangePeriod"))),
+      period.previous?h("div",{class:"da-ins-overview-period-values"},rowView("currentPeriod",period.current),rowView("previousPeriod",period.previous)):null);
   }
-  function overview(report) {
+  function overview(report,view) {
     const data = report.overview, coverage = report.coverage;
-    const metric = (label,value,help,extra) => h("section", { class: "da-ins-stat" }, h("h3", {}, m(label)), h("div", { class: "da-ins-stat-value" }, value), extra || null, help ? h("p", {}, help) : null);
-    const reasons = [["lowScore",m("lowScore",{score:data.lowScoreThreshold}),data.lowScoreCount],["gross",m("grossErrors"),data.grossCount],
-      ["review",m("manualReview"),data.reviewCount],["unresolved",m("unresolved"),data.unresolvedCount],["failed",m("failedEvaluations"),coverage.failed]];
-    return h("div", {}, h("section", { class: "da-ins-dashboard" }, h("h2", {}, m("overviewTitle")), h("div", { class: "da-ins-stats" },
-      metric("evaluatedLabel",`${coverage.evaluated} / ${report.scope.total}`,null,
-        h("div", { class: "da-ins-progress", role: "progressbar", "aria-label":m("evaluatedLabel"), "aria-valuenow":coverage.evaluated,"aria-valuemin":0,"aria-valuemax":report.scope.total || 1 },h("i",{style:{width:`${report.scope.total ? coverage.evaluated / report.scope.total * 100 : 0}%`}}))),
-      metric("averageLabel",score(data.avgScore),m("scoreN",{count:data.scoredCount})),
-      metric("callDuration",duration(data.callDuration.averageSeconds),data.callDuration.count?m("callsCount",{count:data.callDuration.count}):null),
-      metric("pendingAppeals",selectionLink(report,data.drilldowns.openAppeals,data.openAppealCount),null))),
-      h("div",{class:"da-ins-extras"},h("section",{class:"da-ins-extra-section"},h("h2",{},m("reviewReasons")),
-        reasons.some((part)=>part[2]) ? h("div",{class:"da-ins-reasons"},reasons.filter((part)=>part[2]).map(([key,label,count])=>selectionLink(report,data.drilldowns[key],[h("span",{},label),h("b",{},count)],"da-ins-reason"))) : note(m("noReview")),
-        data.attentionCount ? selectionLink(report,data.drilldowns.attention,m("reviewSelection")) : null),periodView(report)));
+    const reasons = [["gross","grossErrors",data.grossCount],["review","manualReview",data.reviewCount],["unresolved","unresolved",data.unresolvedCount],
+      ["lowScore","lowScore",data.lowScoreCount],["openAppeals","overviewOpenAppeals",data.openAppealConversations],["failed","failedEvaluations",coverage.failed]].filter((part)=>part[2]>0);
+    const criteria=report.criteria.filter(row=>row.type!=="flag"&&row.belowTargetCount>0).slice().sort((a,b)=>b.belowTargetCount-a.belowTargetCount).slice(0,3);
+    const hasAssessedCriteria=report.criteria.some(row=>row.type!=="flag"&&row.applicable>0);
+    const reviewRow=([key,label,count])=>h("a",{class:"da-ins-overview-reason"+(key==="gross"?" is-gross":""),href:DA.registryFilters.href({...report.scope.filters,conversationIds:data.drilldowns[key]}),
+      "data-overview-source":key,"aria-label":m("overviewReasonLink",()=>({reason:t(label,{score:data.lowScoreThreshold}),count}))},
+      h("span",{},m(label,{score:data.lowScoreThreshold}),key==="openAppeals"&&data.openAppealCount!==count?h("small",{},m("overviewAppealRecords",{count:data.openAppealCount})):null),
+      h("b",{},count),DA.icon("chevron",15));
+    return h("div",{class:"da-ins-overview"},
+      h("section",{class:"da-ins-overview-picture","aria-label":m("overviewTitle")},
+        h("div",{class:"da-ins-overview-score"},h("span",{class:"da-ins-overview-label"},m("averageLabel")),
+          h("div",{},h("b",{class:data.avgScore==null?"is-empty":""},score(data.avgScore)),data.avgScore!=null?h("small",{},m("of100")):null),h("p",{},m("scoreN",{count:data.scoredCount}))),
+        h("div",{class:"da-ins-overview-coverage"},h("span",{class:"da-ins-overview-label"},m("evaluatedLabel")),
+          selectionLink(report,data.drilldowns.evaluated,`${coverage.evaluated} / ${report.scope.total}`,"da-ins-overview-evaluated"),
+          h("div",{class:"da-ins-progress",role:"progressbar","aria-label":m("evaluatedLabel"),"aria-valuenow":coverage.evaluated,"aria-valuemin":0,"aria-valuemax":report.scope.total||1},h("i",{style:{width:`${report.scope.total?coverage.evaluated/report.scope.total*100:0}%`}})),
+          h("div",{class:"da-ins-overview-coverage-notes"},coverage.unevaluated?selectionLink(report,data.drilldowns.unevaluated,m("overviewUnevaluated",{count:coverage.unevaluated})):h("span",{},m("overviewAllEvaluated")),
+            coverage.pending?selectionLink(report,data.drilldowns.pending,m("coverageRunning",{count:coverage.pending})):null)),
+        h("div",{class:"da-ins-overview-duration"},h("span",{class:"da-ins-overview-label"},m("callDuration")),h("b",{},duration(data.callDuration.averageSeconds)),
+          data.callDuration.count?h("p",{},m("callsCount",{count:data.callDuration.count})):null)),
+      h("div",{class:"da-ins-overview-work"},
+        h("section",{class:"da-ins-overview-review"},h("div",{class:"da-ins-overview-section-head"},h("h2",{},m("overviewReviewTitle")),h("span",{class:"da-count","data-overview-count":"attention"},data.attentionCount)),
+          reasons.length?h("div",{class:"da-ins-overview-reasons"},reasons.map(reviewRow)):h("p",{class:"da-ins-overview-empty"},m("noReview")),
+          data.attentionCount?selectionLink(report,data.drilldowns.attention,m("reviewSelection"),"da-btn is-primary da-ins-overview-open"):null),
+        h("section",{class:"da-ins-overview-criteria"},h("h2",{},m("overviewCriteriaTitle")),
+          criteria.length?h("div",{class:"da-ins-overview-criterion-list"},criteria.map(row=>h("a",{class:"da-ins-overview-criterion",href:DA.registryFilters.href({...report.scope.filters,conversationIds:row.belowTargetIds}),
+            "data-overview-criterion":row.id,title:m("overviewCriterionDetail",{count:row.belowTargetCount,total:row.applicable})},h("span",{},row.title),
+            h("b",{},m("overviewCriterionCount",{count:row.belowTargetCount,total:row.applicable})),
+            h("span",{class:"da-ins-overview-criterion-bar","aria-hidden":"true"},h("i",{style:{width:`${row.applicable?Math.min(100,row.belowTargetCount/row.applicable*100):0}%`}}))))) :
+            h("p",{class:"da-ins-overview-empty"},m(hasAssessedCriteria?"overviewCriteriaClear":"overviewCriteriaEmpty")),
+          h("a",{class:"da-btn is-text da-ins-overview-all-criteria",href:view.qualityHref},m("overviewAllCriteria")))),
+      periodView(report,view.selectPeriod));
   }
   const TOPIC_OUTCOMES=["resolved","unresolved","unknown"],TOPIC_SORTS=["unresolved","count","name"];
   const topicOutcomeKey=key=>"topic"+key[0].toUpperCase()+key.slice(1);
@@ -653,14 +691,14 @@
       const matrixScroll=body.querySelector('.da-ins-matrix-wrap')?.scrollLeft;
       ask.disabled=!report||loading||!!loadError||!!(tab==="operators"&&operatorId&&!report?.operators.some(item=>item.id===operatorId));
       const active=body.contains(document.activeElement)?document.activeElement:null;
-      const focusKey=active?["data-page-action","data-operator","data-conversation","data-topic-action","data-topic-target","href"].map(key=>[key,active.getAttribute(key)]).find(([,value])=>value!=null):null;
+      const focusKey=active?["data-page-action","data-operator","data-conversation","data-topic-action","data-topic-target","data-overview-action","data-overview-source","data-overview-criterion","href"].map(key=>[key,active.getAttribute(key)]).find(([,value])=>value!=null):null;
       const pageFocus=document.activeElement?.dataset.pageAction;closeTableDropdowns();
       const disclosures=new Map([...body.querySelectorAll("details[data-disclosure]")].map(node=>[node.dataset.disclosure,node.open]));
       const focused=body.contains(document.activeElement)?document.activeElement.closest("details[data-disclosure]")?.dataset.disclosure:null;
       if(loading){body.replaceChildren(h("p",{class:"da-ins-loading",role:"status"},m("loading")));return;}
       if(loadError){body.replaceChildren(h("div",{class:"da-empty",role:"alert"},h("h2",{},m("loadFailed")),h("p",{},DA.apiErrorMessage(loadError)),h("button",{class:"da-btn",type:"button",onclick:()=>load()},m("retry"))));return;}
       if(!report)return;
-      body.replaceChildren(...(tab==="quality"?[coverage()]:hasAdditionalFilters()?[h("div",{class:"da-ins-cover"},selectionLink(report,report.scope.conversationIds,m("extraFilters")))]:[]),report.scope.total||tab==="operators"&&operatorId?h("div",{class:"da-ins-tab","data-tab":tab},tab==="quality"?quality(report):tab==="topics"?topicView():tab==="operators"?operatorView():overview(report)):
+      body.replaceChildren(...(tab==="quality"?[coverage()]:hasAdditionalFilters()?[h("div",{class:"da-ins-cover"},selectionLink(report,report.scope.conversationIds,m("extraFilters")))]:[]),report.scope.total||tab==="operators"&&operatorId?h("div",{class:"da-ins-tab","data-tab":tab},tab==="quality"?quality(report):tab==="topics"?topicView():tab==="operators"?operatorView():overview(report,{qualityHref:viewHref("quality"),selectPeriod:()=>{range.open();dates.from.focus();}})):
         h("div",{class:"da-empty"},h("h2",{},m("noMatches")),h("p",{},m("noMatchesHelp"))));
       body.querySelectorAll("details[data-disclosure]").forEach(node=>{if(disclosures.has(node.dataset.disclosure))node.open=disclosures.get(node.dataset.disclosure);if(focused===node.dataset.disclosure)node.querySelector("summary").focus({preventScroll:true});});
       if(pageFocus)(body.querySelector(`[data-page-action="${pageFocus}"]:not([disabled])`)||body.querySelector('[aria-current="page"]'))?.focus({preventScroll:true});
