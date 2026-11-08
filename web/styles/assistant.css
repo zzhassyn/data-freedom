@@ -75,6 +75,7 @@ body:has(.da-ins-ask:not([disabled]):not([hidden])) .da-assistant-launcher { dis
 .da-assistant-sources-more { margin-top: 5px; padding: 3px 0; border: 0; background: transparent; color: #215d3d; font: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .da-assistant-result-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
 .da-assistant-result-actions .da-assistant-reference { background: #edf6f0; border-color: #c2d9cb; color: #174f35; font-size: 13px; font-weight: 500; padding: 8px 11px; }
+.da-assistant-action-targets { display: block; margin-top: 3px; color: var(--da-text-2); font-size: 11px; line-height: 1.5; font-weight: 400; }
 .da-assistant-citations { margin-top: 11px; }
 .da-assistant-citations summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: fit-content; max-width: 100%; padding: 6px 0; color: #215d3d; font-size: 12px; line-height: 1.5; cursor: pointer; list-style: none; }
 .da-assistant-citations summary::-webkit-details-marker { display: none; }

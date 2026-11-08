@@ -761,3 +761,22 @@ test('history offers a labelled new-chat action and compact composer keeps keybo
   chooseChat(e, 'Сохранённый вопрос'); assert.match(e.get('.da-assistant-messages').textContent, /Сохранённый ответ/);
   e.ui.dispose();
 });
+
+test('identical action labels show grounded cohort previews without changing any destination', async () => {
+  const e = environment(null, state => { state.numbers = { a: 11, b: 12, c: 13, d: 14, e: 15, f: 16 }; });
+  e.ui.open(); e.submit('Покажи нерешённые обращения');
+  const action = (id, ids) => ({ id, type: 'show_registry', label: 'Открыть нерешённые обращения', filters: { conversationIds: ids } });
+  const targets = [action('first', ['a', 'b', 'c', 'd']), action('second', ['a', 'b', 'c', 'e']), action('third', ['f']), action('none', [])];
+  e.requests[0].resolve({ ...validReply(), actions: [...targets,
+    { id: 'unique', type: 'show_registry', label: 'Все оценки', filters: { scoreTo: 80 } }] }); await tick();
+  const buttons = e.get('.da-assistant-result-actions').querySelectorAll('button');
+  assert.equal(buttons.length, 5);
+  const details = buttons.map(button => button.querySelector('.da-assistant-action-targets')?.textContent);
+  assert.deepEqual(details, ['Выборка 1 · №11, №12, №13 · ещё 1', 'Выборка 2 · №11, №12, №13 · ещё 1', '№16', 'Обращений: 0', undefined]);
+  assert.ok(buttons.slice(0, 4).every(button => button.textContent.startsWith('Открыть нерешённые обращения')));
+  for (let index = 0; index < targets.length; index++) {
+    buttons[index].onclick();
+    assert.equal(e.context.location.hash, e.DA.registryFilters.href(targets[index].filters));
+  }
+  e.ui.dispose();
+});

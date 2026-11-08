@@ -37,6 +37,10 @@
     sources: ["Источники", "Дереккөздер", "Sources"],
     moreSources: ["Ещё источники ({count})", "Тағы дереккөздер ({count})", "More sources ({count})"],
     fewerSources: ["Свернуть список", "Тізімді жию", "Show fewer"],
+    moreTargets: ["ещё {count}", "тағы {count}", "{count} more"],
+    targetCount: ["Обращений: {count}", "Өтініштер: {count}", "Conversations: {count}"],
+    targetSelection: ["Выборка {number}", "Іріктеу {number}", "Selection {number}"],
+    targetVariant: ["Вариант {number}", "Нұсқа {number}", "Option {number}"],
     citations: ["Цитаты из диалогов ({count})", "Диалогтардан дәйексөздер ({count})", "Conversation quotes ({count})"],
     quote: ["№{number}, реплика {turn}", "№{number}, {turn}-реплика", "#{number}, turn {turn}"],
     quoteHere: ["Реплика {turn}", "{turn}-реплика", "Turn {turn}"],
@@ -571,7 +575,7 @@
         location.hash = target;
       }
     }
-    function referenceNode(ref, citation) {
+    function referenceNode(ref, citation, targetDetail) {
       if (!routeFor(ref, citation)) return null;
       if (citation) {
         const number = ref.number || DA.state?.numbers?.[ref.conversationId];
@@ -581,7 +585,32 @@
       }
       return h("button", { type: "button", class: "da-assistant-reference", onclick: () => navigate(ref, false) },
         DA.icon(ref.conversationId ? "message" : ref.type.includes("comparison") || ref.type === "compare_versions" ? "scale" :
-          ref.type === "show_registry" ? "list" : "chart", 15), h("span", {}, ref.label));
+          ref.type === "show_registry" ? "list" : "chart", 15),
+        h("span", {}, h("span", {}, ref.label), targetDetail ? h("span", { class: "da-assistant-action-targets" }, targetDetail) : null));
+    }
+    function actionDetails(actions) {
+      const groups = new Map(), details = new Map();
+      actions.forEach((ref) => { const label = ref.label.trim(); if (!groups.has(label)) groups.set(label, []); groups.get(label).push(ref); });
+      for (const group of groups.values()) {
+        if (new Set(group.map((ref) => routeFor(ref, false))).size < 2) continue;
+        const previewFor = (ref) => {
+          const ids = ref.type === "show_registry" ? ref.filters.conversationIds : ref.conversationId ? [ref.conversationId] : null;
+          if (!Array.isArray(ids)) return "";
+          if (!ids.length) return t("targetCount", { count: 0 });
+          const numbers = ids.slice(0, 3).map((key) => DA.state.numbers?.[key] != null ? "№" + DA.state.numbers[key] : key);
+          return numbers.join(", ") + (ids.length > 3 ? " · " + t("moreTargets", { count: ids.length - 3 }) : "");
+        };
+        const previews = group.map(previewFor);
+        group.forEach((ref, index) => {
+          const preview = previews[index];
+          const repeated = !preview || previews.filter((value) => value === preview).length > 1;
+          details.set(ref, DA.msg(() => {
+            const ordinal = repeated ? t(ref.type === "show_registry" ? "targetSelection" : "targetVariant", { number: index + 1 }) : "";
+            return [ordinal, previewFor(ref)].filter(Boolean).join(" · ");
+          }));
+        });
+      }
+      return details;
     }
     function messageNode(item) {
       if (item.role === "user") return h("article", { class: "da-assistant-message is-user" },
@@ -605,9 +634,9 @@
         if (!route) return null;
         const key = JSON.stringify([route, ref.transcriptHash || null]);
         if (destinations.has(key)) return null;
-        destinations.add(key); return referenceNode(ref, false);
+        destinations.add(key); return ref;
       };
-      const sources = item.reply.sources.map(uniqueReference).filter(Boolean);
+      const sources = item.reply.sources.map(uniqueReference).filter(Boolean).map((ref) => referenceNode(ref, false));
       if (sources.length) {
         const group = h("div", { class: "da-assistant-sources" }, h("span", { class: "da-assistant-source-label" }, m("sources")),
           h("div", { class: "da-assistant-source-links" }, sources.slice(0, 6)));
@@ -624,7 +653,8 @@
       if (item.reply.citations.length) reply.append(h("details", { class: "da-assistant-citations" },
         h("summary", {}, m("citations", { count: item.reply.citations.length }), DA.icon("chevron", 14)),
         h("div", {}, item.reply.citations.map((citation) => referenceNode(citation, true)).filter(Boolean))));
-      const actions = item.reply.actions.map(uniqueReference).filter(Boolean);
+      const actionRefs = item.reply.actions.map(uniqueReference).filter(Boolean), details = actionDetails(actionRefs);
+      const actions = actionRefs.map((ref) => referenceNode(ref, false, details.get(ref)));
       if (actions.length) reply.append(h("div", { class: "da-assistant-result-actions" }, actions));
       return reply;
     }
