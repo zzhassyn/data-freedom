@@ -161,14 +161,17 @@ def validate_organizer_manifest(manifest):
     group = _text(manifest.get("groupId"), "Набор")
     if not isinstance(manifest.get("sourceHash"), str) or not re.fullmatch(r"[a-f0-9]{64}", manifest["sourceHash"]):
         _export_error("Нет проверенного идентификатора версии набора")
-    expected_count = 65 if group == "DEV" else 10
-    if len(rows) != expected_count:
-        _export_error(f"В наборе {group} должно быть {expected_count} диалогов, найдено {len(rows)}")
-    if group != "DEV" and any(row.get("channel") != "agent chat" for row in rows):
-        _export_error("Контрольный набор должен содержать только чаты")
-    if group == "DEV" and (sum(row.get("channel") == "agent chat" for row in rows) != 60
-                           or sum(row.get("channel") == "voice call" for row in rows) != 5):
-        _export_error("В DEV должны быть 60 чатов и 5 звонков")
+    if group == "DEV":
+        if len(rows) != 65:
+            _export_error(f"В наборе {group} должно быть 65 диалогов, найдено {len(rows)}")
+        if (sum(row.get("channel") == "agent chat" for row in rows) != 60
+                or sum(row.get("channel") == "voice call" for row in rows) != 5):
+            _export_error("В DEV должны быть 60 чатов и 5 звонков")
+    elif group == "CONTROL":
+        if len(rows) != 10:
+            _export_error(f"В наборе {group} должно быть 10 диалогов, найдено {len(rows)}")
+        if any(row.get("channel") != "agent chat" for row in rows):
+            _export_error("Контрольный набор должен содержать только чаты")
     return {row["id"]: row for row in rows}
 
 

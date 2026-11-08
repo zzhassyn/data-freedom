@@ -256,7 +256,7 @@
       if (loading) return DA.t("registry.exportLoading");
       if (!error) return "";
       if (["export_roster_missing", "export_roster_invalid", "export_source_changed"].includes(error.code)) return DA.t("registry.exportSync");
-      if (error.code === "invalid_results_export") return DA.t("registry.exportInvalid");
+      if (error.code === "invalid_results_export") return error.message || DA.t("registry.exportInvalid");
       if (error.code === "export_no_source") return DA.t("registry.exportNoSource");
       return DA.apiErrorMessage(error);
     });
