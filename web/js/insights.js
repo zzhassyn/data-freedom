@@ -196,7 +196,21 @@
     topicJobElsewhere: ["Сейчас анализируются другие обращения", "Қазір басқа өтініштер талданып жатыр", "Other conversations are being analyzed"],
     topicProgressCount: ["{count} из {total}", "{total} ішінен {count}", "{count} of {total}"],
     topicAnalysisFinished: ["Анализ тем завершён", "Тақырыптарды талдау аяқталды", "Topic analysis finished"],
-    topicAnalysisFailed: ["Анализ тем завершён с ошибками", "Тақырыптарды талдау қателермен аяқталды", "Topic analysis finished with errors"]
+    topicAnalysisFailed: ["Анализ тем завершён с ошибками", "Тақырыптарды талдау қателермен аяқталды", "Topic analysis finished with errors"],
+    topicList: ["Темы обращений", "Өтініш тақырыптары", "Conversation topics"],
+    topicName: ["Тема обращения", "Өтініш тақырыбы", "Topic"],
+    topicResolved: ["Решено", "Шешілген", "Resolved"],
+    topicUnresolved: ["Без решения", "Шешілмеген", "Unresolved"],
+    topicUnknown: ["Результат неизвестен", "Нәтижесі белгісіз", "Outcome unknown"],
+    topicOrder: ["Порядок тем", "Тақырыптар реті", "Topic order"],
+    topicSortReview: ["Сначала без решения", "Алдымен шешілмегендері", "Most unresolved first"],
+    topicSortVolume: ["Сначала частые", "Алдымен жиі кездесетіндері", "Most frequent first"],
+    topicSortName: ["По названию", "Атауы бойынша", "By name"],
+    topicUnassigned: ["Без определённой темы: {count}", "Тақырыбы анықталмаған: {count}", "Without an identified topic: {count}"],
+    topicNoRare: ["Редких тем в этой выборке нет", "Бұл таңдауда сирек тақырыптар жоқ", "No rare topics in this selection"],
+    topicOpen: ["Открыть обращения по теме «{topic}»", "«{topic}» тақырыбы бойынша өтініштерді ашу", "Open conversations about {topic}"],
+    topicOutcomeLink: ["{topic}: {outcome}, обращений: {count}", "{topic}: {outcome}, өтініштер: {count}", "{topic}: {outcome}, conversations: {count}"],
+    topicResolvedRate: ["Решено {resolved} из {known} обращений с известным результатом ({rate})", "Нәтижесі белгілі {known} өтініштің {resolved} шешілген ({rate})", "Resolved {resolved} of {known} conversations with a known outcome ({rate})"]
   }).map(([key, values]) => ["insights." + key, { ru: values[0], kk: values[1], en: values[2] }])));
   const TABS = ["overview", "quality", "topics", "operators"], LANGS = ["RU", "KZ", "EN"];
   const recordChannelKey = (channel) => channel === "voice call" ? "callRecord" : "chatRecord";
@@ -321,32 +335,53 @@
         reasons.some((part)=>part[2]) ? h("div",{class:"da-ins-reasons"},reasons.filter((part)=>part[2]).map(([key,label,count])=>selectionLink(report,data.drilldowns[key],[h("span",{},label),h("b",{},count)],"da-ins-reason"))) : note(m("noReview")),
         data.attentionCount ? selectionLink(report,data.drilldowns.attention,m("reviewSelection")) : null),periodView(report)));
   }
-  function topicDetail(report,row) {
-    return h("div",{class:"da-ins-chart-detail"},h("div",{class:"da-ins-outcomes"},["resolved","unresolved","unknown"].map((key)=>row[key]
-      ? selectionLink(report,row[key+"Ids"],[m(key),": ",h("b",{},row[key])],"da-ins-outcome is-"+key) : h("span",{class:"da-muted"},m(key),": 0"))),
-      h("p",{},m("averageLabel"),": ",score(row.avgScore)," ",h("span",{class:"da-muted"},m("scoreN",{count:row.scoredCount}))),sourceList(report,row.conversationIds));
+  const TOPIC_OUTCOMES=["resolved","unresolved","unknown"],TOPIC_SORTS=["unresolved","count","name"];
+  const topicOutcomeKey=key=>"topic"+key[0].toUpperCase()+key.slice(1);
+  function topicProportions(row,className) {
+    return h("span",{class:"da-ins-topic-proportions"+(className?" "+className:""),"aria-hidden":"true"},TOPIC_OUTCOMES.filter(key=>row[key]>0).map(key=>
+      h("i",{class:"is-"+key,style:{width:`${row.count?row[key]/row.count*100:0}%`}})));
   }
-  function topicChart(report,rows,resolved) {
-    const step=Math.max(1,Math.ceil(Math.max(1,...rows.map(row=>row.count))/4)),max=step*4;
-    return h("section",{class:"da-ins-chart"},h("h2",{},m(resolved?"resolvedShare":"popularity")),h("div",{class:"da-ins-chart-plot"},rows.map(row=>{
-      const value=resolved?row.resolutionRate:row.count;
-      return h("details",{class:"da-ins-chart-row","data-disclosure":`topic-${row.id}-${resolved?"resolved":"count"}`},h("summary",{},
-        h("span",{class:"da-ins-chart-label"},row.topic),h("span",{class:"da-ins-chart-track"},value!=null?h("span",{class:"da-ins-chart-bar",style:{width:`${value/(resolved?1:max)*100}%`}}):null,
-          h("span",{class:"da-ins-chart-value"},value==null?m("noData"):DA.msg(()=>resolved?pct(value):String(value)))),
-        h("p",{class:"da-ins-chart-row-note"},resolved ? [m("knownResults",{resolved:row.resolved,known:row.known}),". ",m("unknownShort",{count:row.unknown})] : m("topicOutcomeShort",row))),topicDetail(report,row));
-    }),h("div",{class:"da-ins-chart-axis","aria-hidden":"true"},Array.from({length:5},(_,i)=>h("span",{},resolved?`${i*25}%`:String(i*step))))));
+  function topicSummary(report) {
+    const source=new Map(report.conversations.map(row=>[row.conversationId,row])),cohorts={resolved:[],unresolved:[],unknown:[]};
+    for(const id of report.scope.conversationIds) {
+      const outcome=source.get(id)?.resolutionStatus;
+      cohorts[outcome==="resolved"||outcome==="unresolved"?outcome:"unknown"].push(id);
+    }
+    const totals={count:report.scope.total,...Object.fromEntries(TOPIC_OUTCOMES.map(key=>[key,cohorts[key].length]))};
+    const stat=(key,ids,label)=>{const link=selectionLink(report,ids,[h("span",{},label),h("b",{},ids.length)],"da-ins-topic-stat is-"+key);link.setAttribute("data-topic-target","summary-"+key);return link;};
+    return h("section",{class:"da-ins-topic-summary","aria-label":m("topicList")},h("div",{class:"da-ins-topic-totals"},
+      stat("total",report.scope.conversationIds,m("total")),TOPIC_OUTCOMES.map(key=>stat(key,cohorts[key],m(topicOutcomeKey(key))))),topicProportions(totals,"is-overall"));
   }
   const topicJobActive = data => ["running","queued"].includes(data?.topics.job?.status);
-  function topicsView(report,start,starting,error,liveReport) {
-    const topics=report.topics,frequent=topics.rows.filter(row=>!row.isRare),rare=topics.rows.filter(row=>row.isRare);
+  function topicsView(report,start,starting,error,liveReport,view) {
+    const topics=report.topics,rareCount=topics.rows.filter(row=>row.isRare).length;
     const current=liveReport||report,running=starting||topicJobActive(current),queued=running&&!starting&&current.topics.job?.phase==="queued";
+    const names=new Intl.Collator(DA.fmt.locale(),{numeric:true,sensitivity:"base"});
+    const rows=topics.rows.filter(row=>!view.rareOnly||row.isRare).slice().sort((a,b)=>
+      (view.sort==="name"?0:view.sort==="count"?b.count-a.count:b.unresolved-a.unresolved||b.count-a.count)||names.compare(a.topic,b.topic));
+    const assigned=new Set(topics.rows.flatMap(row=>row.conversationIds)),unassigned=report.scope.conversationIds.filter(id=>!assigned.has(id));
+    const order=DA.dropdown(TOPIC_SORTS.map((value,i)=>({value,label:m(["topicSortReview","topicSortVolume","topicSortName"][i])})),view.sort,view.changeSort,m("topicOrder"));
+    order.dataset.topicSort="true";order.querySelector("button")?.setAttribute("data-topic-action","sort");view.register(order);
+    const outcome=(row,key)=>{
+      const label=m("topicOutcomeLink",()=>({topic:row.topic,outcome:t(topicOutcomeKey(key)),count:row[key]}));
+      if(!row[key])return h("span",{class:"da-ins-topic-zero"},0);
+      return h("a",{class:"da-ins-topic-outcome is-"+key,"data-topic-target":row.id+"-"+key,href:DA.registryFilters.href({...report.scope.filters,conversationIds:row[key+"Ids"]}),"aria-label":label,
+        title:key==="resolved"?m("topicResolvedRate",()=>({resolved:row.resolved,known:row.known,rate:pct(row.resolutionRate)})):null},row[key]);
+    };
     return h("div",{class:"da-ins-topic-panel"},h("div",{class:"da-ins-topic-controls"},h("span",{"data-topic-coverage":"true",hidden:running},m("topicCoverage",{count:topics.analyzed,total:report.scope.total})),
-      h("button",{class:"da-btn is-primary",type:"button","data-topic-action":"start",disabled:running||!topics.pending,onclick:start},m(queued?"topicsQueued":running?"analyzingTopics":"analyzeTopics",{count:topics.pending}))),
+      running||topics.pending?h("button",{class:"da-btn is-primary",type:"button","data-topic-action":"start",disabled:running,onclick:start},m(queued?"topicsQueued":running?"analyzingTopics":"analyzeTopics",{count:topics.pending})):null),
       error?h("p",{class:"da-review",role:"alert"},DA.apiErrorMessage(error)):null,topics.job?.error?h("p",{class:"da-review",role:"alert"},topics.job.error):null,
-      topics.unidentified?note(m("unclearTopics",{count:topics.unidentified})):null,
-      frequent.length?h("div",{class:"da-ins-topic-dashboard"},topicChart(report,frequent,false),topicChart(report,frequent,true)):!rare.length?h("div",{class:"da-empty"},h("h2",{},m("noTopics"))):null,
-      rare.length?h("details",{class:"da-ins-rare","data-disclosure":"rare-topics",open:!frequent.length},h("summary",{},m("rareTopics",{count:rare.length})),
-        h("div",{class:"da-ins-topic-dashboard"},topicChart(report,rare,false),topicChart(report,rare,true))):null);
+      topicSummary(report),
+      h("div",{class:"da-ins-topic-list-head"},h("h2",{},m("topicList"),h("span",{class:"da-count"},rows.length)),
+        h("div",{class:"da-ins-topic-list-tools"},rareCount||view.rareOnly?h("button",{class:"da-btn is-text da-ins-topic-rare",type:"button","data-topic-action":"rare","aria-pressed":String(view.rareOnly),onclick:view.toggleRare},m("rareTopics",{count:rareCount})):null,order)),
+      rows.length?pagedTable([m("topicName"),m("conversationColumn"),m("topicResolved"),m("topicUnresolved"),m("topicUnknown"),m("averageLabel")],rows,
+        {key:"topics",page:view.page,size:10,sizes:[10]},row=>h("tr",{"data-topic":row.id},
+          h("td",{},h("a",{class:"da-ins-topic-name","data-topic-target":row.id+"-name",href:DA.registryFilters.href({...report.scope.filters,conversationIds:row.conversationIds}),"aria-label":m("topicOpen",{topic:row.topic})},row.topic)),
+          h("td",{},h("a",{class:"da-ins-topic-count","data-topic-target":row.id+"-count",href:DA.registryFilters.href({...report.scope.filters,conversationIds:row.conversationIds}),"aria-label":m("topicOpen",{topic:row.topic})},row.count),topicProportions(row)),
+          TOPIC_OUTCOMES.map(key=>h("td",{},outcome(row,key))),
+          h("td",{class:"da-ins-topic-score",title:m("scoreN",{count:row.scoredCount})},score(row.avgScore))),view.changePage,view.register,"da-ins-topics-table"):
+        h("div",{class:"da-empty da-ins-topics-empty"},h("h3",{},m(view.rareOnly?"topicNoRare":"noTopics"))),
+      unassigned.length?selectionLink(report,unassigned,m("topicUnassigned",{count:unassigned.length}),"da-ins-topic-unassigned"):null);
   }
   function operatorName(op) {
     return op.kind === "named" ? op.name : t(op.kind === "hidden" ? "nameHidden" : op.kind === "botOnly" ? "botOnly" : "missingIdentity");
@@ -367,14 +402,15 @@
     const buttons=[];let previous=0;
     for(const number of pageNumbers){if(previous&&number-previous>1)buttons.push(h("span",{class:"da-pager-gap","aria-hidden":"true"},"…"));
       buttons.push(h("button",{class:"da-pager-btn",type:"button","aria-current":number===page?"page":null,"aria-label":m("page",{number}),"data-page-action":state.key+"-"+number,onclick:()=>onChange(number,size)},number));previous=number;}
-    const sizes=DA.dropdown([10,25,50].map(value=>({value,label:String(value)})),size,value=>onChange(Math.floor(from/value)+1,value),t("pageSize"));
-    sizes.dataset.pagination=state.key;register(sizes);
+    const sizeOptions=state.sizes||[10,25,50];
+    const sizes=sizeOptions.length>1?DA.dropdown(sizeOptions.map(value=>({value,label:String(value)})),size,value=>onChange(Math.floor(from/value)+1,value),t("pageSize")):null;
+    if(sizes){sizes.dataset.pagination=state.key;register(sizes);}
     const step=(direction,label,icon,disabled)=>h("button",{class:"da-pager-btn is-step",type:"button",disabled,"data-page-action":state.key+"-"+direction,"aria-label":m(label),onclick:()=>onChange(page+(direction==="next"?1:-1),size)},
       direction==="previous"?DA.icon(icon,16):null,h("span",{},m(label)),direction==="next"?DA.icon(icon,16):null);
     return h("div",{class:"da-table-wrap da-ins-list-wrap"},h("table",{class:"da-table "+className},
       h("thead",{},h("tr",{},headings.map(label=>h("th",{scope:"col"},label)))),h("tbody",{},rows.slice(from,to).map(renderRow))),
       h("div",{class:"da-pager"},h("span",{class:"da-pager-range","aria-live":"polite"},pages>1?m("shownRange",{from:from+1,to,total:rows.length}):m("shownAll",{count:rows.length})),
-        h("div",{class:"da-pager-size"},h("span",{"aria-hidden":"true"},m("perPage")),sizes),
+        sizes?h("div",{class:"da-pager-size"},h("span",{"aria-hidden":"true"},m("perPage")),sizes):null,
         h("nav",{class:"da-pager-nav","aria-label":m("pages")},step("previous","previous","back",page===1),buttons,step("next","next","chevron",page===pages))));
   }
   function operators(report,view) {
@@ -426,6 +462,7 @@
     const pageSize=value=>[10,25,50].includes(Number(value))?Number(value):10;
     let operatorId=typeof params.query.operator==="string"?params.query.operator:null;
     let operatorPage=positive(params.query.opPage),operatorSize=pageSize(params.query.opSize),conversationPage=positive(params.query.conversationPage),conversationSize=pageSize(params.query.conversationSize);
+    let topicPage=positive(params.query.topicPage),topicSort=TOPIC_SORTS.includes(params.query.topicSort)?params.query.topicSort:"unresolved",topicRare=params.query.rareTopics==="1";
     let report=null,liveReport=null,alive=true,loading=false,loadError=null,topicError=null,starting=false,awaitingTopicStatus=false,revision=0,timer=null,progressShown=false;
     let activePopup=null,calendarMonth=new Date();
     const popups=[],dropdowns=[],tableDropdowns=[];
@@ -449,7 +486,7 @@
       wrap.addEventListener("focusout",event=>{if(event.relatedTarget&&!wrap.contains(event.relatedTarget))close(false);});
       return api;
     }
-    function commit(patch) { filters=F.normalize({...filters,...patch});operatorPage=1;conversationPage=1;syncUrl();updateControls();load(); }
+    function commit(patch) { filters=F.normalize({...filters,...patch});operatorPage=1;conversationPage=1;topicPage=1;syncUrl();updateControls();load(); }
     const range=popup(m("period"),"da-ins-date-popover");
     const dates={from:h("input",{class:"da-input",type:"text",inputmode:"numeric",placeholder:m("dateFormat"),"aria-label":m("from")}),
       to:h("input",{class:"da-input",type:"text",inputmode:"numeric",placeholder:m("dateFormat"),"aria-label":m("to")})};
@@ -507,7 +544,7 @@
     }
     const channel=filterDropdown("channels",[["voice call",()=>t("calls")],["agent chat",()=>t("chats")]],"allChannels");
     const language=filterDropdown("languages",LANGS.map(lang=>[lang,()=>DA.langLabel[lang]]),"allLanguages");
-    const resetButton=h("button",{class:"da-btn is-text",type:"button",onclick:()=>{activePopup?.close(false);filters=F.normalize({});operatorPage=1;conversationPage=1;syncUrl();updateControls();load();}},m("reset"));
+    const resetButton=h("button",{class:"da-btn is-text",type:"button",onclick:()=>{activePopup?.close(false);filters=F.normalize({});operatorPage=1;conversationPage=1;topicPage=1;syncUrl();updateControls();load();}},m("reset"));
     function assistantScope() {
       const operator=tab==="operators"&&operatorId?report?.operators.find(item=>item.id===operatorId):null;
       if(tab==="operators"&&operatorId&&!operator)return {filters:{...report.scope.filters,conversationIds:[]},label:t("operatorMissing"),fingerprint:report.sourceHash};
@@ -528,6 +565,9 @@
     }
     function viewHref(targetTab,targetOperator) {
       const query=new URLSearchParams(F.toQuery(filters));if(targetTab!=="overview")query.set("tab",targetTab);
+      if(targetTab==="topics") {
+        if(topicPage>1)query.set("topicPage",topicPage);if(topicSort!=="unresolved")query.set("topicSort",topicSort);if(topicRare)query.set("rareTopics","1");
+      }
       if(targetTab==="operators") {
         if(operatorPage>1)query.set("opPage",operatorPage);if(operatorSize!==10)query.set("opSize",operatorSize);
         if(targetOperator) {query.set("operator",targetOperator);if(targetOperator===operatorId&&conversationPage>1)query.set("conversationPage",conversationPage);if(conversationSize!==10)query.set("conversationSize",conversationSize);}
@@ -599,19 +639,28 @@
         changePage:(page,size)=>{operatorPage=page;operatorSize=size;syncUrl();render();},
         changeConversationPage:(page,size)=>{conversationPage=page;conversationSize=size;syncUrl();render();}});
     }
+    function topicView() {
+      const rows=report.topics.rows.filter(row=>!topicRare||row.isRare);
+      const page=Math.min(topicPage,Math.max(1,Math.ceil(rows.length/10)));
+      if(page!==topicPage){topicPage=page;syncUrl();}
+      return topicsView(report,startTopics,starting||awaitingTopicStatus,topicError,liveReport,{page:topicPage,sort:topicSort,rareOnly:topicRare,register:node=>tableDropdowns.push(node),
+        changePage:page=>{topicPage=page;syncUrl();render(true);},
+        changeSort:value=>{topicSort=value;topicPage=1;syncUrl();render(true);},
+        toggleRare:()=>{topicRare=!topicRare;topicPage=1;syncUrl();render(true);}});
+    }
     function render(preserveScroll) {
       const scroll=preserveScroll?{left:window.scrollX,top:window.scrollY}:null;
       const matrixScroll=body.querySelector('.da-ins-matrix-wrap')?.scrollLeft;
       ask.disabled=!report||loading||!!loadError||!!(tab==="operators"&&operatorId&&!report?.operators.some(item=>item.id===operatorId));
       const active=body.contains(document.activeElement)?document.activeElement:null;
-      const focusKey=active?["data-page-action","data-operator","data-conversation","data-topic-action","href"].map(key=>[key,active.getAttribute(key)]).find(([,value])=>value!=null):null;
+      const focusKey=active?["data-page-action","data-operator","data-conversation","data-topic-action","data-topic-target","href"].map(key=>[key,active.getAttribute(key)]).find(([,value])=>value!=null):null;
       const pageFocus=document.activeElement?.dataset.pageAction;closeTableDropdowns();
       const disclosures=new Map([...body.querySelectorAll("details[data-disclosure]")].map(node=>[node.dataset.disclosure,node.open]));
       const focused=body.contains(document.activeElement)?document.activeElement.closest("details[data-disclosure]")?.dataset.disclosure:null;
       if(loading){body.replaceChildren(h("p",{class:"da-ins-loading",role:"status"},m("loading")));return;}
       if(loadError){body.replaceChildren(h("div",{class:"da-empty",role:"alert"},h("h2",{},m("loadFailed")),h("p",{},DA.apiErrorMessage(loadError)),h("button",{class:"da-btn",type:"button",onclick:()=>load()},m("retry"))));return;}
       if(!report)return;
-      body.replaceChildren(...(tab==="quality"?[coverage()]:hasAdditionalFilters()?[h("div",{class:"da-ins-cover"},selectionLink(report,report.scope.conversationIds,m("extraFilters")))]:[]),report.scope.total||tab==="operators"&&operatorId?h("div",{class:"da-ins-tab","data-tab":tab},tab==="quality"?quality(report):tab==="topics"?topicsView(report,startTopics,starting,topicError,liveReport):tab==="operators"?operatorView():overview(report)):
+      body.replaceChildren(...(tab==="quality"?[coverage()]:hasAdditionalFilters()?[h("div",{class:"da-ins-cover"},selectionLink(report,report.scope.conversationIds,m("extraFilters")))]:[]),report.scope.total||tab==="operators"&&operatorId?h("div",{class:"da-ins-tab","data-tab":tab},tab==="quality"?quality(report):tab==="topics"?topicView():tab==="operators"?operatorView():overview(report)):
         h("div",{class:"da-empty"},h("h2",{},m("noMatches")),h("p",{},m("noMatchesHelp"))));
       body.querySelectorAll("details[data-disclosure]").forEach(node=>{if(disclosures.has(node.dataset.disclosure))node.open=disclosures.get(node.dataset.disclosure);if(focused===node.dataset.disclosure)node.querySelector("summary").focus({preventScroll:true});});
       if(pageFocus)(body.querySelector(`[data-page-action="${pageFocus}"]:not([disabled])`)||body.querySelector('[aria-current="page"]'))?.focus({preventScroll:true});

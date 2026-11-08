@@ -35,11 +35,15 @@
     refreshing: ["Обновляю данные", "Деректерді жаңартып жатырмын", "Updating the data"],
     you: ["Вы", "Сіз", "You"],
     sources: ["Источники", "Дереккөздер", "Sources"],
+    moreSources: ["Ещё источники ({count})", "Тағы дереккөздер ({count})", "More sources ({count})"],
+    fewerSources: ["Свернуть список", "Тізімді жию", "Show fewer"],
     citations: ["Цитаты из диалогов ({count})", "Диалогтардан дәйексөздер ({count})", "Conversation quotes ({count})"],
     quote: ["№{number}, реплика {turn}", "№{number}, {turn}-реплика", "#{number}, turn {turn}"],
     quoteHere: ["Реплика {turn}", "{turn}-реплика", "Turn {turn}"],
     clear: ["Начать новый чат", "Жаңа чат бастау", "Start a new chat"],
     history: ["История диалогов", "Диалогтар тарихы", "Chat history"],
+    historyShort: ["История", "Тарих", "History"],
+    newShort: ["Новый", "Жаңа", "New"],
     backToChat: ["К диалогу", "Диалогқа оралу", "Back to chat"],
     newChat: ["Новый диалог", "Жаңа диалог", "New chat"],
     emptyHistory: ["Диалогов пока нет", "Әзірге диалогтар жоқ", "No chats yet"],
@@ -231,19 +235,26 @@
     [...node.childNodes].forEach((child) => DA.i18n.release(child));
     node.replaceChildren(...children);
   }
+  function inlineText(content) {
+    return String(content).split(/(\*\*[^*\n]+\*\*)/u).filter(Boolean).map((part) =>
+      /^\*\*[^*\n]+\*\*$/u.test(part) ? h("strong", {}, part.slice(2, -2)) : document.createTextNode(part));
+  }
   function paragraphs(content) {
     const output = h("div", { class: "da-assistant-prose" });
     let list = null, lines = [];
-    const flush = () => { if (lines.length) { output.append(h("p", {}, lines.join("\n"))); lines = []; } list = null; };
+    const flush = () => { if (lines.length) { output.append(h("p", {}, inlineText(lines.join("\n")))); lines = []; } list = null; };
     String(content).split(/\r?\n/).forEach((line) => {
-      const bullet = line.match(/^\s*(?:[-*•]|\d+[.)])\s+(.+)$/u);
+      const bullet = line.match(/^\s*(?:([-*•])|(\d+)[.)])\s+(.+)$/u);
       if (!line.trim()) { flush(); return; }
       if (bullet) {
         if (lines.length) flush();
-        if (!list) { list = h("ul", {}); output.append(list); }
-        list.append(h("li", {}, bullet[1])); return;
+        const kind = bullet[2] ? "ol" : "ul";
+        if (!list || list.kind !== kind) {
+          list = { kind, node: h(kind, bullet[2] ? { start: Number(bullet[2]) } : {}) }; output.append(list.node);
+        }
+        list.node.append(h("li", bullet[2] ? { value: Number(bullet[2]) } : {}, inlineText(bullet[3]))); return;
       }
-      if (/^#{1,3}\s/.test(line)) { flush(); output.append(h("h3", {}, line.replace(/^#{1,3}\s+/, ""))); return; }
+      if (/^#{1,3}\s/.test(line)) { flush(); output.append(h("h3", {}, inlineText(line.replace(/^#{1,3}\s+/, "")))); return; }
       if (list) list = null;
       lines.push(line);
     });
@@ -269,7 +280,7 @@
     const notice = h("div", { class: "da-assistant-notice", role: "status", hidden: true }, noticeText, retry);
     const body = h("div", { class: "da-assistant-body" }, welcome, log, notice);
     const suggestions = h("div", { class: "da-assistant-suggestions" });
-    const input = h("textarea", { id: "da-assistant-input", rows: 3, maxlength: 2000, "aria-label": m("inputLabel"),
+    const input = h("textarea", { id: "da-assistant-input", rows: 2, maxlength: 2000, "aria-label": m("inputLabel"),
       oninput: () => { if (current) current.draft = input.value; schedulePersist(); syncControls(); },
       onkeydown: (event) => {
         if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); send(); }
@@ -290,15 +301,16 @@
       } }, DA.icon("external", 18));
     const historyButton = h("button", { class: "da-assistant-control da-assistant-history-toggle", type: "button",
       "aria-label": m("history"), title: m("history"), "aria-controls": "da-assistant-history", "aria-expanded": "false",
-      onclick: () => setHistory(!historyOpen) }, DA.icon("clock", 18));
+      onclick: () => setHistory(!historyOpen) }, DA.icon("clock", 17), h("span", { class: "da-assistant-control-label" }, m("historyShort")));
     const clear = h("button", { class: "da-assistant-control da-assistant-new", type: "button", "aria-label": m("clear"), title: m("clear"),
-      onclick: () => newChat() }, DA.icon("plus", 19));
+      onclick: () => newChat() }, DA.icon("plus", 18), h("span", { class: "da-assistant-control-label" }, m("newShort")));
     const close = h("button", { class: "da-assistant-control", type: "button", "aria-label": m("minimize"),
       title: m("minimize"), onclick: () => setOpen(false) }, DA.icon("x", 18));
     const historyList = h("div", { class: "da-assistant-history-list" });
     const historyBack = h("button", { class: "da-assistant-history-back", type: "button", onclick: () => setHistory(false) }, DA.icon("back", 15), m("backToChat"));
+    const historyNew = h("button", { class: "da-assistant-history-new", type: "button", onclick: () => newChat() }, DA.icon("plus", 16), m("newChat"));
     const historyPanel = h("section", { id: "da-assistant-history", class: "da-assistant-history", hidden: true, "aria-labelledby": "da-assistant-history-title" },
-      h("div", { class: "da-assistant-history-head" }, h("h3", { id: "da-assistant-history-title" }, m("history")), historyBack), historyList);
+      h("div", { class: "da-assistant-history-head" }, h("h3", { id: "da-assistant-history-title" }, m("history")), historyBack), historyNew, historyList);
     const storageText = h("span", {});
     const storageRetry = h("button", { type: "button", onclick: () => {
       storageMessage = null; sessions.filter((chat) => chat.dirty).forEach(saveChat); renderStorage(); if (historyOpen) renderHistory();
@@ -587,13 +599,32 @@
       const reply = h("article", { class: "da-assistant-message is-assistant" },
         h("div", { class: "da-assistant-answer-head" }, h("span", { class: "da-assistant-author" }, m("title")), copyButton),
         paragraphs(item.content));
-      const sources = item.reply.sources.map((source) => referenceNode(source, false)).filter(Boolean);
-      if (sources.length) reply.append(h("div", { class: "da-assistant-sources" },
-        h("span", { class: "da-assistant-source-label" }, m("sources")), h("div", {}, sources)));
+      const destinations = new Set();
+      const uniqueReference = (ref) => {
+        const route = routeFor(ref, false);
+        if (!route) return null;
+        const key = JSON.stringify([route, ref.transcriptHash || null]);
+        if (destinations.has(key)) return null;
+        destinations.add(key); return referenceNode(ref, false);
+      };
+      const sources = item.reply.sources.map(uniqueReference).filter(Boolean);
+      if (sources.length) {
+        const group = h("div", { class: "da-assistant-sources" }, h("span", { class: "da-assistant-source-label" }, m("sources")),
+          h("div", { class: "da-assistant-source-links" }, sources.slice(0, 6)));
+        if (sources.length > 6) {
+          const remaining = h("div", { class: "da-assistant-source-links", hidden: true }, sources.slice(6));
+          const more = h("button", { type: "button", class: "da-assistant-sources-more", "aria-expanded": "false", onclick: () => {
+            remaining.hidden = !remaining.hidden; more.setAttribute("aria-expanded", String(!remaining.hidden));
+            DA.i18n.bindText(more, remaining.hidden ? m("moreSources", { count: sources.length - 6 }) : m("fewerSources"));
+          } }, m("moreSources", { count: sources.length - 6 }));
+          group.append(remaining, more);
+        }
+        reply.append(group);
+      }
       if (item.reply.citations.length) reply.append(h("details", { class: "da-assistant-citations" },
         h("summary", {}, m("citations", { count: item.reply.citations.length }), DA.icon("chevron", 14)),
         h("div", {}, item.reply.citations.map((citation) => referenceNode(citation, true)).filter(Boolean))));
-      const actions = item.reply.actions.map((action) => referenceNode(action, false)).filter(Boolean);
+      const actions = item.reply.actions.map(uniqueReference).filter(Boolean);
       if (actions.length) reply.append(h("div", { class: "da-assistant-result-actions" }, actions));
       return reply;
     }

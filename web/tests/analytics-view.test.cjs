@@ -47,14 +47,14 @@ class Element {
 function fixture(F, extra = {}) {
   const cell = { total: 3, evaluated: 2, assessed: 2, applicable: 1, na: 1, missing: 1, avgFraction: .5, belowTargetCount: 1, flaggedCount: 0, conversationIds: ['c1','c2'], belowTargetIds: ['c2'], answerCounts:{yes:0,partial:1,no:0,na:1}, answerIds:{yes:[],partial:['c2'],no:[],na:['c1']} };
   const criterion = { id: 'custom-rule', title: 'Custom current criterion', type: 'scale', sectionId:'section1',sectionTitle:'Original section',sectionOrder:1,order:1,...cell, byLanguage: Object.fromEntries(['RU','KZ','EN'].map(lang => [lang, {...cell}])) };
-  const topic = { id: 'topic-a', topic: 'Account access', count: 3, resolved: 1, unresolved: 1, unknown: 1, known: 2, resolutionRate: .5, avgScore: 88, evaluated: 2, scoredCount: 1, conversationIds: ['c1','c2','c3'], resolvedIds: ['c1'], unresolvedIds: ['c2'], unknownIds: ['c3'], isRare: false };
+  const topic = { id: 'topic-a', topic: 'Account access', count: 2, resolved: 1, unresolved: 1, unknown: 0, known: 2, resolutionRate: .5, avgScore: 88, evaluated: 2, scoredCount: 1, conversationIds: ['c1','c2'], resolvedIds: ['c1'], unresolvedIds: ['c2'], unknownIds: [], isRare: true };
   return { sourceHash: 'snapshot-1', scope: { filters: F.normalize({checklistId:'cl2'}), checklist: {id:'cl2',version:2,name:'Current rules'}, checklists: [{id:'cl2',version:2,name:'Current rules',isActive:true},{id:'cl1',version:1,name:'Old rules',isActive:false}], total:3, conversationIds:['c1','c2','c3'], dateSourceCounts:{conversation:2,imported:1,unknown:0}},
     coverage: {evaluated:2,unevaluated:1,pending:0,failed:1,stale:0,readyWithNewerAttempt:1,topicsAnalyzed:2,topicsPending:1,topicsUnidentified:0},
     overview: {avgScore:88,scoredCount:1,lowScoreThreshold:70,lowScoreCount:0,grossCount:1,reviewCount:1,openAppealCount:2,openAppealConversations:1,attentionCount:2,unresolvedCount:1,callDuration:{averageSeconds:125,count:2,source:'audio'},appeals:{total:3,confirmed:1,changed:0,open:2,conversationIds:['c1','c2'],confirmedIds:['c2'],changedIds:[],openIds:['c1']},drilldowns:{attention:['c1','c2'],lowScore:[],gross:['c1'],review:['c1'],openAppeals:['c1'],unresolved:['c2'],failed:['c2'],pending:[],evaluated:['c1','c2'],unevaluated:['c3']}},
     criteria:[criterion], topics:{analyzed:2,pending:1,unidentified:0,minCount:3,job:{status:'idle'},rows:[topic]},
     operators:[{id:'name:A',kind:'named',name:'A',count:3,evaluated:2,scoredCount:1,avgScore:88,grossCount:1,smallSample:true,identityVerified:false,conversationIds:['c1','c2','c3'],weakCriteria:[criterion]}],
     periodComparison:{available:false,reason:'period_not_selected',current:{},previous:null,deltaScore:null},
-    conversations:['c1','c2','c3'].map((id,i)=>({conversationId:id,number:i+1,preview:'Conversation '+id,language:'RU',channel:'agent chat',qualityEvaluationId:i<2?'saved-ready-'+id:null,evaluationId:i<2?'saved-ready-'+id:null,total:i===0?88:null,readyIsPreviousAttempt:i===0})), ...extra };
+    conversations:['c1','c2','c3'].map((id,i)=>({conversationId:id,number:i+1,preview:'Conversation '+id,language:'RU',channel:'agent chat',topicId:i<2?'topic-a':null,topic:i<2?'Account access':null,resolutionStatus:['resolved','unresolved','unknown'][i],qualityEvaluationId:i<2?'saved-ready-'+id:null,evaluationId:i<2?'saved-ready-'+id:null,total:i===0?88:null,readyIsPreviousAttempt:i===0})), ...extra };
 }
 function harness(query = {}, customize = x => x, getAnalytics) {
   const messages = {}, calls = { reads:[], analyzes:[], scopes:[], opens:[], urls:[], hashes:[], scrolls:[] }, events = {},timers=new Map();let timerId=0;
@@ -112,15 +112,17 @@ test('criteria are dynamic and drill down to the actual below-target records',as
   ui.cleanup();
 });
 
-test('topics use the known-outcome denominator and source evaluation IDs; rare topics remain available',async()=>{
-  const ui=harness({tab:'topics'},r=>{r.topics.rows.push({...r.topics.rows[0],id:'rare',topic:'Rare topic record',isRare:true,count:1});return r;}); await tick();
-  assert.match(ui.root.textContent,/50%Resolved: 1 of 2/);
-  assert.match(ui.root.textContent,/Outcome unknown: 1/);
-  assert.match(ui.root.textContent,/Rare topic record/);
-  const source=ui.links().find(x=>x.href.startsWith('#/c/c1'));
-  assert.equal(decoded(source).evaluation,'saved-ready-c1');
-  const unknown=ui.links().find(x=>x.class==='da-ins-outcome is-unknown');
+test('topic table keeps exact outcome cohorts and selected version without expanded technical detail',async()=>{
+  const ui=harness({tab:'topics'},r=>{r.scope.filters.languages=['RU'];return r;}); await tick();
+  const resolved=ui.links().find(x=>x.class==='da-ins-topic-outcome is-resolved');
+  assert.equal(resolved.title,'Resolved 1 of 2 conversations with a known outcome (50%)');
+  assert.deepEqual(JSON.parse(decoded(resolved).conversationIds),['c1']);
+  const topic=ui.links().find(x=>x.class==='da-ins-topic-name');
+  assert.deepEqual(JSON.parse(decoded(topic).conversationIds),['c1','c2']);assert.equal(decoded(topic).checklistId,'cl2');assert.equal(decoded(topic).languages,'RU');
+  const unknown=ui.links().find(x=>x.class==='da-ins-topic-stat is-unknown');
   assert.deepEqual(JSON.parse(decoded(unknown).conversationIds),['c3']);
+  assert.equal(ui.root.querySelectorAll('details').length,0);
+  assert.match(ui.root.textContent,/Rare topics \(1\)/);assert.match(ui.root.textContent,/Without an identified topic: 1/);
   ui.buttons().find(x=>x.textContent==='Identify topics (1)').fire('click'); await tick();
   assert.deepEqual(ui.calls.analyzes,[['c1','c2','c3']]);
   ui.cleanup();
@@ -291,20 +293,20 @@ test('active topic polls update only progress and preserve the quality matrix, f
   assert.equal(ui.calls.analyzes.length,0);ui.cleanup();assert.equal(ui.timers.size,0);
 });
 
-test('topic completion refreshes once while retaining expanded sources, link focus and scroll',async()=>{
+test('topic completion refreshes the table once while retaining source-link focus and scroll',async()=>{
   const ui=harness({tab:'topics'},r=>{r.topics.job={status:'running',phase:'running',selectedCount:3,total:3,processed:2};return r;});await tick();
-  const row=ui.root.querySelectorAll('details[data-disclosure]')[0];row.open=true;
-  const source=row.all().find(x=>x.tag==='a'&&x.href.startsWith('#/c/c1'));source.focus();ui.window.scrollY=735;
+  const row=ui.root.all().find(x=>x.dataset.topic==='topic-a');
+  const source=row.all().find(x=>x.class==='da-ins-topic-name');source.focus();ui.window.scrollY=735;
   const updated=copy(ui.report);updated.sourceHash='topic-complete';updated.topics.analyzed=3;updated.topics.pending=0;updated.topics.job={status:'done',phase:'done',total:3,processed:3};
   updated.topics.rows[0].topic='Updated topic';ui.setReport(updated);await ui.poll();
-  const finished=ui.root.querySelectorAll('details[data-disclosure]')[0];
-  assert.notEqual(finished,row);assert.equal(finished.open,true);assert.match(finished.textContent,/Updated topic/);
+  const finished=ui.root.all().find(x=>x.dataset.topic==='topic-a');
+  assert.notEqual(finished,row);assert.match(finished.textContent,/Updated topic/);
   assert.notEqual(ui.document.activeElement,source);assert.equal(ui.document.activeElement.href,source.href);
   assert.equal(ui.window.scrollY,735);assert.equal(ui.calls.scrolls.length,1);
   assert.match(ui.root.querySelector('.da-ins-topic-progress').textContent,/Topic analysis finished/);
   assert.equal(ui.root.querySelector('.da-ins-topic-spinner').hidden,true);assert.equal(ui.timers.size,0);
   ui.events['da:appeals-changed']();await tick();
-  assert.equal(ui.root.querySelectorAll('details[data-disclosure]')[0],finished);assert.equal(ui.calls.scrolls.length,1);
+  assert.equal(ui.root.all().find(x=>x.dataset.topic==='topic-a'),finished);assert.equal(ui.calls.scrolls.length,1);
   ui.cleanup();
 });
 
@@ -364,4 +366,77 @@ test('a temporarily unreadable submitted job keeps its running status until the 
   assert.equal(ui.root.querySelector('.da-ins-topic-spinner').hidden,false);assert.match(ui.root.querySelector('.da-ins-topic-progress').textContent,/Identifying topics/);
   assert.doesNotMatch(ui.root.querySelector('.da-ins-topic-progress').textContent,/finished/);
   assert.equal(ui.buttons().find(x=>x.dataset.topicAction==='start').disabled,true);assert.equal(ui.timers.size,1);ui.cleanup();
+});
+
+test('topic summary partitions the whole filtered cohort including pending and unidentified records',async()=>{
+  const ui=harness({tab:'topics'},r=>{
+    r.scope.filters.dateFrom='2026-11-01';r.scope.filters.dateTo='2026-11-08';r.scope.filters.channels=['agent chat'];
+    r.scope.total=5;r.scope.conversationIds=['c1','c2','c3','c4','c5'];
+    r.conversations.push({...r.conversations[2],conversationId:'c4',number:4},{...r.conversations[0],conversationId:'c5',number:5});
+    Object.assign(r.topics,{analyzed:4,pending:1,unidentified:1});
+    Object.assign(r.topics.rows[0],{count:3,resolved:2,known:3,resolutionRate:2/3,isRare:false,conversationIds:['c1','c2','c5'],resolvedIds:['c1','c5']});return r;
+  });await tick();
+  const summary=ui.root.querySelector('.da-ins-topic-summary'),stats=summary.querySelectorAll('a');
+  assert.deepEqual(stats.map(x=>JSON.parse(decoded(x).conversationIds)),[['c1','c2','c3','c4','c5'],['c1','c5'],['c2'],['c3','c4']]);
+  assert.deepEqual(summary.querySelectorAll('b').map(x=>x.textContent),['5','2','1','2']);
+  const bar=summary.querySelector('.da-ins-topic-proportions');
+  assert.deepEqual(bar.querySelectorAll('i').map(x=>x.style.width),['40%','20%','40%']);
+  const missing=ui.links().find(x=>x.class==='da-ins-topic-unassigned');
+  assert.equal(missing.textContent,'Without an identified topic: 2');assert.deepEqual(JSON.parse(decoded(missing).conversationIds),['c3','c4']);
+  for(const link of [...stats,missing,...ui.links().filter(x=>x.class?.startsWith('da-ins-topic-outcome'))]) {
+    const query=decoded(link);assert.equal(query.checklistId,'cl2');assert.equal(query.dateFrom,'2026-11-01');assert.equal(query.dateTo,'2026-11-08');assert.equal(query.channels,'agent chat');
+  }
+  ui.cleanup();
+});
+
+function manyTopics(report) {
+  const base=report.conversations[0];report.conversations=[];
+  report.topics.rows=Array.from({length:18},(_,i)=>{
+    const count=i<12?3:1,states=Array.from({length:count},(_,j)=>i===2||i===1&&j===0?'unresolved':i===0||i===17?'unknown':'resolved');
+    const ids=states.map((status,j)=>{const id=`topic-${i}-conversation-${j}`;report.conversations.push({...base,conversationId:id,number:report.conversations.length+1,topicId:'topic-'+i,topic:'Topic '+String(i).padStart(2,'0'),resolutionStatus:status});return id;});
+    const groups=Object.fromEntries(['resolved','unresolved','unknown'].map(key=>[key,ids.filter((_,j)=>states[j]===key)]));
+    const known=groups.resolved.length+groups.unresolved.length;
+    return {...report.topics.rows[0],id:'topic-'+i,topic:'Topic '+String(i).padStart(2,'0'),count,conversationIds:ids,
+      ...Object.fromEntries(Object.entries(groups).flatMap(([key,values])=>[[key,values.length],[key+'Ids',values]])),
+      known,resolutionRate:known?groups.resolved.length/known:null,isRare:count<3};
+  });
+  report.scope.conversationIds=report.conversations.map(row=>row.conversationId);report.scope.total=report.conversations.length;
+  report.topics.analyzed=report.scope.total;report.topics.pending=0;report.topics.unidentified=0;return report;
+}
+
+test('topic table is capped at ten rows and sorting, rare filter and page state remain local',async()=>{
+  const ui=harness({tab:'topics'},manyTopics);await tick();
+  const rows=()=>ui.root.all().filter(x=>x.dataset.topic),order=()=>ui.root.all().find(x=>x.dataset.topicSort==='true');
+  assert.equal(rows().length,10);assert.equal(rows()[0].dataset.topic,'topic-2');assert.equal(rows()[1].dataset.topic,'topic-1');
+  assert.equal(ui.root.all().filter(x=>x.dataset.pagination==='topics').length,0);
+  ui.buttons().find(x=>x.dataset.pageAction==='topics-next').fire('click');
+  assert.equal(rows().length,8);assert.equal(new URLSearchParams(ui.calls.urls.at(-1).split('?')[1]).get('topicPage'),'2');
+  order().choose('count');assert.equal(rows()[0].dataset.topic,'topic-0');assert.equal(rows().length,10);
+  let query=new URLSearchParams(ui.calls.urls.at(-1).split('?')[1]);assert.equal(query.get('topicSort'),'count');assert.equal(query.get('topicPage'),null);
+  ui.buttons().find(x=>x.dataset.topicAction==='rare').fire('click');assert.equal(rows().length,6);
+  assert.ok(rows().every(x=>Number(x.dataset.topic.slice(6))>=12));assert.equal(ui.buttons().find(x=>x.dataset.topicAction==='rare').getAttribute('aria-pressed'),'true');
+  query=new URLSearchParams(ui.calls.urls.at(-1).split('?')[1]);assert.equal(query.get('rareTopics'),'1');
+  assert.equal(ui.root.querySelector('.da-ins-topic-summary').querySelector('b').textContent,'42');
+  ui.tab('overview');ui.tab('topics');assert.equal(rows().length,6);
+  assert.equal(ui.calls.reads.length,1);assert.equal(ui.calls.analyzes.length,0);ui.cleanup();
+});
+
+test('active topic polling preserves the current topic page, table, sort and focused source',async()=>{
+  const ui=harness({tab:'topics',topicPage:'2',topicSort:'name'},r=>{manyTopics(r);r.topics.job={status:'running',phase:'running',selectedCount:42,total:42,processed:40};return r;});await tick();
+  const table=ui.root.querySelector('.da-ins-topics-table'),summary=ui.root.querySelector('.da-ins-topic-summary');
+  const source=table.querySelector('a');source.focus();ui.window.scrollY=340;
+  const next=copy(ui.report);next.sourceHash='one-more-topic';next.topics.job.processed=41;ui.setReport(next);await ui.poll();
+  assert.equal(ui.root.querySelector('.da-ins-topics-table'),table);assert.equal(ui.root.querySelector('.da-ins-topic-summary'),summary);
+  assert.equal(ui.document.activeElement,source);assert.equal(ui.calls.scrolls.length,0);
+  assert.match(ui.root.textContent,/Showing 11–18 of 18/);
+  const query=new URLSearchParams(ui.calls.urls.at(-1).split('?')[1]);assert.equal(query.get('topicPage'),'2');assert.equal(query.get('topicSort'),'name');
+  ui.cleanup();
+});
+
+test('a rare-only scope with no rare topics offers a return to all topics and clamps stale pages',async()=>{
+  const ui=harness({tab:'topics',rareTopics:'1',topicPage:'99'},r=>{r.topics.rows[0].isRare=false;return r;});await tick();
+  assert.match(ui.root.textContent,/No rare topics in this selection/);
+  assert.equal(new URLSearchParams(ui.calls.urls.at(-1).split('?')[1]).get('topicPage'),null);
+  const toggle=ui.buttons().find(x=>x.dataset.topicAction==='rare');assert.equal(toggle.disabled,undefined);toggle.fire('click');
+  assert.equal(ui.root.all().filter(x=>x.dataset.topic).length,1);assert.equal(ui.calls.reads.length,1);ui.cleanup();
 });

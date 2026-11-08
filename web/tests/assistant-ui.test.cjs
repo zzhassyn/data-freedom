@@ -686,3 +686,78 @@ test('history empty state and controls localize, and Escape returns to the chat 
   escape(); assert.equal(e.get('.da-assistant-panel').hidden, true);
   e.ui.dispose();
 });
+
+test('answer formatting preserves numbered steps and safe emphasis without interpreting HTML or unsupported markup', async () => {
+  const e = environment(); e.ui.open(); e.submit('Объясни порядок');
+  e.requests[0].resolve(validReply('# **Порядок**\nПрочитайте **оценку**.\n\n3. **Проверьте** цитату\n5. Откройте обращение\n- Уточните результат\n- <img src=x onerror=alert(1)>\n\n**\n[Ссылка](javascript:alert(1))')); await tick();
+  const prose = e.get('.da-assistant-prose');
+  assert.deepEqual(prose.querySelectorAll('strong').map(node => node.textContent), ['Порядок', 'оценку', 'Проверьте']);
+  const ordered = prose.querySelector('ol');
+  assert.equal(ordered.getAttribute('start'), '3');
+  assert.deepEqual(ordered.querySelectorAll('li').map(node => node.value), [3, 5]);
+  assert.equal(prose.querySelectorAll('ul').length, 1);
+  assert.equal(prose.querySelector('img'), null);
+  assert.equal(prose.querySelector('a'), null);
+  assert.match(prose.textContent, /<img src=x onerror=alert\(1\)>/);
+  assert.match(prose.textContent, /\*\*\n\[Ссылка\]/);
+  e.ui.dispose();
+});
+
+test('visible sources deduplicate exact destinations while evaluations, snapshots, cohorts and citation turns stay distinct', async () => {
+  const e = environment(); e.ui.open(); e.submit('Покажи основания');
+  const conversation = { type: 'conversation', conversationId: 'a', evaluationId: 'saved-old', transcriptHash: 'old-hash' };
+  e.requests[0].resolve({ ...validReply('Подтверждённые основания'), sources: [
+    { ...conversation, id: 'old', label: 'Сохранённая оценка' },
+    { ...conversation, id: 'old-copy', label: 'Повтор той же оценки' },
+    { ...conversation, id: 'new', evaluationId: 'saved-new', label: 'Другая оценка' },
+    { ...conversation, id: 'hash', transcriptHash: 'other-hash', label: 'Другой снимок' },
+    { id: 'empty', type: 'analytics', label: 'Пустая выборка', filters: { conversationIds: [] } },
+    { id: 'all', type: 'analytics', label: 'Все обращения', filters: {} },
+    { id: 'topics', type: 'topics', label: 'Темы обращений', filters: {} },
+    { id: 'forward', type: 'checklist_comparison', label: 'Версии 1 → 2', fromVersion: 1, toVersion: 2 },
+    { id: 'backward', type: 'checklist_comparison', label: 'Версии 2 → 1', fromVersion: 2, toVersion: 1 }
+  ], citations: [
+    { id: 'turn-one', conversationId: 'a', evaluationId: 'saved-old', transcriptHash: 'old-hash', turnIdx: 1, quote: 'Первая цитата' },
+    { id: 'turn-two', conversationId: 'a', evaluationId: 'saved-old', transcriptHash: 'old-hash', turnIdx: 2, quote: 'Вторая цитата' }
+  ], actions: [
+    { ...conversation, type: 'open_conversation', id: 'repeat-source', label: 'Повтор источника' },
+    { id: 'cohort', type: 'show_registry', label: 'Низкие оценки', filters: { scoreTo: 40 } },
+    { id: 'cohort-copy', type: 'show_registry', label: 'Повтор выборки', filters: { scoreTo: 40 } },
+    { id: 'other-cohort', type: 'show_registry', label: 'Другие оценки', filters: { scoreTo: 60 } },
+    { id: 'third-evaluation', type: 'open_conversation', conversationId: 'a', evaluationId: 'saved-third', label: 'Третья оценка' }
+  ] }); await tick();
+  const sources = e.get('.da-assistant-sources'), groups = sources.querySelectorAll('.da-assistant-source-links');
+  assert.equal(sources.querySelectorAll('.da-assistant-reference').length, 8);
+  assert.equal(groups[0].hidden, false); assert.equal(groups[0].querySelectorAll('button').length, 6);
+  assert.equal(groups[1].hidden, true); assert.equal(groups[1].querySelectorAll('button').length, 2);
+  assert.match(e.get('.da-assistant-sources-more').textContent, /\(2\)/);
+  e.click('.da-assistant-sources-more'); assert.equal(groups[1].hidden, false);
+  assert.equal(e.get('.da-assistant-sources-more').getAttribute('aria-expanded'), 'true');
+  const actions = e.get('.da-assistant-result-actions').querySelectorAll('button');
+  assert.deepEqual(actions.map(node => node.textContent), ['Низкие оценки', 'Другие оценки', 'Третья оценка']);
+  const citations = e.get('.da-assistant-citations').querySelectorAll('.da-assistant-citation');
+  assert.equal(citations.length, 2);
+  citations[1].onclick(); assert.equal(e.context.location.hash, '#/c/a?evaluation=saved-old&turn=2');
+  actions[2].onclick(); assert.equal(e.context.location.hash, '#/c/a?evaluation=saved-third');
+  e.ui.dispose();
+});
+
+test('history offers a labelled new-chat action and compact composer keeps keyboard and cancellation behavior', async () => {
+  const e = environment(); e.ui.open(); e.submit('Сохранённый вопрос'); e.requests[0].resolve(validReply('Сохранённый ответ')); await tick();
+  e.click('.da-assistant-history-toggle');
+  assert.match(e.get('.da-assistant-history-new').textContent, /Новый диалог/);
+  e.click('.da-assistant-history-new');
+  assert.equal(e.get('.da-assistant-history').hidden, true);
+  assert.equal(e.get('textarea').getAttribute('rows'), '2');
+  assert.equal(e.get('textarea').getAttribute('aria-label'), 'Ваш вопрос');
+  e.get('textarea').value = 'Следующий вопрос'; e.get('textarea').oninput();
+  let prevented = false;
+  e.get('textarea').onkeydown({ key: 'Enter', shiftKey: true, preventDefault() { prevented = true; } });
+  assert.equal(prevented, false); assert.equal(e.requests.length, 1);
+  e.get('textarea').onkeydown({ key: 'Enter', shiftKey: false, preventDefault() { prevented = true; } });
+  assert.equal(prevented, true); assert.equal(e.requests.length, 2);
+  e.click('.da-assistant-stop');
+  assert.equal(e.get('textarea').value, 'Следующий вопрос');
+  chooseChat(e, 'Сохранённый вопрос'); assert.match(e.get('.da-assistant-messages').textContent, /Сохранённый ответ/);
+  e.ui.dispose();
+});
