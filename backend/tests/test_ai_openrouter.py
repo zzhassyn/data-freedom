@@ -37,6 +37,46 @@ def summary():
             'outcome': 'Оператор указала кабинет.', 'operatorName': 'Дана'}
 
 
+def test_topic_classification_sends_transcript_and_shared_catalog(monkeypatch, source):
+    calls, _ = install(monkeypatch, {'topicId': 'login', 'newTitle': None, 'resolutionStatus': 'unknown'})
+    result = asyncio.run(ai.classify_topic(source, [{'id': 'login', 'title': 'Вход в приложение'}]))
+    assert result.topic_id == 'login' and result.usage.calls == 1
+    data = json.loads(calls[0]['messages'][1]['content'])
+    assert data['catalog'][0]['id'] == 'login'
+    assert data['conversation']['turns'][0]['text'] == source.transcript[0].text
+
+
+@pytest.mark.parametrize('value', [
+    {'topicId': 'invented', 'newTitle': None, 'resolutionStatus': 'resolved'},
+    {'topicId': 'login', 'newTitle': 'Дубликат темы', 'resolutionStatus': 'unknown'},
+    {'topicId': None, 'newTitle': '<script>bad</script>', 'resolutionStatus': 'unknown'},
+])
+def test_invalid_topic_response_is_rejected_with_usage(monkeypatch, source, value):
+    install(monkeypatch, value)
+    with pytest.raises(JudgeError) as exc:
+        asyncio.run(ai.classify_topic(source, [{'id': 'login', 'title': 'Вход в приложение'}]))
+    assert exc.value.usage.calls == 1
+
+
+@pytest.mark.parametrize('status', ['resolved', 'unresolved', 'unknown'])
+def test_summary_preserves_explicit_resolution_status(monkeypatch, source, status):
+    install(monkeypatch, {**summary(), 'resolutionStatus': status})
+    final = asyncio.run(ai.summarize(source))
+    assert final.resolution_status == status
+    assert final.model_dump(by_alias=True)['resolutionStatus'] == status
+
+
+def test_legacy_summary_has_unknown_resolution(monkeypatch, source):
+    install(monkeypatch, summary())
+    assert asyncio.run(ai.summarize(source)).resolution_status == 'unknown'
+
+
+def test_invalid_resolution_status_is_rejected(monkeypatch, source):
+    install(monkeypatch, {**summary(), 'resolutionStatus': 'probably'})
+    with pytest.raises(JudgeError):
+        asyncio.run(ai.summarize(source))
+
+
 def frame(payload):
     return ('data: ' + json.dumps(payload, ensure_ascii=False) + '\n\n').encode()
 

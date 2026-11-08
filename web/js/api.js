@@ -195,6 +195,8 @@
     decideAppeal: (id, body, options) => post(`/appeals/${part(id)}/decision`, body, options),
     secondOpinion: (id, options) => post(`/appeals/${part(id)}/second-opinion` + query({ refresh: options?.refresh }), {}, aiOptions(options)),
     getStats: (filters, options) => get("/stats", filters, options),
+    getTopics: (channel, options) => get("/topics", { channel }, options),
+    analyzeTopics: (options) => post("/topics/analyze", {}, options),
     getOperators: (filters, options) => get("/operators", filters, options),
     getSource: (options) => request("/source", options),
     putSource: (body, options) => request("/source", { ...options, method: "PUT", body }),
